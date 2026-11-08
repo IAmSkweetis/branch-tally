@@ -1,0 +1,19 @@
+# Cargo build output. Per-worktree; never shared.
+/target/
+
+# Pending snapshot updates must be reviewed, never committed unread.
+*.snap.new
+*.pending-snap
+
+# Agent git worktrees. Real checkouts; never part of this one.
+/.claude/worktrees/
+
+# Personal Claude Code settings.
+/.claude/settings.local.json
+
+# Python reference script caches.
+__pycache__/
+*.py[cod]
+
+# .rumdl cache
+.rumdl_cache/
