@@ -1,0 +1,8 @@
+# zizmor configuration. Fix findings; do not silence them here.
+# https://docs.zizmor.sh/configuration/
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # Every action, first-party included, is pinned to a full commit SHA.
+        "*": hash-pin

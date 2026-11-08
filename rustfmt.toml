@@ -1,0 +1,2 @@
+# Formatter settings. Stable options only; the edition comes from the manifests.
+max_width = 100

@@ -1,0 +1,4 @@
+# Clippy settings. The lints themselves live in [workspace.lints] in Cargo.toml.
+# Governance: no unwrap()/expect() on transcript data. Tests may use them.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true

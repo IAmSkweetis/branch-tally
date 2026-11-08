@@ -1,0 +1,23 @@
+#!/bin/sh
+# pre-commit: secrets, then format/Clippy, Markdown, and (when .github/ is staged) workflows.
+# A missing tool fails with an install hint. It never skips the check and exits 0.
+# Rust checks skip, and say so, only while no Cargo.toml exists (see the justfile).
+set -eu
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "pre-commit: error: $1 not found; $2" >&2
+    exit 1
+  }
+}
+
+need just "install it: https://github.com/casey/just#installation"
+need gitleaks "install it: https://github.com/gitleaks/gitleaks#installing"
+
+gitleaks git --pre-commit --staged --redact --no-banner
+just lint
+just lint-md
+
+if git diff --cached --name-only | grep -q '^\.github/'; then
+  just audit-workflows --offline
+fi

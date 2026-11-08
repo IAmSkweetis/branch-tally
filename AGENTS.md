@@ -81,8 +81,8 @@ just test          # cargo nextest run --workspace, plus doctests
 just ci            # fmt check, clippy, tests, doctests, rumdl, gitleaks: every gate CI runs
 ```
 
-The `justfile`, git hooks and CI workflows are the next thing being built. Until they land, run the
-raw commands: `cargo nextest run --workspace && cargo test --workspace --doc`.
+Until the Cargo workspace exists (#3), the Rust recipes print "no Cargo.toml: Rust checks skipped"
+and exit 0. That is a skip, not a green run.
 
 **Always report the test count alongside the exit code.** Exit 0 with zero tests run is a false
 green. A filter that matches nothing, a test file outside a crate's `tests/` directory, or a test

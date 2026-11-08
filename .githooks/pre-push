@@ -1,0 +1,38 @@
+#!/bin/sh
+# pre-push: every pushed branch is a Conventional Branch and is not main, then `just test`.
+# Reads git's "<local ref> <local sha> <remote ref> <remote sha>" lines from stdin.
+# Tags and branch deletions pass through untouched.
+set -eu
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "pre-push: error: $1 not found; $2" >&2
+    exit 1
+  }
+}
+
+root=$(dirname "$0")/..
+zero=0000000000000000000000000000000000000000
+pushing=0
+failed=0
+
+while read -r _local_ref local_sha remote_ref _remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue # deleting a ref
+  case "$remote_ref" in
+    refs/heads/main)
+      echo "pre-push: error: refusing to push to main; open a pull request instead" >&2
+      failed=1
+      ;;
+    refs/heads/*)
+      pushing=1
+      branch=${remote_ref#refs/heads/}
+      sh "$root/scripts/check-branch-name.sh" "$branch" || failed=1
+      ;;
+  esac
+done
+
+[ "$failed" = 0 ] || exit 1
+[ "$pushing" = 1 ] || exit 0
+
+need just "install it: https://github.com/casey/just#installation"
+just test

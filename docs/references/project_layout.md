@@ -21,15 +21,16 @@ places a new file belongs in**.
 | `action.yml` | The **shipped** GitHub Action | *planned* (#12). Must sit at the root for `uses: IAmSkweetis/branch-tally@v1`. |
 | `docs/references/` | Reference pages | This page lives here. |
 | `docs/decisions/` | Architecture decision records, `NNNN-title.md` | Append-only. Supersede; don't rewrite. |
-| `scripts/` | Repository tooling that is not a `just` one-liner | Run through `just`. |
-| `.githooks/` | Git hooks, enabled with `core.hooksPath .githooks` | *planned*. See [dev_workflow.md](dev_workflow.md#quality-gates). |
-| `.github/` | CI workflows, PR template, dependabot, `zizmor.yml` | *planned*. |
+| `scripts/` | Repository tooling that is not a `just` one-liner: the commit-subject and branch-name checks (shared by the hooks and CI), their self-test, and CI helpers | Run through `just`, a hook or a workflow. |
+| `.githooks/` | Git hooks (`pre-commit`, `commit-msg`, `pre-push`), enabled with `core.hooksPath .githooks` | See [dev_workflow.md](dev_workflow.md#quality-gates). |
+| `.github/` | CI and PR-check workflows, workflow audit, PR template, `dependabot.yml`, `zizmor.yml` | CI for this repository, not the shipped Action. See [dev_workflow.md](dev_workflow.md#quality-gates). |
 | `.claude/` | This repository's **own** agents, skills, settings and report contract | Development tooling. Not shipped. |
 | `Cargo.toml` | Workspace manifest: members, `[workspace.dependencies]`, `[workspace.lints]`, profiles | *planned* (#3). |
 | `Cargo.lock` | Committed: this is a binary project | |
 | `rust-toolchain.toml` | Pinned toolchain and components | *planned* (#3). |
-| `rustfmt.toml`, `clippy.toml`, `deny.toml`, `.config/nextest.toml` | Formatter, linter, dependency policy, test-runner config | *planned*. |
-| `justfile` | The command entrypoint | *planned*. See [dev_workflow.md](dev_workflow.md#commands). |
+| `rustfmt.toml`, `clippy.toml`, `.config/nextest.toml` | Formatter, linter and test-runner config | |
+| `deny.toml` | Dependency policy | *planned* (#3). CI's `deny` job starts checking once it exists. |
+| `justfile` | The command entrypoint, with the pinned tool versions | See [dev_workflow.md](dev_workflow.md#commands). |
 | `.gitattributes`, `.gitignore`, `.rumdl.toml` | Formatting, line endings, ignores, Markdown lint | |
 
 ## Shipped vs. development: the distinction that gets confused
