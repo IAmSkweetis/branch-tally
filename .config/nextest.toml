@@ -1,0 +1,6 @@
+# cargo-nextest settings. The false-green guards (a run that matches no tests fails, doctests run
+# separately, snapshots never update in CI) live in the `test` recipe and ci.yml. See
+# docs/references/testing.md#false-greens.
+[profile.default]
+# Report every failing test, not just the first.
+fail-fast = false
