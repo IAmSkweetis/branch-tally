@@ -1,0 +1,20 @@
+# rumdl: the Markdown linter. Rule IDs match markdownlint's, so the VS Code
+# markdownlint extension agrees.
+
+[global]
+flavor = "gfm"
+# Agent worktrees are separate checkouts; build output is not ours.
+exclude = [
+    ".claude/worktrees",
+    "target",
+]
+
+[MD013]
+line-length = 100
+# A table row or a code line cannot wrap without breaking it, and a heading
+# should not.
+tables = false
+code-blocks = false
+headings = false
+# Lets `just fmt-md` rewrap a long paragraph instead of only reporting it.
+reflow = true

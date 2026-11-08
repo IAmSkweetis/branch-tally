@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(cargo build *)",
+      "Bash(cargo check *)",
+      "Bash(cargo clippy *)",
+      "Bash(cargo fmt *)",
+      "Bash(cargo nextest *)",
+      "Bash(cargo test *)",
+      "Bash(cargo tree *)",
+      "Bash(just test *)",
+      "Bash(just lint *)",
+      "Bash(just lint-md *)",
+      "Bash(just ci)",
+      "Bash(uvx rumdl check *)",
+      "Bash(gitleaks git *)"
+    ],
+    "deny": [
+      "Bash(cargo publish *)",
+      "Bash(cargo yank *)",
+      "Bash(cargo owner *)",
+      "Bash(cargo login *)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(git push --force-with-lease *)",
+      "Bash(git push origin main)",
+      "Bash(git push origin main *)",
+      "Bash(git stash)",
+      "Bash(git stash *)",
+      "Edit(target/**)",
+      "Write(target/**)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_response.filePath // .tool_input.file_path'); case \"$f\" in *.rs) rustfmt --check --edition 2024 \"$f\";; *.md) uvx rumdl check \"$f\";; esac",
+            "statusMessage": "lint",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  },
+  "worktree": {
+    "baseRef": "head"
+  }
+}

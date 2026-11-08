@@ -1,0 +1,4 @@
+* text=auto eol=lf
+
+# Transcript fixtures reproduce what a harness writes, byte for byte.
+tests/fixtures/** -text
