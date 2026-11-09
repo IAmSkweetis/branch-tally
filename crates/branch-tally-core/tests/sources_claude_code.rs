@@ -218,11 +218,13 @@ fn malformed_keyless_and_non_usage_lines_are_counted_correctly() {
             no_dedupe_key: 1,
             synthetic: 0,
             duplicates_removed: 1,
-            fallback_key_used: 0,
+            fallback_key_used: 1,
         }
     );
     // The uuid fallback supplies the dedupe key.
     assert_eq!(by_request(&records, "u7").usage.input, 10);
+    assert!(by_request(&records, "u7").request_id_is_fallback);
+    assert!(!by_request(&records, "req_1").request_id_is_fallback);
 }
 
 #[test]
