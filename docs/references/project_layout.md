@@ -27,7 +27,7 @@ places a new file belongs in**.
 | `.claude/` | This repository's **own** agents, skills, settings and report contract | Development tooling. Not shipped. |
 | `Cargo.toml` | Workspace manifest: members, `[workspace.dependencies]`, `[workspace.lints]`, profiles | *planned* (#3). |
 | `Cargo.lock` | Committed: this is a binary project | |
-| `rust-toolchain.toml` | Pinned toolchain and components | *planned* (#3). |
+| `rust-toolchain.toml` | Pinned toolchain and components | *planned* (#3). Starts at 1.99.1 ([0001](../decisions/0001-language.md)). |
 | `rustfmt.toml`, `clippy.toml`, `.config/nextest.toml` | Formatter, linter and test-runner config | |
 | `deny.toml` | Dependency policy | *planned* (#3). CI's `deny` job starts checking once it exists. |
 | `justfile` | The command entrypoint, with the pinned tool versions | See [dev_workflow.md](dev_workflow.md#commands). |

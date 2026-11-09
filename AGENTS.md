@@ -40,8 +40,9 @@ The official Rust documentation is the default authority: [The Rust Book][book],
 [API Guidelines][api], the [Cargo Book][cargo] and the [Clippy lint list][clippy]. Follow them
 wherever this page is silent.
 
-- **Language**: Rust, stable channel, edition 2024. The toolchain is pinned in
-  `rust-toolchain.toml` once the workspace exists (#3). The language decision is #1.
+- **Language**: Rust, stable channel, edition 2024, starting at 1.99.1. The toolchain is pinned in
+  `rust-toolchain.toml` and matched by `rust-version` once the workspace exists (#3). The reasoning
+  is in [0001-language.md](docs/decisions/0001-language.md).
 - **Workspace**: a library crate, `branch-tally-core`, holds all logic: sources, attribution,
   pricing, ledger and rendering. A thin binary crate, `branch-tally`, holds the CLI. The full layout
   and the rules for where a file belongs are in

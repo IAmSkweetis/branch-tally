@@ -35,7 +35,7 @@ Not everything is a reference page:
   natively.
 - **`docs/decisions/`**: architecture decision records, one per significant choice, numbered and
   never rewritten. A later decision supersedes an earlier one rather than editing it. The first is
-  the language decision (#1).
+  the language decision, [0001-language.md](../decisions/0001-language.md).
 - **GitHub issues**: the roadmap (#16 and its sub-issues). Planned work lives there, not in a
   `ROADMAP.md`.
 - **`.claude/skills/`**: procedures rather than decisions.
