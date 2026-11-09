@@ -1,0 +1,5 @@
+{
+  "repo_slug": "C--repo",
+  "worktrees": [ {"name": "feat-b", "branch": "feat/b"} ],
+  "claim_branches": ["feat/a", "feat/b"]
+}
