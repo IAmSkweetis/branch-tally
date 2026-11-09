@@ -6,3 +6,12 @@
 
 pub mod model;
 pub mod sources;
+
+#[cfg(test)]
+mod red_proof {
+    #[test]
+    fn deliberately_fails() {
+        let n = "ab".len();
+        assert_eq!(n, 3, "red proof for the test and msrv jobs");
+    }
+}
