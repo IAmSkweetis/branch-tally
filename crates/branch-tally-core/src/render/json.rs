@@ -9,7 +9,7 @@
 use std::cmp::Reverse;
 use std::fmt::Write as _;
 
-use crate::model::{Costs, Summary};
+use crate::model::{Costs, PriceTableSource, Summary};
 
 /// Python `json.dumps` string escaping with `ensure_ascii=True`.
 fn string(s: &str) -> String {
@@ -109,6 +109,35 @@ pub fn json(summary: &Summary, costs: &Costs) -> String {
     let _ = writeln!(o, "  \"mode\": {},", string(summary.mode.as_str()));
     let _ = writeln!(o, "  \"totalCalls\": {},", summary.total.calls);
     let _ = writeln!(o, "  \"totalCostUSD\": {},", float(costs.total));
+    // Not in the reference (#5): a partial total is flagged, and the table that priced it named.
+    let _ = writeln!(o, "  \"totalCostIsFloor\": {},", costs.is_floor());
+    let unpriced: Vec<_> = costs.by_model.iter().filter(|(_, c)| c.is_none()).collect();
+    if unpriced.is_empty() {
+        o.push_str("  \"unpricedModels\": [],\n");
+    } else {
+        o.push_str("  \"unpricedModels\": [\n");
+        let last = unpriced.len() - 1;
+        for (i, (m, _)) in unpriced.iter().enumerate() {
+            let comma = if i == last { "" } else { "," };
+            let _ = writeln!(o, "    {}{comma}", string(m));
+        }
+        o.push_str("  ],\n");
+    }
+    let table = &costs.price_table;
+    let as_of = if table.as_of.is_empty() {
+        "null".to_owned()
+    } else {
+        string(&table.as_of)
+    };
+    let source = match table.source {
+        PriceTableSource::Bundled => "bundled",
+        PriceTableSource::Cache => "cache",
+        PriceTableSource::Override => "override",
+    };
+    o.push_str("  \"priceTable\": {\n");
+    let _ = writeln!(o, "    \"asOf\": {as_of},");
+    let _ = writeln!(o, "    \"source\": \"{source}\"");
+    o.push_str("  },\n");
 
     if sessions.is_empty() {
         o.push_str("  \"sessions\": [],\n");

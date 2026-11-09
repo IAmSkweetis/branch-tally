@@ -63,12 +63,25 @@ fn check_against_golden(golden: &str, extra: &[&str]) -> usize {
                 );
                 let mut got: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
                 world.normalize(&mut got);
+                strip_price_divergences(&mut got);
                 assert_eq!(&got, want, "{name} {branch}");
             }
             compared += 1;
         }
     }
     compared
+}
+
+/// Top-level JSON keys the reference does not have (#5): the floor flag, the unpriced model names
+/// and the price table's date and source. Each must be present; they are the only keys exempt
+/// from the golden comparison.
+const PRICE_DIVERGENT_KEYS: &[&str] = &["totalCostIsFloor", "unpricedModels", "priceTable"];
+
+fn strip_price_divergences(payload: &mut serde_json::Value) {
+    let object = payload.as_object_mut().unwrap();
+    for key in PRICE_DIVERGENT_KEYS {
+        assert!(object.remove(*key).is_some(), "{key} missing from --json");
+    }
 }
 
 fn py_repr(s: &str) -> String {

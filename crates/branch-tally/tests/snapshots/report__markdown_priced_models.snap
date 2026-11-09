@@ -9,13 +9,13 @@ expression: text
 | `claude-sonnet-4-6` | 2 | 1,235,344 | 269,356 | 4,569,002 | 89,456 | 0 | $7.51 |
 | `claude-fable-5-1` | 2 | 112,344 | 20,428 | 3,543,209 | 6,789 | 0 | $2.66 |
 | `claude-mystery-9` | 1 | 11,111 | 499 | 3,333 | 2,222 | 0 | — |
-| **Total** | **7** | **9,013,123** | **1,221,177** | **106,880,987** | **221,931** | **0** | **$106.93** |
+| **Total** | **7** | **9,013,123** | **1,221,177** | **106,880,987** | **221,931** | **0** | **at least $106.93** |
 
 | Session | Where | Agents | Span (UTC) | Calls | Tokens |
 |---|---|---|---|--:|--:|
 | `s1` | main checkout | — | 01-01 00:00 → 01-01 00:00 | 7 | 117.3M |
 
-<sub>Branch `main` · 1 session(s), 0 in a worktree · 0 of 7 calls from subagents · 0.0M tokens recovered from pre-branch/worktree checkouts · est. cost at list API rates, not amounts billed</sub>
+<sub>Branch `main` · 1 session(s), 0 in a worktree · 0 of 7 calls from subagents · 0.0M tokens recovered from pre-branch/worktree checkouts · price table date unknown · 1 model(s) unpriced, total is a floor · est. cost at list API rates, not amounts billed</sub>
 
 <details><summary>Breakdown by skill / agent</summary>
 
