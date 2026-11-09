@@ -32,8 +32,8 @@ const REFERENCE_DIVERGENT_SCENARIOS: &[(&str, &str)] = &[("malformed-and-keyless
 const DIVERGENCES: &[(&str, &str, &str, &str)] = &[];
 
 /// Scenarios and branch keys compared. Pinned so the test cannot green by comparing nothing.
-const EXPECTED_SCENARIOS: usize = 12;
-const EXPECTED_BRANCH_KEYS: usize = 29;
+const EXPECTED_SCENARIOS: usize = 13;
+const EXPECTED_BRANCH_KEYS: usize = 34;
 
 fn fixtures_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

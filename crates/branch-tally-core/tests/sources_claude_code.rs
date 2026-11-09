@@ -498,3 +498,46 @@ fn subagent_files_under_the_main_root_are_main_origin() {
     assert_eq!(by_request(&records, "req_a2").origin, Some(Origin::Main));
     assert!(records.iter().all(|r| r.origin == Some(Origin::Main)));
 }
+
+#[test]
+fn files_are_read_in_one_path_sorted_pass_per_root() {
+    let (records, stats) = read_all("read-order", r"C:\repo");
+    assert_eq!(
+        stats,
+        ReadStats {
+            files_read: 5,
+            records_emitted: 4,
+            duplicates_removed: 1,
+            ..ReadStats::default()
+        }
+    );
+    // `aaa/subagents/agent-x.jsonl` sorts before `zzz.jsonl`, so it wins the duplicate key.
+    let dup = by_request(&records, "req_dup");
+    assert_eq!(dup.git_branch.as_deref(), Some("from-sub"));
+    assert_eq!(
+        dup.parent_session.as_ref().map(SessionId::as_str),
+        Some("aaa")
+    );
+}
+
+#[test]
+fn nested_non_subagent_files_are_read_like_main_files() {
+    let (records, _) = read_all("read-order", r"C:\repo");
+    let deep = by_request(&records, "req_deep");
+    assert_eq!(deep.session_id.as_str(), "s9");
+    assert_eq!(deep.parent_session, None);
+    assert_eq!(deep.origin, Some(Origin::Main));
+}
+
+#[test]
+fn worktree_roots_need_only_the_infix_prefix() {
+    let roots = discover("read-order", r"C:\repo");
+    assert_eq!(
+        names(&roots),
+        vec![
+            ("C--repo".to_owned(), RootKind::Repository),
+            ("C--repo--claude-worktrees".to_owned(), RootKind::Worktree),
+            ("C--repo--claude-worktreesX".to_owned(), RootKind::Worktree),
+        ]
+    );
+}

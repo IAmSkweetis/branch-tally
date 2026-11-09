@@ -1,0 +1,1 @@
+{"type":"assistant","requestId":"req_dup","uuid":"u-sub","sessionId":"s1","agentId":"x","timestamp":"2026-01-01T00:00:00.000Z","cwd":"C:\\repo","gitBranch":"from-sub","isSidechain":true,"message":{"model":"claude-test-1","content":"PLACEHOLDER","usage":{"input_tokens":2,"output_tokens":1}}}
