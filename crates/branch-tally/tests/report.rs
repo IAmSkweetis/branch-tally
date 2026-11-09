@@ -10,7 +10,7 @@
 
 mod common;
 
-use common::{World, fixtures_root, parse_json, stderr, stdout};
+use common::{World, fixtures_root, stderr, stdout};
 use std::fs;
 
 const NO_RECORDS_TAIL: &str =
@@ -35,11 +35,15 @@ fn check_against_golden(golden: &str, extra: &[&str]) -> usize {
         let world = World::scenario(&name);
         let text =
             fs::read_to_string(fixtures_root().join(&name).join("goldens").join(golden)).unwrap();
-        for (branch, want) in parse_json(&text).entries() {
+        for (branch, want) in serde_json::from_str::<serde_json::Value>(&text)
+            .unwrap()
+            .as_object()
+            .unwrap()
+        {
             let mut args = vec!["report", branch.as_str(), "--json"];
             args.extend_from_slice(extra);
             let out = world.run(&args);
-            if want.entries().contains_key("error") {
+            if want.get("error").is_some() {
                 assert_eq!(out.status.code(), Some(1), "{name} {branch}");
                 assert!(stdout(&out).is_empty(), "{name} {branch}");
                 assert_eq!(
@@ -57,7 +61,7 @@ fn check_against_golden(golden: &str, extra: &[&str]) -> usize {
                     "{name} {branch}: {}",
                     stderr(&out)
                 );
-                let mut got = parse_json(&stdout(&out));
+                let mut got: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
                 world.normalize(&mut got);
                 assert_eq!(&got, want, "{name} {branch}");
             }
@@ -74,12 +78,12 @@ fn py_repr(s: &str) -> String {
 
 #[test]
 fn json_claim_matches_the_reference_goldens() {
-    assert!(check_against_golden("claim.json", &[]) >= 15);
+    assert!(check_against_golden("claim.json", &[]) >= 27);
 }
 
 #[test]
 fn json_strict_matches_the_reference_goldens() {
-    assert!(check_against_golden("strict.json", &["--strict"]) >= 15);
+    assert!(check_against_golden("strict.json", &["--strict"]) >= 27);
 }
 
 #[test]
@@ -306,4 +310,14 @@ fn help_exits_0_and_lists_the_flags_without_the_projects_override() {
         assert!(text.contains(flag), "{flag}");
     }
     assert!(!text.contains("--csv"));
+}
+
+#[test]
+fn priced_models_markdown_shows_costs() {
+    let world = World::scenario("priced-models");
+    let out = world.run(&["report", "main"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("Est. cost"));
+    insta::assert_snapshot!("markdown_priced_models", text);
 }
