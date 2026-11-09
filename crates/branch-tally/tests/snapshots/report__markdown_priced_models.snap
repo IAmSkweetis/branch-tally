@@ -15,7 +15,7 @@ expression: text
 |---|---|---|---|--:|--:|
 | `s1` | main checkout | — | 01-01 00:00 → 01-01 00:00 | 7 | 117.3M |
 
-<sub>Branch `main` · 1 session(s), 0 in a worktree · 0 of 7 calls from subagents · 0.0M tokens recovered from pre-branch/worktree checkouts · price table date unknown · 1 model(s) unpriced, total is a floor · est. cost at list API rates, not amounts billed</sub>
+<sub>Branch `main` · 1 session(s), 0 in a worktree · 0 of 7 calls from subagents · 0.0M tokens recovered from pre-branch/worktree checkouts · prices as of 2026-11-09 (bundled table) · 1 model(s) unpriced, total is a floor · est. cost at list API rates, not amounts billed</sub>
 
 <details><summary>Breakdown by skill / agent</summary>
 
