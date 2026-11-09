@@ -18,8 +18,9 @@ unless noted otherwise.
 - A sibling repository can share a prefix (`dodgeball` vs `dodgeball-cardgame`). Match a slug
   exactly, or by an explicit worktree suffix, never by bare prefix.
 - A worktree **entered as its own session** gets its own directory, whose slug is the repo slug
-  plus `--claude-worktrees-<name>`. (Inherited from `token_report.py`. None existed on the machine
-  this page was written on.)
+  plus `--claude-worktrees` and whatever follows it, usually `-<name>`; the bare prefix is what
+  matches (inherited from `token_report.py`). None existed on the machine this page was written
+  on.)
 - Transcripts are deleted after `cleanupPeriodDays` (default 30). Data not captured by then is
   gone, which is what the ledger (#8) and the pre-purge snapshot (#13) exist for.
 
