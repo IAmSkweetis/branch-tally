@@ -326,6 +326,7 @@ fn rust_payload(dir: &Path, manifest: &Value, branch: &str, strict: bool) -> Val
         &worktrees_for(manifest),
         branch,
         strict,
+        branch_tally_core::pricing::PriceTable::bundled(),
     ) {
         Ok(r) => without_price_divergences(
             serde_json::from_str(&render::json(&r.summary, &r.costs)).unwrap(),

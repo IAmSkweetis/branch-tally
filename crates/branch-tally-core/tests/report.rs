@@ -6,7 +6,10 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 use branch_tally_core::git::{FakeGit, Worktree};
-use branch_tally_core::model::{Harness, Mode, Origin, Record, RequestId, SessionId, Usage};
+use branch_tally_core::model::{
+    Harness, Mode, Origin, PriceTableSource, Record, RequestId, SessionId, Usage,
+};
+use branch_tally_core::pricing::PriceTable;
 use branch_tally_core::report::{ReportError, build, run};
 use branch_tally_core::sources::{ReadStats, RepoIdentity, Source, SourceError, TranscriptRoot};
 
@@ -67,6 +70,10 @@ impl Source for FakeSource {
     }
 }
 
+fn bundled() -> &'static PriceTable {
+    PriceTable::bundled()
+}
+
 fn stats() -> ReadStats {
     ReadStats {
         malformed_lines: 3,
@@ -81,7 +88,16 @@ fn build_selects_summarizes_and_carries_read_stats() {
         rec("s1", "b", Some("feat/x")),
         rec("s2", "c", Some("other")),
     ];
-    let report = build(records, stats(), Path::new("/repo"), &[], "feat/x", false).unwrap();
+    let report = build(
+        records,
+        stats(),
+        Path::new("/repo"),
+        &[],
+        "feat/x",
+        false,
+        bundled(),
+    )
+    .unwrap();
     assert_eq!(report.branch, "feat/x");
     assert_eq!(report.summary.mode, Mode::Claim);
     assert_eq!(report.summary.total.calls, 2);
@@ -92,14 +108,32 @@ fn build_selects_summarizes_and_carries_read_stats() {
 #[test]
 fn build_reports_strict_mode() {
     let records = vec![rec("s1", "a", Some("feat/x"))];
-    let report = build(records, stats(), Path::new("/repo"), &[], "feat/x", true).unwrap();
+    let report = build(
+        records,
+        stats(),
+        Path::new("/repo"),
+        &[],
+        "feat/x",
+        true,
+        bundled(),
+    )
+    .unwrap();
     assert_eq!(report.summary.mode, Mode::Strict);
 }
 
 #[test]
 fn build_with_nothing_selected_is_an_explicit_outcome_with_stats() {
     let records = vec![rec("s1", "a", Some("other"))];
-    let err = build(records, stats(), Path::new("/repo"), &[], "feat/x", false).unwrap_err();
+    let err = build(
+        records,
+        stats(),
+        Path::new("/repo"),
+        &[],
+        "feat/x",
+        false,
+        bundled(),
+    )
+    .unwrap_err();
     match err {
         ReportError::NoRecords { branch, read_stats } => {
             assert_eq!(branch, "feat/x");
@@ -129,6 +163,7 @@ fn run_defaults_to_the_current_branch_and_reads_for_the_main_checkout() {
         Path::new("/repo/wt"),
         None,
         false,
+        bundled(),
     )
     .unwrap();
     assert_eq!(report.branch, "feat/x");
@@ -151,6 +186,7 @@ fn run_treats_an_unreadable_worktree_list_as_empty_but_says_so() {
         Path::new("/repo"),
         Some("feat/x"),
         false,
+        bundled(),
     )
     .unwrap();
     assert_eq!(report.summary.total.calls, 1);
@@ -168,7 +204,59 @@ fn run_without_a_branch_and_without_git_is_a_git_error() {
         Path::new("/repo"),
         None,
         false,
+        bundled(),
     )
     .unwrap_err();
     assert!(matches!(err, ReportError::Git(_)), "{err}");
+}
+
+const CUSTOM: &str =
+    "as_of = \"2031-02-03\"\n\n[models.\"m\"]\ninput = 1000000.0\noutput = 2000000.0\n";
+
+#[expect(
+    clippy::unwrap_used,
+    reason = "a fixture that fails to parse should fail the test loudly"
+)]
+fn custom() -> PriceTable {
+    PriceTable::parse(CUSTOM, PriceTableSource::Override).unwrap()
+}
+
+#[test]
+fn build_prices_with_the_table_the_caller_supplies() {
+    let records = vec![rec("s1", "a", Some("feat/x"))];
+    let table = custom();
+    let report = build(
+        records,
+        stats(),
+        Path::new("/repo"),
+        &[],
+        "feat/x",
+        false,
+        &table,
+    )
+    .unwrap();
+    // 10 input at $1M/MTok = $10, 5 output at $2M/MTok = $10.
+    assert_eq!(report.costs.cost_for("m"), Some(20.0));
+    assert_eq!(report.costs.price_table.as_of, "2031-02-03");
+    assert_eq!(report.costs.price_table.source, PriceTableSource::Override);
+}
+
+#[test]
+fn run_prices_with_the_table_the_caller_supplies() {
+    let git = FakeGit::new();
+    let source = FakeSource::new(vec![rec("s1", "a", Some("feat/x"))], stats());
+    let table = custom();
+    let report = run(
+        &git,
+        &source,
+        Path::new("/projects"),
+        Path::new("/repo"),
+        Some("feat/x"),
+        false,
+        &table,
+    )
+    .unwrap();
+    assert_eq!(report.costs.cost_for("m"), Some(20.0));
+    assert_eq!(report.costs.price_table.as_of, "2031-02-03");
+    assert_eq!(report.costs.price_table.source, PriceTableSource::Override);
 }
