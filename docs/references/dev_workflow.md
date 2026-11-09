@@ -193,7 +193,7 @@ same `just` recipes and `scripts/check-*.sh`.
 | Commit message | `commit-msg`: Conventional Commits | `commit-messages`: every commit in the PR; `pr-title`: the **PR title** |
 | Branch name | `pre-push`: Conventional Branch, and refuses a push to `main` | `branch-name`: the PR's head branch |
 | Tests | `pre-push`: `just test` | `test (ubuntu-latest)`, `test (macos-latest)`, `test (windows-latest)` and `msrv`: `just test` |
-| Release build | — | `build` (workflow `Build`): on a PR that touches `build.yml`, `release.yml`, `scripts/package.sh`, `scripts/smoke-test.sh` or `cliff.toml`, builds and smoke-tests all six release targets with a dummy version and publishes nothing ([release.md](release.md#proving-the-build-before-a-release)) |
+| Release build | — | `build` (workflow `Build`): on a PR that touches `build.yml`, `release.yml`, `scripts/package.sh`, `scripts/smoke-test.sh`, `cliff.toml`, `Cargo.lock` or `rust-toolchain.toml`, builds and smoke-tests all six release targets with a dummy version and publishes nothing ([release.md](release.md#proving-the-build-before-a-release)) |
 | Gate scripts | — | `scripts`: `just test-scripts` (so the commit and branch checks, and the packaging script, can't silently stop rejecting) and `just test-py` (the scrubber and goldens generator) |
 | Dependencies | — | `deny`: `cargo deny check` (licences, advisories, duplicates), once `deny.toml` exists |
 | New vulnerable dependencies | — | `dependency-review`: fails a PR that adds a dependency with a known vulnerability of moderate severity or worse |

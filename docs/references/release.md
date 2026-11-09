@@ -140,6 +140,10 @@ mint a new version.
 
 Each target is built on a native runner, so each binary is smoke-tested where it was built.
 
+The two musl targets need a musl C compiler, because `ring` compiles C and assembly. Ubuntu has
+no `<arch>-linux-musl-gcc`, so `build.yml` installs `musl-tools` and sets `CC_<target>=musl-gcc`.
+That works only because each musl target builds on a runner of its own architecture.
+
 | Target | Runner | Archive |
 | ------ | ------ | ------- |
 | `x86_64-unknown-linux-musl` | `ubuntu-24.04` | `.tar.gz` |
@@ -159,8 +163,10 @@ home directory, so it never reads the runner's transcripts.
 
 `release.yml` runs only from `main`, so it cannot be tried on a branch. `build.yml` therefore also
 runs on a **pull request** that changes `build.yml`, `release.yml`, `scripts/package.sh`,
-`scripts/smoke-test.sh` or `cliff.toml`. It builds the full matrix with the dummy version `v0.0.0`
-and uploads nothing to any release.
+`scripts/smoke-test.sh`, `cliff.toml`, `Cargo.lock` or `rust-toolchain.toml`. It builds the full
+matrix with the dummy version `v0.0.0` and uploads nothing to any release. The lockfile is on the
+list because a dependency can break one target only: `ring` (rustls's crypto, added in #53)
+compiles C, and nothing outside the release build compiles for musl.
 
 ## Verifying a download
 
