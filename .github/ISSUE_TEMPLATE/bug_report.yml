@@ -1,0 +1,109 @@
+name: Bug report
+description: Something is broken, or a reported number looks wrong.
+title: "fix: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Issues are public. **Never paste a transcript, a prompt, a response
+        or code from one.** branch-tally only needs usage, model, ids, timestamps, branch and cwd
+        to reproduce a problem. Found a security problem? Use the
+        [private advisory form](https://github.com/IAmSkweetis/branch-tally/security/advisories/new)
+        instead.
+
+        Name the issue as a Conventional Commit, for example
+        `fix(attribution): subagent records in a worktree land on main`.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Wrong numbers or attribution (records on the wrong branch, missing, or uncertain)
+        - Pricing (costs for a model)
+        - CLI (flags, errors, output format)
+        - GitHub Action
+        - Claude Code plugin or skill
+        - Installing or upgrading
+        - Something else
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: branch-tally version
+      description: Output of `branch-tally --version`, or the Action ref you use.
+      placeholder: branch-tally 0.3.0
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you run it
+      options:
+        - Release binary
+        - GitHub Action
+        - Claude Code plugin
+        - Built from source
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: harness
+    attributes:
+      label: Agent harness and version
+      description: The harness whose transcripts were read, for example `claude --version`.
+      placeholder: Claude Code 2.4.1
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command run
+      description: The exact command or workflow step.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: |
+        The output or error. Replace anything that isn't branch-tally's own output with a
+        placeholder. Redact branch, path or repository names you don't want public.
+    validations:
+      required: true
+  - type: textarea
+    id: numbers
+    attributes:
+      label: For wrong numbers
+      description: |
+        Skip unless the area is numbers, attribution or pricing. How many records the report
+        counted as uncertain or unattributed, whether git worktrees or subagents were involved,
+        and what total you expected and why.
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: >-
+            I have not pasted any transcript content (prompts, responses or code from a session),
+            secrets or tokens.
+          required: true

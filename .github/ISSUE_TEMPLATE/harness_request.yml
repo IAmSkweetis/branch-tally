@@ -1,0 +1,47 @@
+name: Support another agent harness
+description: Ask branch-tally to read transcripts from an agent other than Claude Code.
+title: "feat(sources): support "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Claude Code is supported today; Codex, Gemini CLI and OpenCode are planned on the
+        [roadmap](https://github.com/IAmSkweetis/branch-tally/issues/16). Issues are public:
+        describe the transcript format, but **never paste a real transcript**.
+  - type: input
+    id: harness
+    attributes:
+      label: Harness
+      placeholder: Name and version
+    validations:
+      required: true
+  - type: textarea
+    id: location
+    attributes:
+      label: Where it stores transcripts or usage logs
+      description: Directory layout and file format on each OS you know about.
+    validations:
+      required: true
+  - type: textarea
+    id: fields
+    attributes:
+      label: What it records
+      description: |
+        Which of these each record carries, and the field names: token usage (input, output,
+        cache), model, request or message id, timestamp, git branch, working directory, and
+        subagent or worktree links. Field names and types only, no values.
+    validations:
+      required: true
+  - type: textarea
+    id: docs
+    attributes:
+      label: Format documentation
+      description: Links to any official or community documentation of the format.
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: I have not pasted any transcript content, secrets or tokens.
+          required: true
