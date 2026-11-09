@@ -27,8 +27,15 @@ default:
 ci: lint lint-md test test-scripts secret-scan
 
 # Prove the commit-message and branch-name checks reject what they must and accept what they should.
-test-scripts: (_require "sh" "install Git for Windows, which ships sh: https://gitforwindows.org")
+[unix]
+test-scripts: (_require "sh" "install a POSIX sh")
     sh scripts/test-checks.sh
+
+# Git for Windows puts git.exe on PATH but usually not sh.exe, so fall back to the sh it ships
+# (<git>/bin/sh.exe, three levels above `git --exec-path`). Git runs the hooks with that same sh.
+[windows]
+test-scripts: (_require "git" "install Git for Windows: https://gitforwindows.org")
+    @$sh = (Get-Command sh -ErrorAction SilentlyContinue).Source; if (-not $sh) { $sh = Join-Path (git --exec-path) '../../../bin/sh.exe' }; if (-not (Test-Path $sh)) { [Console]::Error.WriteLine('error: sh not found on PATH or beside git; install Git for Windows: https://gitforwindows.org'); exit 1 }; & $sh scripts/test-checks.sh; exit $LASTEXITCODE
 
 # nextest over the workspace, then doctests (nextest does not run them). Zero tests is a failure.
 test filter="": (_require-rust "cargo-nextest" "install it: cargo install cargo-nextest --locked")
