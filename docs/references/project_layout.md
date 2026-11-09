@@ -13,10 +13,10 @@ places a new file belongs in**.
 | Path | Holds | Notes |
 | ---- | ----- | ----- |
 | `crates/branch-tally-core/` | The library: every piece of logic | See below. |
-| `crates/branch-tally/` | The binary: CLI parsing and wiring | Thin by design. |
+| `crates/branch-tally/` | The binary: CLI parsing and wiring | Thin by design. `src/prices.rs` holds the `prices` subcommand, the `ureq` `PriceFeed`, the cache path and the table lookup `report` shares (#5). |
 | `tests/fixtures/<harness>/` | Scrubbed transcript trees, one directory per scenario | Shared by both crates' tests. See [testing.md](testing.md#fixtures). |
 | `reference/token_report.py` | The original Python script, **immutable** | The parity oracle, run only by the golden generator (`just goldens`). This repository's PR token reports come from branch-tally itself (#41). It is never edited, not even to fix a bug, and nothing else is ever added to `reference/`. New Python goes in `scripts/`. |
-| `data/` | Data shipped with the binary, such as the bundled price table | *planned* (#5). Tuned, not coded. |
+| `data/` | Data shipped with the binary, such as the bundled price table | The bundled price table lives in `crates/branch-tally-core/data/prices.toml` so the crate packages it (#5). Tuned, not coded. |
 | `plugin/` | The **shipped** Claude Code plugin: manifest and the skill users install | *planned* (#11). Not this repository's own skills. |
 | `action.yml` | The **shipped** GitHub Action | *planned* (#12). Must sit at the root for `uses: IAmSkweetis/branch-tally@v1`. |
 | `docs/references/` | Reference pages | This page lives here. |
@@ -62,7 +62,7 @@ table, plus `model`:
 | `attribution` | Assigning each record to a branch, with a certainty level | format output, or read files itself |
 | `summary` | Aggregating attributed records into the by-model, by-attribution and by-session tables (the reference's `summarize`) | assign branches, price, or format output |
 | `ledger` | Reading and writing the repository ledger (#8) | know about any one harness |
-| `pricing` | Costing a `Usage`. The `report` port's rates are one const table ported verbatim from the reference, to be replaced by data in #5 | define a price anywhere else |
+| `pricing` | Costing a summary from a `PriceTable`. Rates live in data, never in Rust: the bundled `crates/branch-tally-core/data/prices.toml` (embedded with `include_str!`, schema in its header), a per-user cache and `.tally/prices.toml`. Lookup is override, then cache, then bundled; each is a complete table and the first found wins whole, so one table has one date. A malformed override or cache is an error naming the file, never a fall-through. `from_litellm` converts the LiteLLM feed behind the `PriceFeed` trait (the HTTP impl is the CLI's) | define a price in code, merge tables per model, or fetch over the network |
 | `render` | Markdown and JSON output (CSV is deferred to #36) from an already-computed summary | compute totals or read transcripts |
 | `report` | The pipeline entry point: `build` (pure: records + worktrees + branch + strict to `Summary` and `Costs`, or an explicit no-records error) and `run` (the reference's `main()` resolution behind the `Git` and `Source` traits) | attribute, price or format anything itself; it only chains the stages |
 | `pr` | The `Gh` trait (the GitHub CLI, with a fake for tests) and `update_pr`: find the PR, splice the report into its body, say what happened. The real `SystemGh` writes the body to gh as UTF-8 bytes | build the report, or run anywhere but the CLI's `--pr` path |

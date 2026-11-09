@@ -7,7 +7,7 @@
 use std::cmp::Reverse;
 use std::fmt::Write as _;
 
-use crate::model::{Costs, Summary};
+use crate::model::{Costs, PriceTableSource, Summary};
 
 /// Opens the region of a PR body this tool owns.
 pub const START: &str = "<!-- token-report:start -->";
@@ -45,6 +45,36 @@ fn clock(ts: &str) -> String {
 )]
 fn millions(tokens: u64) -> String {
     format!("{:.1}M", tokens as f64 / 1e6)
+}
+
+/// The total cost cell. A partial total is a floor (Governance II), so the cell says so itself.
+fn total_cost_cell(costs: &Costs) -> String {
+    let floor = if costs.is_floor() { "at least " } else { "" };
+    format!(" **{floor}${:.2}** |", costs.total)
+}
+
+/// The footnote segments that say which prices produced the costs and what could not be priced.
+/// An empty date means no table was consulted: say so rather than invent one.
+fn price_note(costs: &Costs) -> String {
+    let table = &costs.price_table;
+    let mut note = if table.as_of.is_empty() {
+        " \u{b7} price table date unknown".to_owned()
+    } else {
+        let source = match table.source {
+            PriceTableSource::Bundled => "bundled table",
+            PriceTableSource::Cache => "cached from LiteLLM",
+            PriceTableSource::Override => ".tally/prices.toml",
+        };
+        format!(" \u{b7} prices as of {} ({source})", table.as_of)
+    };
+    if costs.is_floor() {
+        let _ = write!(
+            note,
+            " \u{b7} {} model(s) unpriced, total is a floor",
+            costs.unpriced_models
+        );
+    }
+    note
 }
 
 /// The report (`render` in the reference): no trailing newline, no markers.
@@ -89,7 +119,7 @@ pub fn markdown(summary: &Summary, costs: &Costs, show_cost: bool) -> String {
         ));
     }
     let total_cell = if show_cost {
-        format!(" **${:.2}** |", costs.total)
+        total_cost_cell(costs)
     } else {
         String::new()
     };
@@ -134,11 +164,12 @@ pub fn markdown(summary: &Summary, costs: &Costs, show_cost: bool) -> String {
         n(total.calls),
         millions(summary.footnote.off_branch_tokens),
     );
-    note.push_str(if show_cost {
-        " \u{b7} est. cost at list API rates, not amounts billed</sub>"
+    if show_cost {
+        note.push_str(&price_note(costs));
+        note.push_str(" \u{b7} est. cost at list API rates, not amounts billed</sub>");
     } else {
-        "</sub>"
-    });
+        note.push_str("</sub>");
+    }
     o.push(note);
     o.push(String::new());
 

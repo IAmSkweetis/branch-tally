@@ -8,6 +8,7 @@ use std::path::Path;
 
 use crate::git::{Git, GitError, Worktree};
 use crate::model::{Costs, Mode, Record, Summary};
+use crate::pricing::PriceTable;
 use crate::sources::{ReadStats, RepoIdentity, Source, SourceError};
 
 /// A finished report: what the renderers take, plus what the read skipped.
@@ -50,6 +51,8 @@ pub enum ReportError {
 /// `worktrees` is git's branch-holding worktree list, which includes the main checkout itself
 /// (kept as the reference does; #37).
 ///
+/// `table` prices the summary; the caller resolves it (override, cache or bundled).
+///
 /// # Errors
 ///
 /// [`ReportError::NoRecords`] when nothing is selected.
@@ -60,6 +63,7 @@ pub fn build(
     worktrees: &[Worktree],
     branch: &str,
     strict: bool,
+    table: &PriceTable,
 ) -> Result<Report, ReportError> {
     let map = crate::attribution::WorktreeMap::new(
         main_checkout,
@@ -77,7 +81,7 @@ pub fn build(
     }
     let mode = if strict { Mode::Strict } else { Mode::Claim };
     let summary = crate::summary::summarize(branch, mode, &selected);
-    let costs = crate::pricing::price(&summary);
+    let costs = crate::pricing::price(&summary, table);
     Ok(Report {
         branch: branch.to_owned(),
         summary,
@@ -101,6 +105,7 @@ pub fn run(
     repo_dir: &Path,
     branch: Option<&str>,
     strict: bool,
+    table: &PriceTable,
 ) -> Result<Report, ReportError> {
     let branch = match branch {
         Some(b) => b.to_owned(),
@@ -114,7 +119,15 @@ pub fn run(
         Ok(w) => (w, None),
         Err(e) => (Vec::new(), Some(e)),
     };
-    let mut report = build(records, stats, &main_checkout, &worktrees, &branch, strict)?;
+    let mut report = build(
+        records,
+        stats,
+        &main_checkout,
+        &worktrees,
+        &branch,
+        strict,
+        table,
+    )?;
     report.worktrees_unavailable = unavailable;
     Ok(report)
 }

@@ -161,21 +161,38 @@ impl World {
         world
     }
 
+    /// The per-user cache root the binary sees: `LOCALAPPDATA` and `XDG_CACHE_HOME` both point
+    /// here, and macOS derives it from `HOME`, so a developer's real cache never leaks in.
+    pub(crate) fn cache_root(&self) -> PathBuf {
+        if cfg!(target_os = "macos") {
+            self.home.join("Library").join("Caches")
+        } else {
+            self.home.join("cache-root")
+        }
+    }
+
     /// Runs the binary in the repository with this world's home.
     pub(crate) fn run(&self, args: &[&str]) -> Output {
         self.run_in(&self.repo, args)
     }
 
     pub(crate) fn run_in(&self, cwd: &Path, args: &[&str]) -> Output {
-        Command::new(BIN)
+        self.command(cwd, args).output().expect("run branch-tally")
+    }
+
+    pub(crate) fn command(&self, cwd: &Path, args: &[&str]) -> Command {
+        let mut command = Command::new(BIN);
+        command
             .args(args)
             .current_dir(cwd)
             .env("HOME", &self.home)
             .env("USERPROFILE", &self.home)
+            .env("LOCALAPPDATA", self.cache_root())
+            .env("XDG_CACHE_HOME", self.cache_root())
+            .env_remove("BRANCH_TALLY_PRICES_URL")
             .env("GIT_CONFIG_GLOBAL", null_device())
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .output()
-            .expect("run branch-tally")
+            .env("GIT_CONFIG_NOSYSTEM", "1");
+        command
     }
 
     /// Replaces each non-main session origin with the fixture directory it came from.

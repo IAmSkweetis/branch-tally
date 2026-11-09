@@ -28,6 +28,26 @@ pub(crate) struct Cli {
 pub(crate) enum Command {
     /// Report Claude Code token usage for a git branch.
     Report(ReportArgs),
+
+    /// Manage the model price table.
+    #[command(subcommand)]
+    Prices(PricesCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum PricesCommand {
+    /// Refresh the per-user price cache from the `LiteLLM` model price list.
+    Update,
+
+    /// Show which price table reports would use, with its source, date and path.
+    Show(ShowArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ShowArgs {
+    /// Repository path (default: cwd), used to find `.tally/prices.toml`.
+    #[arg(long, default_value = ".", value_name = "PATH")]
+    pub(crate) repo: PathBuf,
 }
 
 #[derive(Debug, Args)]

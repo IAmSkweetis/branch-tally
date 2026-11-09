@@ -282,6 +282,41 @@ fn worktrees_for(manifest: &Value) -> Vec<Worktree> {
     list
 }
 
+/// Top-level JSON keys Rust adds that the reference does not have (#5): the floor flag, the
+/// names of unpriced models and the price table's date and source. They are the only keys exempt
+/// from the comparison; every other key must equal the golden exactly.
+const PRICE_DIVERGENT_KEYS: &[&str] = &["totalCostIsFloor", "unpricedModels", "priceTable"];
+
+/// Checks the #5 keys are present and agree with the report's own per-model costs, then removes
+/// them so the rest of the payload can be compared with the golden.
+fn without_price_divergences(mut payload: Value) -> Value {
+    let object = payload.as_object_mut().unwrap();
+    let unpriced: Vec<Value> = object["models"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .filter(|(_, m)| m["costUSD"].is_null())
+        .map(|(name, _)| Value::String(name.clone()))
+        .collect();
+    assert_eq!(
+        object["totalCostIsFloor"],
+        Value::Bool(!unpriced.is_empty()),
+        "floor flag disagrees with the unpriced models"
+    );
+    let mut named: Vec<Value> = object["unpricedModels"].as_array().unwrap().clone();
+    named.sort_by_key(ToString::to_string);
+    let mut want = unpriced;
+    want.sort_by_key(ToString::to_string);
+    assert_eq!(named, want, "unpricedModels disagrees with the models");
+    for key in PRICE_DIVERGENT_KEYS {
+        assert!(
+            object.remove(*key).is_some(),
+            "{key} missing from the report"
+        );
+    }
+    payload
+}
+
 /// Rust's report for `branch` as the reference's `--json` payload, or `{"error":"no_records"}`.
 fn rust_payload(dir: &Path, manifest: &Value, branch: &str, strict: bool) -> Value {
     match report::build(
@@ -291,8 +326,11 @@ fn rust_payload(dir: &Path, manifest: &Value, branch: &str, strict: bool) -> Val
         &worktrees_for(manifest),
         branch,
         strict,
+        branch_tally_core::pricing::PriceTable::bundled(),
     ) {
-        Ok(r) => serde_json::from_str(&render::json(&r.summary, &r.costs)).unwrap(),
+        Ok(r) => without_price_divergences(
+            serde_json::from_str(&render::json(&r.summary, &r.costs)).unwrap(),
+        ),
         Err(ReportError::NoRecords { .. }) => serde_json::json!({"error": "no_records"}),
         Err(e) => panic!("{branch}: {e}"),
     }

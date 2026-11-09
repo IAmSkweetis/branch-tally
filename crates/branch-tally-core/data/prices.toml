@@ -1,0 +1,129 @@
+# Bundled price table: the lowest layer of the lookup order
+# (`.tally/prices.toml` > user cache > this file). Each layer is a COMPLETE table; the first one
+# found wins whole, with no per-model merging, so `as_of` is always the date of the whole table.
+#
+# Schema (the same for the override and the cache file):
+#   as_of                  required. ISO-8601 date `YYYY-MM-DD`, quoted: when the numbers were true.
+#   [cache_write]          optional. Global cache-write multipliers on the input rate.
+#     five_minute          default 1.25
+#     one_hour             default 2.0
+#   [cache_read]           optional.
+#     default_factor       default 0.1: cache reads cost this fraction of the input rate.
+#   [models."<id>"]        one table per model. Ids match by LONGEST PREFIX, so
+#                          "claude-fable-5-1" also prices "claude-fable-5-1[1m]".
+#     input                required. $/MTok.
+#     output               required. $/MTok.
+#     cache_read           optional. $/MTok override of the default factor for this model.
+#     cache_write_5m       optional. Per-model multiplier replacing [cache_write].five_minute.
+#     cache_write_1h       optional. Per-model multiplier replacing [cache_write].one_hour.
+#
+# Seeded from LiteLLM's model_prices_and_context_window.json (BerriAI/litellm, main) by
+# `branch-tally prices update` on the as_of date below, then copied here verbatim (#5). It no
+# longer follows reference/token_report.py's PRICES. Refresh with `branch-tally prices update`,
+# which writes a per-user cache that takes precedence over this file.
+
+as_of = "2026-11-09"
+
+[cache_write]
+five_minute = 1.25
+one_hour = 2.0
+
+[cache_read]
+default_factor = 0.1
+
+[models."claude-fable-5"]
+input = 10.0
+output = 50.0
+
+[models."claude-fable-5-1"]
+input = 10.0
+output = 50.0
+cache_read = 0.25
+
+[models."claude-fable-5-2"]
+input = 8.0
+output = 40.0
+cache_read = 0.2
+
+[models."claude-haiku-4-5"]
+input = 1.0
+output = 5.0
+
+[models."claude-haiku-4-5-20251001"]
+input = 1.0
+output = 5.0
+
+[models."claude-haiku-5-5"]
+input = 0.1
+output = 0.5
+
+[models."claude-mythos-5"]
+input = 10.0
+output = 50.0
+
+[models."claude-mythos-5-1"]
+input = 10.0
+output = 50.0
+cache_read = 0.25
+
+[models."claude-mythos-preview"]
+input = 10.0
+output = 50.0
+
+[models."claude-opus-4-5"]
+input = 5.0
+output = 25.0
+
+[models."claude-opus-4-5-20251101"]
+input = 5.0
+output = 25.0
+
+[models."claude-opus-4-6"]
+input = 5.0
+output = 25.0
+
+[models."claude-opus-4-6-20260205"]
+input = 5.0
+output = 25.0
+
+[models."claude-opus-4-7"]
+input = 5.0
+output = 25.0
+
+[models."claude-opus-4-7-20260416"]
+input = 5.0
+output = 25.0
+
+[models."claude-opus-4-8"]
+input = 5.0
+output = 25.0
+
+[models."claude-opus-5"]
+input = 5.0
+output = 25.0
+
+[models."claude-opus-5-5"]
+input = 4.0
+output = 20.0
+cache_read = 0.2
+
+[models."claude-sonnet-4-5"]
+input = 3.0
+output = 15.0
+
+[models."claude-sonnet-4-5-20250929"]
+input = 3.0
+output = 15.0
+
+[models."claude-sonnet-4-6"]
+input = 3.0
+output = 15.0
+
+[models."claude-sonnet-5"]
+input = 2.0
+output = 10.0
+
+[models."claude-sonnet-5-5"]
+input = 2.0
+output = 10.0
+cache_read = 0.1

@@ -15,7 +15,7 @@ mod costs;
 mod summary;
 
 pub use attributed::{AttributedRecord, BranchBasis, SelectedRecord, Selection};
-pub use costs::Costs;
+pub use costs::{Costs, PriceTableInfo, PriceTableSource};
 pub use summary::{Bucket, Footnote, Mode, SessionRow, Summary};
 
 /// The transcript root a record was read from (`origin` in `load_records` of

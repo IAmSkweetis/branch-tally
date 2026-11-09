@@ -63,12 +63,25 @@ fn check_against_golden(golden: &str, extra: &[&str]) -> usize {
                 );
                 let mut got: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
                 world.normalize(&mut got);
+                strip_price_divergences(&mut got);
                 assert_eq!(&got, want, "{name} {branch}");
             }
             compared += 1;
         }
     }
     compared
+}
+
+/// Top-level JSON keys the reference does not have (#5): the floor flag, the unpriced model names
+/// and the price table's date and source. Each must be present; they are the only keys exempt
+/// from the golden comparison.
+const PRICE_DIVERGENT_KEYS: &[&str] = &["totalCostIsFloor", "unpricedModels", "priceTable"];
+
+fn strip_price_divergences(payload: &mut serde_json::Value) {
+    let object = payload.as_object_mut().unwrap();
+    for key in PRICE_DIVERGENT_KEYS {
+        assert!(object.remove(*key).is_some(), "{key} missing from --json");
+    }
 }
 
 fn py_repr(s: &str) -> String {
@@ -312,6 +325,19 @@ fn help_exits_0_and_lists_the_flags_without_the_projects_override() {
     assert!(!text.contains("--csv"));
 }
 
+/// Stderr without the unpriced-model warnings (#5), which `tests/prices.rs` pins. These fixtures
+/// use a model id no price table knows, so every run carries one.
+fn notes(out: &std::process::Output) -> String {
+    stderr(out)
+        .lines()
+        .filter(|l| !l.starts_with("warning: no price for "))
+        .fold(String::new(), |mut acc, l| {
+            acc.push_str(l);
+            acc.push('\n');
+            acc
+        })
+}
+
 const SKIP_NOTE: &str =
     "note: skipped 3 transcript record(s): 2 malformed, 1 without a request id\n";
 
@@ -320,10 +346,10 @@ fn skipped_records_are_noted_on_stderr_and_stdout_is_untouched() {
     let world = World::scenario("malformed-and-keyless");
     let out = world.run(&["report", "main"]);
     assert_eq!(out.status.code(), Some(0));
-    assert_eq!(stderr(&out), SKIP_NOTE);
+    assert_eq!(notes(&out), SKIP_NOTE);
     assert!(stdout(&out).starts_with("<!-- token-report:start -->\n"));
     let json = world.run(&["report", "main", "--json"]);
-    assert_eq!(stderr(&json), SKIP_NOTE);
+    assert_eq!(notes(&json), SKIP_NOTE);
     assert!(stdout(&json).starts_with("{\n"));
 }
 
@@ -333,7 +359,7 @@ fn skipped_records_are_noted_before_the_no_records_error() {
     let out = world.run(&["report", "nope"]);
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(
-        stderr(&out),
+        notes(&out),
         format!("{SKIP_NOTE}No transcript records found for branch 'nope'{NO_RECORDS_TAIL}\n")
     );
 }
@@ -343,7 +369,7 @@ fn synthetic_records_are_counted_in_the_note() {
     let world = World::scenario("synthetic");
     let out = world.run(&["report", "main"]);
     assert_eq!(
-        stderr(&out),
+        notes(&out),
         "note: skipped 1 transcript record(s): 1 synthetic\n"
     );
 }
@@ -356,7 +382,7 @@ fn replays_and_clean_reads_print_no_note() {
         let world = World::scenario(scenario);
         let out = world.run(&["report", branch, "--json"]);
         assert_eq!(out.status.code(), Some(0), "{scenario}");
-        assert_eq!(stderr(&out), "", "{scenario}");
+        assert_eq!(notes(&out), "", "{scenario}");
     }
 }
 

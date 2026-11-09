@@ -112,13 +112,13 @@ reference once per pair. It writes, next to the manifest:
 - `goldens/strict.json`: `{"<raw gitBranch>": <--strict --json payload>}`, one key per distinct
   raw `gitBranch` in the usage-bearing records the reference reads (`"(none)"` for records with
   none). These feed the Phase 0 parity test: calls kept and token totals, per session and model.
-- `goldens/claim.json`: the same shape for the manifest's `claim_branches`, run without
-  `--strict`. They feed `rust_report_matches_the_reference_claim_goldens` (#4), which compares
-  the full `render::json` report against every `claim.json` key (claim mode) and every `strict.json`
-  key (strict mode) as parsed JSON, through `report::build`. Worktrees are built as git lists them
-  (main checkout on `main`, then `.claude/worktrees/<name>`), the reference's #37 behaviour kept
-  as is. Origins are compared lowercased: the reference lowercases them and the generator maps
-  them back to fixture spelling, which is not behaviour. No divergences are listed.
+- `goldens/claim.json`: the same shape for the manifest's `claim_branches`, run without `--strict`.
+  They feed `rust_report_matches_the_reference_claim_goldens` (#4), which compares the full
+  `render::json` report against every `claim.json` key (claim mode) and every `strict.json` key
+  (strict mode) as parsed JSON, through `report::build`. Worktrees are built as git lists them (main
+  checkout on `main`, then `.claude/worktrees/<name>`), the reference's #37 behaviour kept as is.
+  Origins are compared lowercased: the reference lowercases them and the generator maps them back to
+  fixture spelling, which is not behaviour. One output divergence is listed (#5, below).
 
 A pair the reference answers with "No transcript records found" is recorded as
 `{"error": "no_records"}`, never dropped. Any other failure aborts the run. Session `origin` is
@@ -160,6 +160,26 @@ expected behaviour directly, next to the same issue number. `malformed-and-keyle
   `reference_divergence`; currently `malformed-and-keyless`, #3) and `DIVERGENCES` (a scenario
   and branch key where Rust deliberately differs, with its issue). A listed key must still
   differ, so an entry cannot outlive its reason. `DIVERGENCES` is empty today.
+- Output divergence #5 (price table and floor): the JSON report has three top-level keys the
+  reference lacks, `totalCostIsFloor`, `unpricedModels` and `priceTable` (`asOf`, `source`), and
+  the Markdown report labels a partial total "at least $X" and states the price table date in the
+  footnote. The three keys are listed in `PRICE_DIVERGENT_KEYS` in `parity_claude_code.rs`,
+  and `branch-tally/tests/report.rs` (inline in `tests/render.rs`). Each test asserts the
+  keys are present and consistent with the per-model costs, removes only those, then compares
+  everything else to the goldens exactly. Markdown is not compared with the reference.
+- The bundled table was reseeded from LiteLLM's current rates (#5), not the reference's `PRICES`.
+  Every model the goldens price (`claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-4-6`) has the
+  same input, output and cache-read rate in both, so every cost still matches the goldens exactly
+  and `DIVERGENCES` stays empty. A listed divergence must still differ, so none was added. If a
+  later reseed moves one of those rates, list exactly the cost keys (`totalCostUSD`, `costUSD`)
+  in `DIVERGENCES` and in `crates/branch-tally/tests/report.rs`, with the reason "bundled prices
+  come from LiteLLM, not token_report.py's PRICES", and keep every token and call key compared.
+- The price table is tested end to end in `crates/branch-tally/tests/prices.rs`: override, cache
+  and bundled lookup, the unpriced-model warning, and `prices update` and `prices show`. No test
+  reaches the network: `update` talks to a loopback server through `BRANCH_TALLY_PRICES_URL`, a
+  **test-only** variable. The harness points `LOCALAPPDATA` and `XDG_CACHE_HOME` (and `HOME`,
+  which macOS derives the cache from) at the throwaway home so a developer's real cache never
+  leaks into a run. The update logic is also unit-tested with an injected feed, date and path.
 - `rust_report_matches_the_reference_claim_goldens` is live (not ignored). It compares the full
   `render::json` report with every `claim.json` key (`EXPECTED_CLAIM_PAIRS`, 27) and every
   `strict.json` key, as described above.
