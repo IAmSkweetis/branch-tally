@@ -218,6 +218,7 @@ fn malformed_keyless_and_non_usage_lines_are_counted_correctly() {
             no_dedupe_key: 1,
             synthetic: 0,
             duplicates_removed: 1,
+            fallback_key_used: 0,
         }
     );
     // The uuid fallback supplies the dedupe key.

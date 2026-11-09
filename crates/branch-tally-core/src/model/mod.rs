@@ -136,6 +136,11 @@ pub struct Record {
     pub git_branch: Option<String>,
     /// Whether the harness marked the call as made by a sidechain (subagent).
     pub is_sidechain: bool,
+    /// `true` when `request_id` holds a fallback key (another stable id the harness stamped on
+    /// the call) rather than the harness's own request id. The call is still de-duplicated on
+    /// it, but a consumer can tell the match was not on a real request id.
+    #[serde(default)]
+    pub request_id_is_fallback: bool,
     /// The skill or agent stamps.
     pub attribution: Attribution,
     /// Token counts.
@@ -163,6 +168,7 @@ impl Record {
             cwd: None,
             git_branch: None,
             is_sidechain: false,
+            request_id_is_fallback: false,
             attribution: Attribution::default(),
             usage,
         }
@@ -190,6 +196,24 @@ mod tests {
         r.git_branch = Some("feat/x".to_owned());
         r.is_sidechain = true;
         r
+    }
+
+    #[test]
+    fn new_record_does_not_use_a_fallback_key() {
+        assert!(!sample().request_id_is_fallback);
+    }
+
+    #[test]
+    fn fallback_flag_round_trips_and_defaults_when_absent() {
+        let mut r = sample();
+        r.request_id_is_fallback = true;
+        let json = serde_json::to_string(&r).unwrap();
+        let back: Record = serde_json::from_str(&json).unwrap();
+        assert!(back.request_id_is_fallback);
+        let mut v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        v.as_object_mut().unwrap().remove("request_id_is_fallback");
+        let old: Record = serde_json::from_value(v).unwrap();
+        assert!(!old.request_id_is_fallback);
     }
 
     #[test]
