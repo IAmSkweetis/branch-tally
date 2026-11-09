@@ -32,6 +32,7 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), String> {
         &cwd,
         args.branch.as_deref(),
         args.strict,
+        branch_tally_core::pricing::PriceTable::bundled(),
     )
     .map_err(|e| {
         if let ReportError::NoRecords { read_stats, .. } = &e {
