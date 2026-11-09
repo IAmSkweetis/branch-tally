@@ -10,6 +10,57 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+mod attributed;
+mod summary;
+
+pub use attributed::{AttributedRecord, BranchBasis, SelectedRecord, Selection};
+pub use summary::{Bucket, SessionRow, Summary};
+
+/// The transcript root a record was read from (`origin` in `load_records` of
+/// `reference/token_report.py`): the main checkout's directory, or a worktree's.
+///
+/// A worktree slug is compared **case-insensitively** (AGENTS.md Paths), so `Eq` and `Hash` ignore
+/// ASCII case. The text is kept as the source supplied it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Origin {
+    /// The main checkout's slug directory.
+    Main,
+    /// A worktree's slug directory, by name.
+    Worktree(String),
+}
+
+impl Origin {
+    /// An origin for a worktree transcript directory name.
+    #[must_use]
+    pub fn worktree(slug: impl Into<String>) -> Self {
+        Self::Worktree(slug.into())
+    }
+
+    /// `"main"`, or the worktree slug lowercased, as the reference's `origin` column holds it.
+    #[must_use]
+    pub fn label(&self) -> String {
+        match self {
+            Self::Main => "main".to_owned(),
+            Self::Worktree(slug) => slug.to_lowercase(),
+        }
+    }
+}
+
+impl PartialEq for Origin {
+    fn eq(&self, other: &Self) -> bool {
+        self.label() == other.label()
+    }
+}
+
+impl Eq for Origin {}
+
+impl std::hash::Hash for Origin {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.label().hash(state);
+    }
+}
+
 /// An agent harness whose transcripts branch-tally can read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -17,6 +68,15 @@ use serde::{Deserialize, Serialize};
 pub enum Harness {
     /// Anthropic's Claude Code.
     ClaudeCode,
+}
+
+impl Usage {
+    /// The reference's `Record.tokens`: input, both cache writes, cache read and output.
+    /// `thinking` is excluded because it is already inside `output`.
+    #[must_use]
+    pub fn tokens(&self) -> u64 {
+        self.input + self.cache_write_5m + self.cache_write_1h + self.cache_read + self.output
+    }
 }
 
 impl Harness {
@@ -141,6 +201,10 @@ pub struct Record {
     /// it, but a consumer can tell the match was not on a real request id.
     #[serde(default)]
     pub request_id_is_fallback: bool,
+    /// The transcript root the call was read from, when the source can tell. Used by attribution
+    /// to recover a missing branch and shown as the session's origin.
+    #[serde(default)]
+    pub origin: Option<Origin>,
     /// The skill or agent stamps.
     pub attribution: Attribution,
     /// Token counts.
@@ -169,6 +233,7 @@ impl Record {
             git_branch: None,
             is_sidechain: false,
             request_id_is_fallback: false,
+            origin: None,
             attribution: Attribution::default(),
             usage,
         }
@@ -214,6 +279,43 @@ mod tests {
         v.as_object_mut().unwrap().remove("request_id_is_fallback");
         let old: Record = serde_json::from_value(v).unwrap();
         assert!(!old.request_id_is_fallback);
+    }
+
+    #[test]
+    fn origin_compares_slugs_case_insensitively() {
+        assert_eq!(
+            Origin::worktree("D--Repo--Claude-Worktrees-A"),
+            Origin::worktree("d--repo--claude-worktrees-a")
+        );
+        assert_ne!(Origin::worktree("a"), Origin::worktree("b"));
+        assert_ne!(Origin::Main, Origin::worktree("x"));
+        let mut set = std::collections::HashSet::new();
+        set.insert(Origin::worktree("ABC"));
+        assert!(set.contains(&Origin::worktree("abc")));
+    }
+
+    #[test]
+    fn origin_label_matches_the_reference_column() {
+        assert_eq!(Origin::Main.label(), "main");
+        assert_eq!(Origin::worktree("D--Repo-Wt").label(), "d--repo-wt");
+    }
+
+    #[test]
+    fn origin_defaults_to_none_and_is_optional_in_serde() {
+        let mut r = sample();
+        assert_eq!(r.origin, None);
+        r.origin = Some(Origin::worktree("d--wt"));
+        let json = serde_json::to_string(&r).unwrap();
+        assert_eq!(serde_json::from_str::<Record>(&json).unwrap(), r);
+        let mut v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        v.as_object_mut().unwrap().remove("origin");
+        let old: Record = serde_json::from_value(v).unwrap();
+        assert_eq!(old.origin, None);
+    }
+
+    #[test]
+    fn usage_tokens_sum_five_fields_and_leave_thinking_out() {
+        assert_eq!(sample().usage.tokens(), 15);
     }
 
     #[test]
