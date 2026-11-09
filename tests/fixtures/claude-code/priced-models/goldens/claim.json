@@ -1,0 +1,61 @@
+{
+  "main": {
+    "branch": "main",
+    "mode": "claim",
+    "models": {
+      "claude-fable-5-1": {
+        "cacheRead": 3543209,
+        "cacheWrite1h": 7108,
+        "cacheWrite5m": 13320,
+        "calls": 2,
+        "costUSD": 2.6574,
+        "input": 112344,
+        "output": 6789,
+        "thinking": 0
+      },
+      "claude-mystery-9": {
+        "cacheRead": 3333,
+        "cacheWrite1h": 55,
+        "cacheWrite5m": 444,
+        "calls": 1,
+        "costUSD": null,
+        "input": 11111,
+        "output": 2222,
+        "thinking": 0
+      },
+      "claude-opus-5[1m]": {
+        "cacheRead": 98765443,
+        "cacheWrite1h": 54338,
+        "cacheWrite5m": 876556,
+        "calls": 2,
+        "costUSD": 96.7628,
+        "input": 7654324,
+        "output": 123464,
+        "thinking": 0
+      },
+      "claude-sonnet-4-6": {
+        "cacheRead": 4569002,
+        "cacheWrite1h": 34567,
+        "cacheWrite5m": 234789,
+        "calls": 2,
+        "costUSD": 7.5064,
+        "input": 1235344,
+        "output": 89456,
+        "thinking": 0
+      }
+    },
+    "sessions": [
+      {
+        "agents": [],
+        "calls": 7,
+        "first": "2026-01-01T00:00:01.000Z",
+        "id": "s1",
+        "last": "2026-01-01T00:00:07.000Z",
+        "origin": "main",
+        "tokens": 117337218
+      }
+    ],
+    "totalCalls": 7,
+    "totalCostUSD": 106.9266
+  }
+}
