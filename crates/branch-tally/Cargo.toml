@@ -4,7 +4,7 @@ description = "Report what a branch or pull request cost in AI-agent tokens"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+license = "GPL-3.0-only"
 repository.workspace = true
 publish = false
 
