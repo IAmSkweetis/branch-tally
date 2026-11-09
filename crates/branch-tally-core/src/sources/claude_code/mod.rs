@@ -20,6 +20,10 @@
 //! - `Record::session_id`: the record's `sessionId`, else the parent session (subagent file) or
 //!   the file stem (main file).
 //!
+//! - `Record::origin`: `Origin::Main` for records under the main checkout's root (including its
+//!   `subagents/` files, as the reference does; see #6), `Origin::Worktree(<root dir name>)` for a
+//!   worktree sibling root.
+//!
 //! # Privacy
 //!
 //! Content fields are not deserialized, and errors carry paths only.
@@ -28,7 +32,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::model::{Harness, Record};
+use crate::model::{Harness, Origin, Record};
 use crate::sources::{ReadStats, RepoIdentity, RootKind, Source, SourceError, TranscriptRoot};
 
 mod parse;
@@ -119,6 +123,12 @@ impl Source for ClaudeCode {
         let mut seen = HashSet::new();
         for root in roots {
             let root_path = root.path();
+            // Same rule as the reference: the main checkout's root is "main", any other root is
+            // tagged by its own directory name. Subagent files share their root's origin.
+            let origin = match root.kind() {
+                RootKind::Repository => Origin::Main,
+                RootKind::Worktree => Origin::worktree(file_name(root_path)),
+            };
             for file in sorted_entries(root_path, false)?
                 .into_iter()
                 .filter(|p| is_jsonl(p))
@@ -130,6 +140,7 @@ impl Source for ClaudeCode {
                 let ctx = FileContext {
                     parent_session: None,
                     fallback_session: &stem,
+                    origin: &origin,
                 };
                 read_file(&file, &ctx, &mut seen, &mut stats, sink)?;
             }
@@ -146,6 +157,7 @@ impl Source for ClaudeCode {
                     let ctx = FileContext {
                         parent_session: Some(&parent),
                         fallback_session: &parent,
+                        origin: &origin,
                     };
                     read_file(&file, &ctx, &mut seen, &mut stats, sink)?;
                 }
