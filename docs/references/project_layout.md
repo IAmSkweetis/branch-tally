@@ -49,7 +49,7 @@ strangers, tested, and must work on a machine that has never seen this repositor
 skill or workflow serves only us. They have different owners
 ([agents.md](agents.md#who-owns-a-given-path)), and one must never be "fixed" by editing the other.
 
-## Inside `branch-tally-core` *(`model` and the `Source` trait exist; `git`, `attribution`, `summary`, `pricing` and `render` are documented stubs; others planned)*
+## Inside `branch-tally-core` *(`model` and the `Source` trait exist; `git`, `attribution`, `summary`, `pricing` are documented stubs; `render` is implemented; others planned)*
 
 The modules follow the pipeline, in order. A module may depend only on modules **above** it in this
 table, plus `model`:
