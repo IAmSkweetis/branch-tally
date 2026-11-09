@@ -24,6 +24,11 @@ allow = [
     "Zlib",
 ]
 confidence-threshold = 0.93
+# Scoped to one crate, not added to `allow`. webpki-roots is Mozilla's CA bundle, pulled in by
+# ureq's rustls feature (issue #5) so TLS trusts the same roots on all six targets. CDLA-Permissive-2.0
+# is the Linux Foundation's permissive data licence: attribution only, no copyleft. It covers the
+# certificate data and no other crate. Needs the user's agreement; see the issue #5 PR.
+exceptions = [{ allow = ["CDLA-Permissive-2.0"], crate = "webpki-roots" }]
 
 [bans]
 # Duplicate versions are reported, not fatal: windows-* crates routinely appear twice. A new
