@@ -1,0 +1,5 @@
+{
+  "repo_slug": "C--repo",
+  "worktrees": [ {"name": "agent-a1", "branch": "feat/x-agent"} ],
+  "claim_branches": ["feat/x"]
+}

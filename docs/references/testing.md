@@ -66,6 +66,22 @@ is committed and published.
 - Derive fixtures from real transcripts only through the scrubbing tool (#2), which lives in
   `scripts/` like every Python script here. It keeps only the fields branch-tally reads and
   replaces every content field with a placeholder.
+
+  ```bash
+  just scrub --root <your repo root, as recorded> <slug dir or projects root> <dest>
+  ```
+
+  `--root` is the one thing it can't guess: every `cwd` under it becomes `C:\repo` or `/repo`
+  (keeping the `D:\…` versus `/d/…` form and the worktree subpath), and anything else becomes
+  `C:\other` or `/other`. Kept: `type`, `requestId`, `uuid`, `sessionId`, `agentId`,
+  `isSidechain`, `timestamp`, `cwd`, `gitBranch`, `attributionSkill`, `attributionAgent`,
+  `message.model` and the numeric `message.usage` fields (the set `sources/claude_code/parse.rs`
+  reads). `message.content` becomes `"PLACEHOLDER"`; every other key is dropped, not copied.
+  Ids become `s1`, `u1`, `req_1`, `a1`, equal in giving equal out (dedupe depends on it), and the
+  files and directories are renamed to match. A malformed line, or one whose kept field has the
+  wrong type, is dropped and only counted on stderr. The run ends by re-reading the output against
+  an allowlist and deleting it if anything else survives. Review the output anyway: a branch name
+  or a skill name is kept because it is read, and it can still be private.
 - **Never hand-copy lines** from `~/.claude/projects/` into a fixture.
 - Rewrite user-specific paths to a neutral root (`/repo`, `C:\repo`). Keep both separators where a
   scenario depends on them.
@@ -83,8 +99,66 @@ deliberately changes behaviour (#6, #7). Each deliberate divergence is listed in
 next to the issue number that justifies it. Once Rust is the source of truth, the goldens become
 ordinary snapshots and the reference script is retired.
 
+**Generating the goldens.** `just goldens [scenario]` (`scripts/make_goldens.py`). Each scenario
+directory under `tests/fixtures/claude-code/` is itself a projects root, with a
+`goldens/scenario.json` manifest: `repo_slug` (the main checkout's slug), `worktrees`
+(`{name, branch}` pairs, created as real git worktrees so the script's `git worktree list`
+recovery sees them; leave one out to model a removed worktree) and `claim_branches`. The script
+can't be pointed at a fixture, so the generator builds a throwaway home (`HOME` and `USERPROFILE`)
+with a throwaway git repo, copies the scenario's directories in under that repo's real slug
+(`repo_slug` prefix replaced, so sibling and worktree relationships survive), and runs the
+reference once per pair. It writes, next to the manifest:
+
+- `goldens/strict.json`: `{"<raw gitBranch>": <--strict --json payload>}`, one key per distinct
+  raw `gitBranch` in the usage-bearing records the reference reads (`"(none)"` for records with
+  none). These feed the Phase 0 parity test: calls kept and token totals, per session and model.
+- `goldens/claim.json`: the same shape for the manifest's `claim_branches`, run without
+  `--strict`. They feed an ignored test until #4 (full report comparison).
+
+A pair the reference answers with "No transcript records found" is recorded as
+`{"error": "no_records"}`, never dropped. Any other failure aborts the run. Session `origin` is
+mapped back to the fixture's own directory name (or `"main"`), and the run fails if a temp path,
+slug or user name reaches a golden. Output is sorted, LF and deterministic, so regenerating is a
+no-op diff; `just goldens --check` fails on any difference (and on a scenario without a manifest
+being asked for by name). Scenarios without a manifest are reported on stderr, not skipped
+silently, and a run that finds no manifest at all fails.
+
+The Python tooling's own tests are `just test-py` (stdlib `unittest`, part of `just ci`).
+
 The script is **immutable**. It is run, never edited, not even to fix a bug: a bug in it is a
-deliberate divergence, listed like any other. Anything that drives it, such as the golden-output
+deliberate divergence, listed like any other. When the reference crashes or is plain wrong on a
+whole scenario, list that in the manifest instead of working around it:
+
+```json
+"reference_divergence": {"issue": "#3", "reason": "reference crashes on a bare 42"}
+```
+
+The generator then does not run the reference for that scenario and writes no goldens. It prints a
+stderr line naming the scenario, issue and reason, and `just goldens --check` fails if goldens
+exist for it. Both keys are required, non-empty strings. The scenario's Rust test asserts the
+expected behaviour directly, next to the same issue number. `malformed-and-keyless` is the first
+(a bare `42` line makes the reference raise `AttributeError`; Rust counts it as malformed).
+
+**The parity tests** are `crates/branch-tally-core/tests/parity_claude_code.rs`:
+
+- `rust_matches_the_reference_on_calls_and_tokens` (Phase 0) walks every scenario with a manifest,
+  reads it with the Claude Code source (the scenario directory is the projects root, repo
+  `C:\repo`), groups the Records by raw `gitBranch` (absent: `"(none)"`) and compares each key
+  with `strict.json`: `totalCalls`; per session id, calls and tokens; per model, calls, input,
+  both cache writes, cache read, output and thinking. Tokens follow the reference's
+  `Record.tokens` (input + 5m + 1h + read + output; thinking is inside output). A `no_records`
+  key must match zero Rust records. Cost, origin, first/last and agents are not compared. The
+  test pins the number of scenarios (12) and branch keys (29) compared, so it cannot go green
+  on nothing, and fails on a scenario with a manifest but no goldens. Adding a scenario means
+  bumping those two constants.
+- Divergences are two lists in the test: `REFERENCE_DIVERGENT_SCENARIOS` (the manifest's
+  `reference_divergence`; currently `malformed-and-keyless`, #3) and `DIVERGENCES` (a scenario
+  and branch key where Rust deliberately differs, with its issue). A listed key must still
+  differ, so an entry cannot outlive its reason. `DIVERGENCES` is empty today.
+- `rust_report_matches_the_reference_claim_goldens` is `#[ignore = "#4: ..."]`. It parses every
+  `claim.json` and fails with a message that claim-mode attribution does not exist yet.
+
+Anything that drives the script, such as the golden-output
 generator, lives in `scripts/`, never in `reference/`.
 
 ## Snapshots

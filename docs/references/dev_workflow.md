@@ -151,6 +151,9 @@ its own lists the recipes.
 | `just secret-scan [args…]` | `gitleaks git` over the full history of every local ref, redacted. CI passes `--log-opts=HEAD` | `gitleaks git --redact .` |
 | `just audit-workflows [--offline]` | `zizmor` over `.github/`, pinned. Online audits run when `GH_TOKEN` is set. | `uvx zizmor@<pin> .github/` |
 | `just test-scripts` | proves `scripts/check-commit-subject.sh` and `scripts/check-branch-name.sh` reject what they must and accept what they should | `sh scripts/test-checks.sh` |
+| `just test-py` | `unittest` for `scripts/scrub_transcripts.py` and `scripts/make_goldens.py`, including one end-to-end run of the reference | `uv run python -m unittest discover -s scripts/tests` |
+| `just scrub --root <repo root> <src> <dest>` | scrub a real transcript tree into a committable fixture ([testing.md](testing.md#fixtures)) | `uv run scripts/scrub_transcripts.py …` |
+| `just goldens [scenario] [--check]` | regenerate the fixture goldens from the reference; `--check` writes nothing and fails on a difference | `uv run scripts/make_goldens.py …` |
 | `just token-report [args…]` | this repo's own PR token report: the Python reference until the CLI can do it (#4), then `branch-tally` | `uv run reference/token_report.py` |
 
 Recipes run under PowerShell 7 on Windows and `sh` elsewhere, so a recipe line must be a plain tool
@@ -186,7 +189,7 @@ same `just` recipes and `scripts/check-*.sh`.
 | Commit message | `commit-msg`: Conventional Commits | `commit-messages`: every commit in the PR; `pr-title`: the **PR title** |
 | Branch name | `pre-push`: Conventional Branch, and refuses a push to `main` | `branch-name`: the PR's head branch |
 | Tests | `pre-push`: `just test` | `test (ubuntu-latest)`, `test (macos-latest)`, `test (windows-latest)` and `msrv`: `just test` |
-| Gate scripts | — | `scripts`: `just test-scripts`, so the commit and branch checks can't silently stop rejecting |
+| Gate scripts | — | `scripts`: `just test-scripts` (so the commit and branch checks can't silently stop rejecting) and `just test-py` (the scrubber and goldens generator) |
 | Dependencies | — | `deny`: `cargo deny check` (licences, advisories, duplicates), once `deny.toml` exists |
 | New vulnerable dependencies | — | `dependency-review`: fails a PR that adds a dependency with a known vulnerability of moderate severity or worse |
 | Edit-time lint | Claude Code `PostToolUse` hook: `rustfmt --check` on a `.rs` file, `rumdl check` on a `.md` file | — |

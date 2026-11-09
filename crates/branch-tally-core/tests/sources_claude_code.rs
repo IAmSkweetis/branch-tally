@@ -299,3 +299,172 @@ fn invalid_utf8_and_unterminated_last_lines_are_handled() {
     assert_eq!(records[0].usage.output, 2);
     assert_eq!(records[0].usage.cache_write_5m, 0);
 }
+
+// --- Attribution scenarios (#2, #6, #7). The source reports raw facts; these tests pin the
+// facts that make each scenario what it is. Every record's input tokens are distinct, so a
+// mis-assigned record changes a per-branch total.
+
+fn on_branch<'a>(records: &'a [Record], branch: &str) -> Vec<&'a Record> {
+    records
+        .iter()
+        .filter(|r| r.git_branch.as_deref() == Some(branch))
+        .collect()
+}
+
+fn input_sum(records: &[&Record]) -> u64 {
+    records.iter().map(|r| r.usage.input).sum()
+}
+
+fn clean_stats(files: u64, emitted: u64) -> ReadStats {
+    ReadStats {
+        files_read: files,
+        records_emitted: emitted,
+        ..ReadStats::default()
+    }
+}
+
+fn of_agent<'a>(records: &'a [Record], agent: &str) -> Vec<&'a Record> {
+    records
+        .iter()
+        .filter(|r| r.agent_id.as_ref().map(AgentId::as_str) == Some(agent))
+        .collect()
+}
+
+fn parent_is_s1(r: &Record) -> bool {
+    r.parent_session.as_ref().map(SessionId::as_str) == Some("s1")
+}
+
+#[test]
+fn session_that_starts_on_main_then_cuts_a_work_branch() {
+    let (records, stats) = read_all("main-then-branch", r"C:\repo");
+    assert_eq!(stats, clean_stats(1, 5));
+    let main = on_branch(&records, "main");
+    let work = on_branch(&records, "feat/new");
+    assert_eq!((main.len(), input_sum(&main)), (2, 3));
+    assert_eq!((work.len(), input_sum(&work)), (3, 12));
+    assert!(records.iter().all(|r| r.session_id.as_str() == "s1"));
+    // Timestamps are the only ordering signal and must survive untouched.
+    assert_eq!(
+        by_request(&records, "req_3").ts.as_deref(),
+        Some("2026-01-01T00:02:00.000Z")
+    );
+}
+
+#[test]
+fn orchestrator_session_touches_several_work_branches() {
+    let (records, stats) = read_all("orchestrator-multi-branch", r"C:\repo");
+    assert_eq!(stats, clean_stats(1, 7));
+    let sums: Vec<(&str, usize, u64)> = ["main", "feat/a", "feat/b", "refactor/c", "test/d"]
+        .into_iter()
+        .map(|b| {
+            let v = on_branch(&records, b);
+            (b, v.len(), input_sum(&v))
+        })
+        .collect();
+    assert_eq!(
+        sums,
+        [
+            ("main", 1, 1),
+            ("feat/a", 2, 5),
+            ("feat/b", 2, 10),
+            ("refactor/c", 1, 5),
+            ("test/d", 1, 7)
+        ]
+    );
+    assert!(records.iter().all(|r| r.session_id.as_str() == "s1"));
+}
+
+#[test]
+fn subagent_stamped_with_orchestrator_branch_while_cwd_is_a_worktree() {
+    let (records, stats) = read_all("subagent-orchestrator-stamp", r"C:\repo");
+    assert_eq!(stats, clean_stats(2, 4));
+    let sub = by_request(&records, "req_b2");
+    assert_eq!(sub.git_branch.as_deref(), Some("feat/x"));
+    assert_eq!(
+        sub.cwd.as_deref(),
+        Some(r"C:\repo\.claude\worktrees\agent-b1")
+    );
+    assert!(sub.is_sidechain);
+    assert_eq!(sub.agent_id.as_ref().map(AgentId::as_str), Some("b1"));
+    assert!(parent_is_s1(sub));
+    assert_eq!(input_sum(&on_branch(&records, "feat/x")), 10);
+    assert_eq!(
+        by_request(&records, "req_1").cwd.as_deref(),
+        Some(r"C:\repo")
+    );
+}
+
+#[test]
+fn removed_worktree_subagents_keep_their_worktree_agent_stamp() {
+    let (records, stats) = read_all("subagent-removed-worktree", r"C:\repo");
+    assert_eq!(stats, clean_stats(4, 7));
+    let subs: Vec<&Record> = records.iter().filter(|r| r.is_sidechain).collect();
+    assert_eq!((subs.len(), input_sum(&subs)), (5, 25));
+    for (agent, n, sum) in [("c1", 2, 7), ("c2", 1, 5), ("c3", 2, 13)] {
+        let mine = of_agent(&records, agent);
+        assert_eq!((mine.len(), input_sum(&mine)), (n, sum), "agent {agent}");
+        let stamp = format!("worktree-agent-{agent}");
+        assert!(
+            mine.iter()
+                .all(|r| r.git_branch.as_deref() == Some(&*stamp))
+        );
+        assert!(mine.iter().all(|r| parent_is_s1(r)));
+    }
+    assert_eq!(input_sum(&on_branch(&records, "feat/x")), 3);
+}
+
+#[test]
+fn subagents_that_switch_to_their_own_branch_change_stamp_mid_file() {
+    let (records, stats) = read_all("subagent-switches-branch", r"C:\repo");
+    assert_eq!(stats, clean_stats(3, 8));
+    let stamps = |agent: &str| -> Vec<(String, u64)> {
+        let mut v = of_agent(&records, agent);
+        v.sort_by_key(|r| r.usage.input);
+        v.iter()
+            .map(|r| (r.git_branch.clone().unwrap_or_default(), r.usage.input))
+            .collect()
+    };
+    let want = |rows: &[(&str, u64)]| -> Vec<(String, u64)> {
+        rows.iter().map(|(b, n)| ((*b).to_owned(), *n)).collect()
+    };
+    assert_eq!(
+        stamps("d1"),
+        want(&[
+            ("worktree-agent-d1", 2),
+            ("worktree-agent-d1", 3),
+            ("chore/d1-data", 4),
+            ("chore/d1-data", 5)
+        ])
+    );
+    assert_eq!(
+        stamps("d2"),
+        want(&[
+            ("worktree-agent-d2", 6),
+            ("chore/d2-data", 7),
+            ("chore/d2-data", 8)
+        ])
+    );
+    assert_eq!(on_branch(&records, "feat/x").len(), 1);
+}
+
+#[test]
+fn session_on_branch_a_edits_branch_b_through_a_second_worktree() {
+    let (records, stats) = read_all("second-worktree-edit", r"C:\repo");
+    assert_eq!(stats, clean_stats(1, 5));
+    let wt = r"C:\repo\.claude\worktrees\feat-b";
+    let in_wt: Vec<&Record> = records
+        .iter()
+        .filter(|r| r.cwd.as_deref() == Some(wt))
+        .collect();
+    assert_eq!(in_wt.len(), 3);
+    // Two of the worktree records are still stamped with branch A: the stamp lags the cwd.
+    let stamped_a: Vec<&Record> = in_wt
+        .iter()
+        .copied()
+        .filter(|r| r.git_branch.as_deref() == Some("feat/a"))
+        .collect();
+    assert_eq!((stamped_a.len(), input_sum(&stamped_a)), (2, 7));
+    assert_eq!(input_sum(&on_branch(&records, "feat/b")), 5);
+    assert_eq!(input_sum(&on_branch(&records, "feat/a")), 10);
+    assert!(records.iter().all(|r| r.session_id.as_str() == "s1"));
+}
