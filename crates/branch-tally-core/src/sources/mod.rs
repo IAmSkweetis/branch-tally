@@ -25,7 +25,7 @@ use thiserror::Error;
 
 use crate::model::{Harness, Record};
 
-// The Harness Source Author adds exactly one line here: `pub mod claude_code;`
+pub mod claude_code;
 
 /// The repository a source should find transcripts for.
 #[derive(Debug, Clone, PartialEq, Eq)]

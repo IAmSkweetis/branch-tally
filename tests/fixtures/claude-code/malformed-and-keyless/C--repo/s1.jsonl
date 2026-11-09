@@ -1,0 +1,8 @@
+{"type":"assistant","requestId":"req_1","uuid":"u1","sessionId":"s1","timestamp":"2026-01-01T00:00:00.000Z","cwd":"C:\\repo","gitBranch":"main","isSidechain":false,"message":{"model":"claude-test-1","content":"PLACEHOLDER","usage":{"input_tokens":10,"output_tokens":20,"cache_read_input_tokens":30}}}
+{"type":"assistant","requestId":"req_bad","message":{"usage":{"input_tokens":
+
+42
+{"type":"user","uuid":"u9","sessionId":"s1","message":{"role":"user","content":"PLACEHOLDER"}}
+{"type":"assistant","sessionId":"s1","timestamp":"2026-01-01T00:00:00.000Z","cwd":"C:\\repo","gitBranch":"main","isSidechain":false,"message":{"model":"claude-test-1","content":"PLACEHOLDER","usage":{"input_tokens":10,"output_tokens":20,"cache_read_input_tokens":30}}}
+{"type":"assistant","uuid":"u7","sessionId":"s1","timestamp":"2026-01-01T00:00:00.000Z","cwd":"C:\\repo","gitBranch":"main","isSidechain":false,"message":{"model":"claude-test-1","content":"PLACEHOLDER","usage":{"input_tokens":10,"output_tokens":20,"cache_read_input_tokens":30}}}
+{"type":"assistant","uuid":"u7","sessionId":"s1","timestamp":"2026-01-01T00:00:00.000Z","cwd":"C:\\repo","gitBranch":"main","isSidechain":false,"message":{"model":"claude-test-1","content":"PLACEHOLDER","usage":{"input_tokens":10,"output_tokens":20,"cache_read_input_tokens":30}}}
