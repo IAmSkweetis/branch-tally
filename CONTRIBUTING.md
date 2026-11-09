@@ -9,7 +9,7 @@ before a change lands. The rules behind it live in [AGENTS.md](AGENTS.md) and
 | Tool | Why | Install |
 | ---- | --- | ------- |
 | [Rust](https://rustup.rs) (stable, via rustup) | Builds and tests the code. `rust-toolchain.toml` pins the version once the workspace lands (#3). | `rustup` picks up the pin on its own |
-| [just](https://just.systems) | Runs every recipe, hook and CI gate | `cargo install just`, `scoop install just`, `brew install just` |
+| [just](https://just.systems) 1.56 or newer | Runs every recipe, hook and CI gate | `cargo install just`, `scoop install just`, `brew install just` |
 | [cargo-nextest](https://nexte.st) | The test runner | `cargo install cargo-nextest --locked` |
 | [uv](https://docs.astral.sh/uv/) | Runs the pinned `rumdl` and `zizmor` through `uvx`, and the Python reference script | see the uv install guide |
 | [gitleaks](https://github.com/gitleaks/gitleaks) | Secret scanning in `pre-commit` and CI | `scoop install gitleaks`, `brew install gitleaks` |

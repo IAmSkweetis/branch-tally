@@ -1,12 +1,13 @@
 # branch-tally command entrypoint. `just` lists the recipes.
 #
 # Recipes run under PowerShell 7 on Windows and `sh` elsewhere, so every recipe line is a plain
-# tool call that reads the same in both. Shell-specific work lives in the private `_require*`
-# helpers, written once under [windows] and once under [unix].
+# tool call that reads the same in both. Shell-specific work lives in private `_helper` recipes,
+# written once under [windows] and once under [unix]. Needs just 1.56+ (`[windows] set shell`).
 #
 # CI and the git hooks call these same recipes, so a local `just ci` checks what CI checks.
 
-set windows-shell := ["pwsh.exe", "-NoLogo", "-NoProfile", "-Command"]
+[windows]
+set shell := ["pwsh.exe", "-NoLogo", "-NoProfile", "-Command"]
 
 # Pinned tool versions. CI reads them back with `just --evaluate <name>`, so local and CI agree.
 # Bump one here and nowhere else (gitleaks is installed from a release archive whose sha256 is
@@ -59,8 +60,8 @@ lint-md *paths: (_require "uvx" "install uv: https://docs.astral.sh/uv/getting-s
 fmt-md *paths: (_require "uvx" "install uv: https://docs.astral.sh/uv/getting-started/installation/")
     uvx rumdl@{{ rumdl_version }} fmt {{ if paths == "" { "." } else { paths } }}
 
-# gitleaks over the full history, redacted.
-secret-scan: (_require "gitleaks" "install it: https://github.com/gitleaks/gitleaks#installing")
+# gitleaks over the full history, redacted. Warns when the local gitleaks differs from CI's pin.
+secret-scan: (_require "gitleaks" "install it: https://github.com/gitleaks/gitleaks#installing") _gitleaks-version
     gitleaks git --redact --no-banner .
 
 # zizmor over .github/ (pinned). Pass --offline to skip the online audits.
@@ -81,6 +82,17 @@ _require tool hint:
 [windows]
 _require tool hint:
     @if (-not (Get-Command {{ tool }} -ErrorAction SilentlyContinue)) { [Console]::Error.WriteLine('error: {{ tool }} not found; {{ hint }}'); exit 1 }
+
+# A warning, not a failure: a package-manager update shouldn't block a commit, and CI runs the pin.
+[private]
+[unix]
+_gitleaks-version:
+    @v=$(gitleaks version | sed 's/^v//'); [ "$v" = "{{ gitleaks_version }}" ] || echo "warning: gitleaks $v is installed but CI pins {{ gitleaks_version }}; results may differ" >&2
+
+[private]
+[windows]
+_gitleaks-version:
+    @$v = "$(gitleaks version)".TrimStart('v'); if ($v -ne '{{ gitleaks_version }}') { [Console]::Error.WriteLine("warning: gitleaks $v is installed but CI pins {{ gitleaks_version }}; results may differ") }
 
 # Same, but only once a Cargo.toml exists.
 [private]
