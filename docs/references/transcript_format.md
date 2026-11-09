@@ -69,8 +69,10 @@ Choices the parser makes where the format is silent. Fixtures for each are in
   the order `synthetic`, `no_dedupe_key`, `duplicates_removed`. Invalid JSON, invalid UTF-8, or a
   declared field of the wrong type (including a non-object `message`) is `malformed_lines`.
 - **Fallbacks.** Dedupe key is `requestId`, else `uuid`; an empty string counts as absent. The
-  `uuid` is stored in `Record::request_id` because the model cannot say which one it was (raised
-  as `model_change_required`). A record with no `sessionId` takes the parent session (subagent
+  `uuid` is stored in `Record::request_id`, with `Record::request_id_is_fallback` set to true, and
+  `ReadStats::fallback_key_used` counts the emitted records keyed this way (informational, not
+  part of `skipped_total()`; duplicates and skipped lines are not counted), so a report can say how
+  many calls were matched by `uuid`. A record with no `sessionId` takes the parent session (subagent
   file) or the file stem. Cache writes use the 5m/1h breakdown when it reports either figure,
   else `cache_creation_input_tokens` counts as 5m.
 - **Raw stamps.** `gitBranch`, `cwd` and `timestamp` are copied untouched.

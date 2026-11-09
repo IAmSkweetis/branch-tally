@@ -14,8 +14,9 @@
 //!
 //! # Fallbacks
 //!
-//! - Dedupe key: `requestId`, else `uuid`. The `uuid` is stored in `Record::request_id`; the
-//!   model has no field saying which one it was.
+//! - Dedupe key: `requestId`, else `uuid`. The `uuid` is stored in `Record::request_id`, with
+//!   `Record::request_id_is_fallback` set, and `ReadStats::fallback_key_used` counts those emitted
+//!   records (informational; duplicates and skipped records are not counted).
 //! - `Record::session_id`: the record's `sessionId`, else the parent session (subagent file) or
 //!   the file stem (main file).
 //!

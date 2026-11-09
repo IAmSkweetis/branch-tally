@@ -145,13 +145,20 @@ fn to_record(
         stats.synthetic += 1;
         return None;
     }
-    let Some(key) = non_empty(line.request_id).or_else(|| non_empty(line.uuid)) else {
-        stats.no_dedupe_key += 1;
-        return None;
+    let (key, is_fallback) = match (non_empty(line.request_id), non_empty(line.uuid)) {
+        (Some(request_id), _) => (request_id, false),
+        (None, Some(uuid)) => (uuid, true),
+        (None, None) => {
+            stats.no_dedupe_key += 1;
+            return None;
+        }
     };
     if !seen.insert(key.clone()) {
         stats.duplicates_removed += 1;
         return None;
+    }
+    if is_fallback {
+        stats.fallback_key_used += 1;
     }
 
     let session = non_empty(line.session_id).unwrap_or_else(|| ctx.fallback_session.to_owned());
@@ -161,6 +168,7 @@ fn to_record(
         RequestId::new(key),
         raw_usage.into_usage(),
     );
+    record.request_id_is_fallback = is_fallback;
     record.agent_id = non_empty(line.agent_id).map(AgentId::new);
     record.parent_session = ctx.parent_session.map(SessionId::new);
     record.ts = line.timestamp;

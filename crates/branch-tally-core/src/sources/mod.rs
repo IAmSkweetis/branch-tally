@@ -104,6 +104,10 @@ pub struct ReadStats {
     pub synthetic: u64,
     /// Records removed because an earlier record had the same dedupe key.
     pub duplicates_removed: u64,
+    /// Records emitted with a fallback key in place of a request id. Informational: these are
+    /// emitted, not skipped, so it is not part of [`ReadStats::skipped_total`].
+    #[serde(default)]
+    pub fallback_key_used: u64,
 }
 
 impl ReadStats {
@@ -249,8 +253,22 @@ mod tests {
             no_dedupe_key: 2,
             synthetic: 3,
             duplicates_removed: 4,
+            fallback_key_used: 0,
         };
         assert_eq!(stats.skipped_total(), 10);
+    }
+
+    #[test]
+    fn fallback_key_used_is_informational_not_a_skip() {
+        let stats = ReadStats {
+            records_emitted: 5,
+            fallback_key_used: 3,
+            ..ReadStats::default()
+        };
+        assert_eq!(stats.skipped_total(), 0);
+        let json = serde_json::to_string(&stats).unwrap();
+        let back: ReadStats = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, stats);
     }
 
     #[test]
