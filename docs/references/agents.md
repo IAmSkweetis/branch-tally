@@ -72,7 +72,7 @@ orchestrator does when a human directs it. The change lands before the work that
 | `data/**` | Core Implementer holding the `pricing` slice |
 | every `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `deny.toml`, `cliff.toml` | Workspace Config Steward |
 | `justfile`, `scripts/**` (including every Python script), `.githooks/**`, `.github/**`, `.claude/skills/**`, lint, format and runner config | Repository Tooling Steward |
-| `reference/**` | nobody: immutable. The original `token_report.py`, run as the parity oracle and token report until branch-tally replaces it, but never edited and never added to |
+| `reference/**` | nobody: immutable. The original `token_report.py`, run only by the golden generator as the parity oracle, never edited and never added to |
 | `.claude/agents/**`, `.claude/settings.json` | nobody: a scope boundary an agent can edit is not a boundary |
 | `docs/references/**` | whichever agent changed what the page describes, in the same commit |
 | `docs/decisions/**` | the orchestrator, recording a decision the user made |

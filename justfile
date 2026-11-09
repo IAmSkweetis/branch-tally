@@ -83,9 +83,9 @@ scrub *args: (_require "uv" "install uv: https://docs.astral.sh/uv/getting-start
 goldens *args: (_require "uv" "install uv: https://docs.astral.sh/uv/getting-started/installation/") (_require "git" "install git")
     uv run scripts/make_goldens.py {{ args }}
 
-# This repository's own PR token report: the Python reference until the CLI can do it (#4).
-token-report *args: (_require "uv" "install uv: https://docs.astral.sh/uv/getting-started/installation/")
-    uv run reference/token_report.py {{ args }}
+# This repository's own PR token report, from the installed release binary: just token-report --pr
+token-report *args: (_require "branch-tally" "install the latest release: https://github.com/IAmSkweetis/branch-tally/releases/latest")
+    branch-tally report {{ args }}
 
 # The version the next release would get, from the Conventional Commits since the last v* tag.
 # Needs git-cliff at cliff_version and the full history (a shallow clone gets the wrong answer).

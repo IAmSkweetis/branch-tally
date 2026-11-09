@@ -60,9 +60,9 @@ wherever this page is silent.
   so the suppression can't outlive its reason. Never disable a lint workspace-wide to quiet one
   case.
 - **Python**: only as repository tooling, in `scripts/`, run with `uv`. `reference/` holds the
-  original `token_report.py` and is **immutable**: it is run as the parity oracle and this repo's
-  token report until branch-tally can dogfood its own PRs (#4), but never edited and never added
-  to. Once branch-tally replaces it, it is no longer run at all.
+  original `token_report.py` and is **immutable**: never edited and never added to. Since #41 this
+  repository's PR token reports come from branch-tally itself, and the script is run only by the
+  golden generator (`just goldens`) as the parity oracle.
 - **Formatting**: `rustfmt` with the repository's `rustfmt.toml`. Line endings are LF everywhere,
   enforced by `.gitattributes`.
 - **Dependencies**: every new crate, feature flag or version bump goes through the Workspace Config

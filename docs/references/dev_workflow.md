@@ -157,7 +157,7 @@ its own lists the recipes.
 | `just next-version` | the version the next release would get, from the commits since the last tag (needs git-cliff at the pin) | `git-cliff --config cliff.toml --bumped-version` |
 | `just release-notes [version]` | preview the notes for the unreleased commits; writes nothing | `git-cliff --config cliff.toml --unreleased --bump` |
 | `just package <vX.Y.Z> <target> [binary]` | package a built binary as a release archive in `dist/` ([release.md](release.md#targets)) | `sh scripts/package.sh …` |
-| `just token-report [args…]` | this repo's own PR token report: the Python reference until the CLI can do it (#4), then `branch-tally` | `uv run reference/token_report.py` |
+| `just token-report [args…]` | this repo's own PR token report, from the installed release binary ([Token usage](#token-usage)) | `branch-tally report` |
 
 Recipes run under PowerShell 7 on Windows and `sh` elsewhere, so a recipe line must be a plain tool
 call that reads the same in both. Anything shell-specific goes in a private `_helper` recipe
@@ -260,15 +260,21 @@ something. A falsely ticked one is a lie they can't see.
 
 ### Token usage
 
-This project measures its own PRs. Before the Rust CLI can (#4), the Python reference does it:
+This project measures its own PRs with branch-tally itself (#41):
 
 ```bash
-uv run reference/token_report.py --pr
+just token-report --pr      # branch-tally report --pr
 ```
 
-After #4 lands, `branch-tally report --pr` does it instead. Either way it must run on the machine
-that did the work, **while every agent worktree still exists**, until #6 removes that dependency.
-Report the number as a floor ("at least $X").
+It runs the **installed release binary**, not `cargo run`, so the report comes from a published
+build rather than the branch under review. Install the latest
+[release](https://github.com/IAmSkweetis/branch-tally/releases/latest) archive for your platform
+and put `branch-tally` on `PATH`. The recipe stops with that hint if it is missing.
+
+It must run on the machine that did the work, and **while every agent worktree still exists**
+until issue #6 removes that dependency. Report the number as a floor ("at least $X").
+`reference/token_report.py` is no longer run for this. Only the golden generator (`just goldens`)
+still runs it, as the parity oracle.
 
 ## Related pages
 

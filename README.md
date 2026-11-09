@@ -6,8 +6,9 @@ branch-tally reads an agent harness's local transcripts, assigns each recorded A
 branch the work was for, and publishes a cost table on the PR. That includes work done by subagents
 in git worktrees. Claude Code is the first harness supported; others follow.
 
-> **Status: pre-alpha.** There is no release yet. The CLI is being ported from a Python reference
-> script ([`reference/token_report.py`](reference/token_report.py)) to Rust. Follow the
+> **Status: pre-alpha.** Prebuilt binaries ship on the
+> [releases page](https://github.com/IAmSkweetis/branch-tally/releases), and this repository's own
+> PR token reports are produced by branch-tally. Follow the
 > [roadmap](https://github.com/IAmSkweetis/branch-tally/issues/16) for progress.
 
 ## Planned features

@@ -125,14 +125,15 @@ If that fails with a scope error, the PR is fine. Tell the user to run
 Run this immediately once the PR exists, **while every agent worktree still exists**:
 
 ```bash
-# before the Rust CLI can report (#4): the Python reference
-uv run reference/token_report.py --pr
-# after #4
-cargo run -p branch-tally -- report --pr      # or `branch-tally report --pr` once installed
+just token-report --pr      # runs the installed `branch-tally report --pr`
 ```
 
-If `reference/token_report.py` doesn't exist yet (#2), tell the user and leave the placeholder.
-Don't paste a number from another tool or machine.
+It uses the **installed release binary**, not `cargo run` on this branch. If `branch-tally` isn't
+on `PATH`, the recipe stops with an install hint. Tell the user to install the latest
+[release](https://github.com/IAmSkweetis/branch-tally/releases/latest) archive, and leave the
+placeholder until they have. Don't install it yourself, and don't fall back to
+`reference/token_report.py`: it is only the goldens' parity oracle now. Don't paste a number from
+another tool or machine.
 
 When reading the output:
 

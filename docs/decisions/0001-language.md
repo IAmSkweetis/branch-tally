@@ -55,7 +55,8 @@ branch-tally is implemented in **Rust**, stable channel, edition 2024.
   `branch-tally` ([project_layout.md](../references/project_layout.md)). It lands in #3.
 - Every dependency is a supply-chain and binary-size decision, reviewed by the Workspace Config
   Steward and checked by `cargo deny`.
-- Until the Rust `report` command can produce this repository's own PR token report (#4),
-  `just token-report` keeps running the Python script.
+- Until the Rust `report` command could produce this repository's own PR token report (#4),
+  `just token-report` ran the Python script. Since #41 it runs the released `branch-tally`
+  binary, and the script is run only to regenerate the goldens.
 - Contributors need a Rust toolchain. `rustup` reads `rust-toolchain.toml` and installs the pinned
   version automatically.
