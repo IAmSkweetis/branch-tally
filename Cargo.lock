@@ -21,6 +21,8 @@ dependencies = [
  "branch-tally-core",
  "clap",
  "insta",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
