@@ -51,6 +51,32 @@ Only records with `message.usage` matter. The fields branch-tally reads:
 
 Never read `message.content` or any other content field (Governance III).
 
+## How the source reads these (`sources/claude_code/`, 2026-11-08)
+
+Choices the parser makes where the format is silent. Fixtures for each are in
+`tests/fixtures/claude-code/`.
+
+- **Discovery.** A directory under the projects root is the repository's own when its name equals
+  the repo slug, and a worktree's when it is the slug plus `--claude-worktrees-` and a non-empty
+  suffix, both compared case-insensitively. Anything else is excluded, including a sibling repo
+  that shares a prefix. A repo path shaped like `/d/x` yields two candidate slugs, the literal one
+  and the `D:` drive one, so both cwd forms find the same directory. A leading `\\?\` is stripped.
+- **Reading.** `<root>/*.jsonl` are main sessions. `<root>/<session>/subagents/agent-*.jsonl` are
+  subagent files, and the directory name becomes `parent_session`. `agent_id` and `is_sidechain`
+  come from the record, never from the file name.
+- **What is counted.** A line without `message.usage` is not a usage record and is not counted in
+  any counter. A blank line is ignored. A usage record lands in at most one counter, checked in
+  the order `synthetic`, `no_dedupe_key`, `duplicates_removed`. Invalid JSON, invalid UTF-8, or a
+  declared field of the wrong type (including a non-object `message`) is `malformed_lines`.
+- **Fallbacks.** Dedupe key is `requestId`, else `uuid`; an empty string counts as absent. The
+  `uuid` is stored in `Record::request_id`, with `Record::request_id_is_fallback` set to true, and
+  `ReadStats::fallback_key_used` counts the emitted records keyed this way (informational, not
+  part of `skipped_total()`; duplicates and skipped lines are not counted), so a report can say how
+  many calls were matched by `uuid`. A record with no `sessionId` takes the parent session (subagent
+  file) or the file stem. Cache writes use the 5m/1h breakdown when it reports either figure,
+  else `cache_creation_input_tokens` counts as 5m.
+- **Raw stamps.** `gitBranch`, `cwd` and `timestamp` are copied untouched.
+
 ## Worktree subagents: what `gitBranch` actually says
 
 This is the fact behind #6. When an orchestrator on a feature branch dispatches subagents into

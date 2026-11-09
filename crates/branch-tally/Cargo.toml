@@ -1,0 +1,19 @@
+[package]
+name = "branch-tally"
+description = "Report what a branch or pull request cost in AI-agent tokens"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "branch-tally"
+path = "src/main.rs"
+
+[dependencies]
+branch-tally-core = { path = "../branch-tally-core" }
+
+[lints]
+workspace = true

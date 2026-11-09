@@ -8,7 +8,8 @@ before a change lands. The rules behind it live in [AGENTS.md](AGENTS.md) and
 
 | Tool | Why | Install |
 | ---- | --- | ------- |
-| [Rust](https://rustup.rs) (stable, via rustup) | Builds and tests the code. `rust-toolchain.toml` pins the version once the workspace lands (#3). | `rustup` picks up the pin on its own |
+| [Rust](https://rustup.rs) (stable, via rustup) | Builds and tests the code. `rust-toolchain.toml` pins the version (1.99.1). | `rustup` picks up the pin on its own |
+| Visual Studio Build Tools, "Desktop development with C++" (Windows only) | The `x86_64-pc-windows-msvc` toolchain links with MSVC's `link.exe` and the Windows SDK. Without them every build that links fails, and Git Bash's unrelated `/usr/bin/link` makes the error misleading. Install them before `cargo install` anything. | `winget install Microsoft.VisualStudio.BuildTools --override "--wait --quiet --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"` |
 | [just](https://just.systems) 1.56 or newer | Runs every recipe, hook and CI gate | `cargo install just`, `scoop install just`, `brew install just` |
 | [cargo-nextest](https://nexte.st) | The test runner | `cargo install cargo-nextest --locked` |
 | [uv](https://docs.astral.sh/uv/) | Runs the pinned `rumdl` and `zizmor` through `uvx`, and the Python reference script | see the uv install guide |

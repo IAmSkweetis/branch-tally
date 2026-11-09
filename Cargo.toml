@@ -1,0 +1,44 @@
+[workspace]
+resolver = "3"
+members = ["crates/branch-tally-core", "crates/branch-tally"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99.1"
+license = "MIT"
+repository = "https://github.com/IAmSkweetis/branch-tally"
+
+# Versions are declared here once; crates say `foo.workspace = true`. Each entry was approved
+# through the Workspace Config Steward (issue #3).
+[workspace.dependencies]
+serde = { version = "1.0.229", default-features = false, features = ["derive"] }
+serde_json = { version = "1.0.154", default-features = false, features = ["std"] }
+thiserror = "2.0.21"
+tempfile = { version = "3.27.0", default-features = false }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# AGENTS.md: bad transcript input is counted, never a panic. clippy.toml exempts tests.
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+
+# A small static binary: size and speed over compile time. panic = "abort" is deliberate, since
+# library code returns typed errors and never relies on unwinding.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

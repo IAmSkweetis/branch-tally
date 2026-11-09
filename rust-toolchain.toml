@@ -1,0 +1,6 @@
+[toolchain]
+# Moving the pin is a version bump: it goes through the Workspace Config Steward.
+# Keep in step with rust-version in the root Cargo.toml.
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
