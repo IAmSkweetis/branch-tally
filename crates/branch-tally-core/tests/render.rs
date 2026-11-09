@@ -97,6 +97,7 @@ fn sample() -> (Summary, Costs) {
         ],
         total: 2.675,
         unpriced_models: 1,
+        ..Costs::default()
     };
     (summary, costs)
 }
@@ -326,6 +327,7 @@ fn json_costs_are_rounded_to_four_places_and_printed_like_python_repr() {
             by_model: vec![("m".to_owned(), Some(cost))],
             total: cost,
             unpriced_models: 0,
+            ..Costs::default()
         };
         json(&s, &c)
     };

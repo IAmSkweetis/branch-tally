@@ -9,7 +9,7 @@
 //! `(w5 * cin) * 1.25`, and the terms are added left to right. Totals use [`sum_costs`], which
 //! reproduces the compensated summation of Python 3.12+'s `sum()` over floats.
 
-use crate::model::{Bucket, Costs, Summary};
+use crate::model::{Bucket, Costs, PriceTableInfo, Summary};
 
 /// `$/MTok` list rates as `(input, output)`, verbatim from `PRICES` in the reference. Replaced by
 /// data in #5.
@@ -108,5 +108,6 @@ pub fn price(summary: &Summary) -> Costs {
         by_model,
         total,
         unpriced_models,
+        price_table: PriceTableInfo::default(),
     }
 }
