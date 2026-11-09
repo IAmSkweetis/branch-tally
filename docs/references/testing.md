@@ -139,6 +139,25 @@ exist for it. Both keys are required, non-empty strings. The scenario's Rust tes
 expected behaviour directly, next to the same issue number. `malformed-and-keyless` is the first
 (a bare `42` line makes the reference raise `AttributeError`; Rust counts it as malformed).
 
+**The parity tests** are `crates/branch-tally-core/tests/parity_claude_code.rs`:
+
+- `rust_matches_the_reference_on_calls_and_tokens` (Phase 0) walks every scenario with a manifest,
+  reads it with the Claude Code source (the scenario directory is the projects root, repo
+  `C:\repo`), groups the Records by raw `gitBranch` (absent: `"(none)"`) and compares each key
+  with `strict.json`: `totalCalls`; per session id, calls and tokens; per model, calls, input,
+  both cache writes, cache read, output and thinking. Tokens follow the reference's
+  `Record.tokens` (input + 5m + 1h + read + output; thinking is inside output). A `no_records`
+  key must match zero Rust records. Cost, origin, first/last and agents are not compared. The
+  test pins the number of scenarios (12) and branch keys (29) compared, so it cannot go green
+  on nothing, and fails on a scenario with a manifest but no goldens. Adding a scenario means
+  bumping those two constants.
+- Divergences are two lists in the test: `REFERENCE_DIVERGENT_SCENARIOS` (the manifest's
+  `reference_divergence`; currently `malformed-and-keyless`, #3) and `DIVERGENCES` (a scenario
+  and branch key where Rust deliberately differs, with its issue). A listed key must still
+  differ, so an entry cannot outlive its reason. `DIVERGENCES` is empty today.
+- `rust_report_matches_the_reference_claim_goldens` is `#[ignore = "#4: ..."]`. It parses every
+  `claim.json` and fails with a message that claim-mode attribution does not exist yet.
+
 Anything that drives the script, such as the golden-output
 generator, lives in `scripts/`, never in `reference/`.
 

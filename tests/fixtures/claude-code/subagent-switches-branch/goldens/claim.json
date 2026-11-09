@@ -1,0 +1,93 @@
+{
+  "chore/d1-data": {
+    "branch": "chore/d1-data",
+    "mode": "claim",
+    "models": {
+      "claude-test-1": {
+        "cacheRead": 2009,
+        "cacheWrite1h": 0,
+        "cacheWrite5m": 0,
+        "calls": 2,
+        "costUSD": null,
+        "input": 9,
+        "output": 209,
+        "thinking": 0
+      }
+    },
+    "sessions": [
+      {
+        "agents": [
+          "subagent"
+        ],
+        "calls": 2,
+        "first": "2026-01-01T00:03:00.000Z",
+        "id": "s1",
+        "last": "2026-01-01T00:04:00.000Z",
+        "origin": "main",
+        "tokens": 2227
+      }
+    ],
+    "totalCalls": 2,
+    "totalCostUSD": 0.0
+  },
+  "chore/d2-data": {
+    "branch": "chore/d2-data",
+    "mode": "claim",
+    "models": {
+      "claude-test-1": {
+        "cacheRead": 2015,
+        "cacheWrite1h": 0,
+        "cacheWrite5m": 0,
+        "calls": 2,
+        "costUSD": null,
+        "input": 15,
+        "output": 215,
+        "thinking": 0
+      }
+    },
+    "sessions": [
+      {
+        "agents": [
+          "subagent"
+        ],
+        "calls": 2,
+        "first": "2026-01-01T00:06:00.000Z",
+        "id": "s1",
+        "last": "2026-01-01T00:07:00.000Z",
+        "origin": "main",
+        "tokens": 2245
+      }
+    ],
+    "totalCalls": 2,
+    "totalCostUSD": 0.0
+  },
+  "feat/x": {
+    "branch": "feat/x",
+    "mode": "claim",
+    "models": {
+      "claude-test-1": {
+        "cacheRead": 1001,
+        "cacheWrite1h": 0,
+        "cacheWrite5m": 0,
+        "calls": 1,
+        "costUSD": null,
+        "input": 1,
+        "output": 101,
+        "thinking": 0
+      }
+    },
+    "sessions": [
+      {
+        "agents": [],
+        "calls": 1,
+        "first": "2026-01-01T00:00:00.000Z",
+        "id": "s1",
+        "last": "2026-01-01T00:00:00.000Z",
+        "origin": "main",
+        "tokens": 1103
+      }
+    ],
+    "totalCalls": 1,
+    "totalCostUSD": 0.0
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "main": {
+    "branch": "main",
+    "mode": "strict",
+    "models": {
+      "claude-test-1": {
+        "cacheRead": 120,
+        "cacheWrite1h": 15,
+        "cacheWrite5m": 65,
+        "calls": 4,
+        "costUSD": null,
+        "input": 40,
+        "output": 80,
+        "thinking": 7
+      }
+    },
+    "sessions": [
+      {
+        "agents": [],
+        "calls": 4,
+        "first": "2026-01-01T00:00:00.000Z",
+        "id": "s1",
+        "last": "2026-01-01T00:00:00.000Z",
+        "origin": "main",
+        "tokens": 320
+      }
+    ],
+    "totalCalls": 4,
+    "totalCostUSD": 0.0
+  }
+}
