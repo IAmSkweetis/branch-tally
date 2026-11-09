@@ -19,9 +19,12 @@ Each scenario directory is a projects root. Its `goldens/scenario.json` says:
 
     {"repo_slug": "C--repo",
      "worktrees": [{"name": "feat-a", "branch": "feat/a"}],
-     "claim_branches": ["feat/a", "main"]}
+     "claim_branches": ["feat/a", "main"],
+     "reference_divergence": {"issue": "#3", "reason": "<one line>"}}      (optional)
 
-and this writes, next to it:
+`reference_divergence` marks a scenario the reference gets wrong (it crashes, say). The reference
+is not run for it, no goldens are written, and a stderr line names the scenario, issue and reason.
+`--check` fails if goldens exist for it. Otherwise this writes, next to it:
 
     goldens/strict.json   {"<raw gitBranch>": <--strict --json payload>, ...}   one per distinct
                           raw gitBranch in the usage-bearing records ("(none)" when absent)
@@ -173,6 +176,14 @@ def load_manifest(scenario: Path) -> dict:
     )
     if not ok:
         raise GoldenError(f"{scenario.name}: scenario.json does not match the manifest contract")
+    div = m.get("reference_divergence")
+    if div is not None and not (
+        isinstance(div, dict) and set(div) == {"issue", "reason"}
+        and all(isinstance(v, str) and v.strip() for v in div.values())
+    ):
+        raise GoldenError(
+            f"{scenario.name}: reference_divergence must be "
+            '{"issue": "<non-empty>", "reason": "<non-empty>"} and nothing else')
     return m
 
 
@@ -286,6 +297,16 @@ def _run(args: argparse.Namespace) -> int:
 
     stale = 0
     for name in wanted:
+        div = load_manifest(have[name]).get("reference_divergence")
+        if div:
+            print(f"make_goldens: {name}: DIVERGENT from the reference ({div['issue']}: "
+                  f"{div['reason']}); reference not run, no goldens", file=sys.stderr)
+            for fname in ("strict.json", "claim.json"):
+                if args.check and (have[name] / GOLDENS / fname).exists():
+                    print(f"make_goldens: STALE {name}/{GOLDENS}/{fname} exists for a divergent "
+                          "scenario", file=sys.stderr)
+                    stale += 1
+            continue
         strict, claim = generate(have[name])
         for fname, data in (("strict.json", strict), ("claim.json", claim)):
             path = have[name] / GOLDENS / fname

@@ -1,5 +1,9 @@
 {
   "repo_slug": "C--repo",
   "worktrees": [],
-  "claim_branches": ["main"]
+  "claim_branches": ["main"],
+  "reference_divergence": {
+    "issue": "#3",
+    "reason": "reference crashes on a non-object JSON line; Rust counts it as malformed"
+  }
 }

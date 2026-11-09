@@ -147,6 +147,41 @@ class EndToEnd(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(mg.main(["--root", str(root), "--check"]), 1)
 
+    def divergent(self, root: Path, divergence, crash=True) -> Path:
+        sc = root / "div"
+        jl(sc / "C--repo" / "s1.jsonl", [rec("a")] + (["42"] if crash else []))  # a bare 42 crashes the reference
+        (sc / "goldens").mkdir()
+        (sc / "goldens" / "scenario.json").write_text(json.dumps({
+            "repo_slug": "C--repo", "worktrees": [], "claim_branches": ["feat/x"],
+            "reference_divergence": divergence}), encoding="utf-8")
+        return sc
+
+    def test_divergent_scenario_is_listed_and_not_run(self):
+        with tempfile.TemporaryDirectory() as t:
+            sc = self.divergent(Path(t), {"issue": "#3", "reason": "reference crashes on 42"})
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(mg.main(["--root", t]), 0)
+            for word in ("div", "#3", "reference crashes on 42"):
+                self.assertIn(word, err.getvalue())
+            self.assertFalse((sc / "goldens" / "strict.json").exists())
+            self.assertFalse((sc / "goldens" / "claim.json").exists())
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(mg.main(["--root", t, "--check"]), 0)
+            (sc / "goldens" / "strict.json").write_text("{}\n", encoding="utf-8")
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(mg.main(["--root", t, "--check"]), 1)
+            self.assertIn("strict.json", err.getvalue())
+
+    def test_bad_divergence_shape_is_rejected(self):
+        for bad in ("oops", {"issue": "#3"}, {"issue": "", "reason": "x"},
+                    {"issue": "#3", "reason": 5}, {"issue": "#3", "reason": "x", "extra": 1}):
+            with tempfile.TemporaryDirectory() as t:
+                self.divergent(Path(t), bad, crash=False)
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(mg.main(["--root", t]), 1, bad)
+
     def test_unknown_filter_fails(self):
         with tempfile.TemporaryDirectory() as t:
             self.make(Path(t))
