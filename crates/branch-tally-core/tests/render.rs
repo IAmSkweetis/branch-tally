@@ -4,7 +4,9 @@
 
 use std::collections::BTreeSet;
 
-use branch_tally_core::model::{Bucket, Costs, Footnote, Mode, SessionId, SessionRow, Summary};
+use branch_tally_core::model::{
+    Bucket, Costs, Footnote, Mode, PriceTableInfo, PriceTableSource, SessionId, SessionRow, Summary,
+};
 use branch_tally_core::render::{END, HEADING, START, json, markdown, splice, wrap};
 
 fn bucket(input: u64, w5: u64, w1h: u64, read: u64, output: u64, think: u64, calls: u64) -> Bucket {
@@ -135,8 +137,11 @@ fn markdown_with_cost_matches_the_reference_layout() {
          |---|--:|--:|--:|--:|--:|--:|--:|\n\
          | `claude-b` | 1 | 5 | 0 | 0 | 300 | 0 | \u{2014} |\n\
          | `claude-a` | 2 | 1,000 | 250 | 3,000 | 100 | 10 | $0.12 |\n\
-         | **Total** | **3** | **1,005** | **250** | **3,000** | **400** | **10** | **$2.67** |{}",
-        tail(" \u{b7} est. cost at list API rates, not amounts billed</sub>")
+         | **Total** | **3** | **1,005** | **250** | **3,000** | **400** | **10** | **at least $2.67** |{}",
+        tail(
+            " \u{b7} price table date unknown \u{b7} 1 model(s) unpriced, total is a floor \u{b7} \
+             est. cost at list API rates, not amounts billed</sub>"
+        )
     );
     assert_eq!(markdown(&s, &c, true), expected);
 }
@@ -193,6 +198,76 @@ fn markdown_of_an_empty_summary_still_has_every_section() {
     assert!(!out.ends_with('\n'));
 }
 
+fn priced(unpriced: u64, as_of: &str, source: PriceTableSource) -> Costs {
+    Costs {
+        by_model: vec![("m".to_owned(), Some(1.0))],
+        total: 1.0,
+        unpriced_models: unpriced,
+        price_table: PriceTableInfo {
+            as_of: as_of.to_owned(),
+            source,
+        },
+    }
+}
+
+#[test]
+fn a_fully_priced_total_is_not_labelled_a_floor() {
+    let out = markdown(
+        &Summary::default(),
+        &priced(0, "2026-11-09", PriceTableSource::Bundled),
+        true,
+    );
+    assert!(out.contains("| **$1.00** |"), "{out}");
+    assert!(!out.contains("at least"), "{out}");
+    assert!(!out.contains("unpriced"), "{out}");
+}
+
+#[test]
+fn the_report_states_the_price_table_date_and_source() {
+    let cases = [
+        (PriceTableSource::Bundled, "bundled table"),
+        (PriceTableSource::Cache, "cached from LiteLLM"),
+        (PriceTableSource::Override, ".tally/prices.toml"),
+    ];
+    for (source, label) in cases {
+        let out = markdown(&Summary::default(), &priced(0, "2026-11-09", source), true);
+        assert!(
+            out.contains(&format!(
+                " \u{b7} prices as of 2026-11-09 ({label}) \u{b7} est. cost"
+            )),
+            "{out}"
+        );
+    }
+}
+
+#[test]
+fn no_cost_hides_the_price_table_and_floor_notes() {
+    let out = markdown(
+        &Summary::default(),
+        &priced(2, "2026-11-09", PriceTableSource::Cache),
+        false,
+    );
+    assert!(!out.contains("prices as of"), "{out}");
+    assert!(!out.contains("at least"), "{out}");
+    assert!(!out.contains("unpriced"), "{out}");
+}
+
+#[test]
+fn json_states_the_price_table_and_names_unpriced_models() {
+    let mut s = Summary::default();
+    s.by_model.push(("m".to_owned(), Bucket::default()));
+    let c = Costs {
+        by_model: vec![("m".to_owned(), Some(1.0)), ("zz".to_owned(), None)],
+        unpriced_models: 1,
+        ..priced(1, "2026-11-09", PriceTableSource::Override)
+    };
+    let v: serde_json::Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    assert_eq!(v["totalCostIsFloor"], true);
+    assert_eq!(v["unpricedModels"], serde_json::json!(["zz"]));
+    assert_eq!(v["priceTable"]["asOf"], "2026-11-09");
+    assert_eq!(v["priceTable"]["source"], "override");
+}
+
 #[test]
 fn wrap_puts_markers_on_their_own_lines() {
     assert_eq!(wrap("body"), format!("{START}\nbody\n{END}"));
@@ -244,6 +319,14 @@ fn json_matches_python_dumps_with_indent_2() {
   "mode": "claim",
   "totalCalls": 3,
   "totalCostUSD": 2.675,
+  "totalCostIsFloor": true,
+  "unpricedModels": [
+    "claude-b"
+  ],
+  "priceTable": {
+    "asOf": null,
+    "source": "bundled"
+  },
   "sessions": [
     {
       "id": "s2",
@@ -298,7 +381,9 @@ fn json_of_an_empty_summary_uses_empty_containers_and_float_zero() {
     assert_eq!(
         json(&Summary::default(), &Costs::default()),
         "{\n  \"branch\": \"\",\n  \"mode\": \"claim\",\n  \"totalCalls\": 0,\n  \
-         \"totalCostUSD\": 0.0,\n  \"sessions\": [],\n  \"models\": {}\n}"
+         \"totalCostUSD\": 0.0,\n  \"totalCostIsFloor\": false,\n  \"unpricedModels\": [],\n  \
+         \"priceTable\": {\n    \"asOf\": null,\n    \"source\": \"bundled\"\n  },\n  \
+         \"sessions\": [],\n  \"models\": {}\n}"
     );
 }
 
@@ -376,7 +461,21 @@ fn json_reproduces_reference_claim_goldens() {
                 continue; // a branch with no records: the reference prints no report
             }
             let (summary, costs) = from_payload(payload);
-            let ours: Value = serde_json::from_str(&json(&summary, &costs)).unwrap();
+            let mut ours: Value = serde_json::from_str(&json(&summary, &costs)).unwrap();
+            // Deliberate divergences from the reference, #5: the floor flag and the price table
+            // are new keys. Each must be present; every other key must match exactly.
+            let object = ours.as_object_mut().unwrap();
+            let unpriced = payload["models"]
+                .as_object()
+                .unwrap()
+                .values()
+                .any(|m| m["costUSD"].is_null());
+            assert_eq!(
+                object.remove("totalCostIsFloor"),
+                Some(Value::Bool(unpriced))
+            );
+            assert!(object.remove("unpricedModels").is_some());
+            assert!(object.remove("priceTable").is_some());
             assert_eq!(&ours, payload, "{}", path.display());
             compared += 1;
         }
@@ -419,7 +518,9 @@ fn from_payload(p: &serde_json::Value) -> (Summary, Costs) {
                 u(m, "calls"),
             ),
         ));
-        costs.by_model.push((name.clone(), m["costUSD"].as_f64()));
+        let cost = m["costUSD"].as_f64();
+        costs.unpriced_models += u64::from(cost.is_none());
+        costs.by_model.push((name.clone(), cost));
     }
     for s in p["sessions"].as_array().unwrap() {
         let agents: Vec<&str> = s["agents"]

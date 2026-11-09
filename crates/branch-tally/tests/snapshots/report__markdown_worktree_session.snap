@@ -6,13 +6,13 @@ expression: stdout(&out)
 | Model | Calls | Input | Cache write | Cache read | Output | (thinking) | Est. cost |
 |---|--:|--:|--:|--:|--:|--:|--:|
 | `claude-test-1` | 1 | 10 | 0 | 30 | 20 | 0 | — |
-| **Total** | **1** | **10** | **0** | **30** | **20** | **0** | **$0.00** |
+| **Total** | **1** | **10** | **0** | **30** | **20** | **0** | **at least $0.00** |
 
 | Session | Where | Agents | Span (UTC) | Calls | Tokens |
 |---|---|---|---|--:|--:|
 | `s2` | worktree | — | 01-01 00:00 → 01-01 00:00 | 1 | 0.0M |
 
-<sub>Branch `wt-a` · 1 session(s), 1 in a worktree · 0 of 1 calls from subagents · 0.0M tokens recovered from pre-branch/worktree checkouts · est. cost at list API rates, not amounts billed</sub>
+<sub>Branch `wt-a` · 1 session(s), 1 in a worktree · 0 of 1 calls from subagents · 0.0M tokens recovered from pre-branch/worktree checkouts · price table date unknown · 1 model(s) unpriced, total is a floor · est. cost at list API rates, not amounts billed</sub>
 
 <details><summary>Breakdown by skill / agent</summary>
 
