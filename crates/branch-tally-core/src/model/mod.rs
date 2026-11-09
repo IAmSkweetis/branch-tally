@@ -11,10 +11,12 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 mod attributed;
+mod costs;
 mod summary;
 
 pub use attributed::{AttributedRecord, BranchBasis, SelectedRecord, Selection};
-pub use summary::{Bucket, SessionRow, Summary};
+pub use costs::Costs;
+pub use summary::{Bucket, Footnote, Mode, SessionRow, Summary};
 
 /// The transcript root a record was read from (`origin` in `load_records` of
 /// `reference/token_report.py`): the main checkout's directory, or a worktree's.

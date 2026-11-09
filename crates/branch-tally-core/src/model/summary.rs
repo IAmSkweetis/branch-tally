@@ -3,7 +3,13 @@
 //! Tables are `Vec`s in **first-seen order**, not maps. The reference iterates Python dicts
 //! (insertion order) and then does stable sorts (`-output`, `-tokens`, `first`), so ties keep
 //! first-seen order. A `Vec` lets render reproduce that exactly; a `HashMap` or `BTreeMap` would
-//! not. No cost is stored: `render` costs each model's bucket itself (`Bucket.cost(model)`).
+//! not. The ordering contract is unchanged: the summary stage pushes in first-seen order.
+//!
+//! Everything `render` and `as_json` would otherwise compute is precomputed here (the Total row,
+//! the footnote counts), so a renderer never re-derives totals. Cost is not stored: `pricing`
+//! produces [`super::Costs`] from `by_model`. The requested branch and the mode live on
+//! [`Summary`] rather than being render arguments, because both `render` and `as_json` print
+//! them and they describe how the numbers were selected.
 
 use std::collections::BTreeSet;
 
@@ -87,9 +93,51 @@ impl SessionRow {
     }
 }
 
-/// The three tables `summarize` returns, each in first-seen order.
+/// How records were selected for the branch (`--strict` in the reference).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Mode {
+    /// Naive branch filter: no session claim, no worktree recovery.
+    Strict,
+    /// Session claim and worktree recovery (the default).
+    #[default]
+    Claim,
+}
+
+impl Mode {
+    /// The `mode` string `as_json` prints: `"strict"` or `"claim"`.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Strict => "strict",
+            Self::Claim => "claim",
+        }
+    }
+}
+
+/// The counts `render`'s footnote prints, precomputed by the summary stage.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Footnote {
+    /// Calls with `is_sidechain` set (`sub_calls`).
+    pub subagent_calls: u64,
+    /// Tokens of records whose assigned branch is not the requested one (`off_branch`): the
+    /// "recovered from pre-branch/worktree checkouts" figure.
+    pub off_branch_tokens: u64,
+    /// Sessions whose origin is not `"main"` (`worktree_sessions`).
+    pub worktree_sessions: u64,
+}
+
+/// The three tables `summarize` returns, each in first-seen order, plus what render derives.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Summary {
+    /// The requested branch name.
+    pub branch: String,
+    /// How records were selected.
+    pub mode: Mode,
+    /// Sum of `by_model`: the Total row (`total` in `render`).
+    pub total: Bucket,
+    /// The footnote counts.
+    pub footnote: Footnote,
     /// Per model id (`by_model`).
     pub by_model: Vec<(String, Bucket)>,
     /// Per attribution label such as `main`, `agent:x` or a skill name (`by_attr`).
@@ -130,6 +178,14 @@ mod tests {
         let s = SessionRow::new("t", "main");
         assert_eq!((s.first.as_str(), s.last.as_str()), ("t", "t"));
         assert_eq!((s.tokens, s.calls), (0, 0));
+    }
+
+    #[test]
+    fn mode_names_match_as_json_and_default_is_claim() {
+        assert_eq!(Mode::Strict.as_str(), "strict");
+        assert_eq!(Mode::Claim.as_str(), "claim");
+        assert_eq!(Mode::default(), Mode::Claim);
+        assert_eq!(serde_json::to_string(&Mode::Strict).unwrap(), "\"strict\"");
     }
 
     #[test]
