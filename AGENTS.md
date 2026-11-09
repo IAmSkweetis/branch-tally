@@ -59,6 +59,10 @@ wherever this page is silent.
   `#[expect(lint_name, reason = "...")]`, not `#[allow]`. `expect` fails if the lint stops firing,
   so the suppression can't outlive its reason. Never disable a lint workspace-wide to quiet one
   case.
+- **Python**: only as repository tooling, in `scripts/`, run with `uv`. `reference/` holds the
+  original `token_report.py` and is **immutable**: it is run as the parity oracle and this repo's
+  token report until branch-tally can dogfood its own PRs (#4), but never edited and never added
+  to. Once branch-tally replaces it, it is no longer run at all.
 - **Formatting**: `rustfmt` with the repository's `rustfmt.toml`. Line endings are LF everywhere,
   enforced by `.gitattributes`.
 - **Dependencies**: every new crate, feature flag or version bump goes through the Workspace Config

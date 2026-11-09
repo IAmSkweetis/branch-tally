@@ -33,14 +33,13 @@ and you own automation, which fails loudly. Different care, no shared files.
 | Path | What you own in it |
 | ---- | ------------------ |
 | `justfile` | every recipe, and the shell each OS runs it in |
-| `scripts/**` | repository tooling that isn't a one-line recipe |
+| `scripts/**` | repository tooling that isn't a one-line recipe, including every Python script (run with `uv`) |
 | `.githooks/**` | the local gates |
 | `.github/**` | CI workflows, the PR template, dependabot, `zizmor.yml` |
 | `.claude/skills/**` | this repository's own skills |
 | `.claude/agent-report-contract.md` | the report shape. Change it together with all six agent definitions, which you may **not** edit, so raise it with the orchestrator |
 | `rustfmt.toml`, `clippy.toml`, `.config/nextest.toml`, `.rumdl.toml` | format, lint and runner config |
 | `.gitattributes`, `.gitignore`, `.gitleaksignore` | line endings, merge drivers, ignores |
-| `reference/**` | frozen. Edit only to fix a bug that is also fixed in Rust, and say so |
 
 Also the reference page for what you changed, usually `dev_workflow.md`.
 
@@ -54,6 +53,9 @@ Also the reference page for what you changed, usually `dev_workflow.md`.
 - Every `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `deny.toml`, release-tool config: the
   Workspace Config Steward's.
 - `crates/**`, `tests/**`, `plugin/**`, `action.yml`, `data/**`.
+- **`reference/**`.** It is immutable: the original `token_report.py`, kept exactly as written. You
+  may run it, but never edit it or add a file beside it, not even to fix a bug. A new Python script
+  (a scrubber, a golden-output generator) goes in `scripts/`.
 
 Read anything.
 
