@@ -77,7 +77,7 @@ pub fn build(
     }
     let mode = if strict { Mode::Strict } else { Mode::Claim };
     let summary = crate::summary::summarize(branch, mode, &selected);
-    let costs = crate::pricing::price(&summary);
+    let costs = crate::pricing::price(&summary, crate::pricing::PriceTable::bundled());
     Ok(Report {
         branch: branch.to_owned(),
         summary,
