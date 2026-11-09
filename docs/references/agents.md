@@ -36,7 +36,7 @@ later agents branch from a `HEAD` that already has them.
 
 | Agent | Writes |
 | ----- | ------ |
-| **Workspace Config Steward** | `Cargo.toml` (root and every `crates/*/Cargo.toml`), `Cargo.lock`, `rust-toolchain.toml`, `deny.toml`, and release-tool config (`dist-workspace.toml`, `release-plz.toml`, `cliff.toml`, or whichever #10 settles on) |
+| **Workspace Config Steward** | `Cargo.toml` (root and every `crates/*/Cargo.toml`), `Cargo.lock`, `rust-toolchain.toml`, `deny.toml`, and the release-tool config, `cliff.toml` |
 | **Repository Tooling Steward** | `justfile`, `scripts/**`, `.githooks/**`, `.github/**`, `.claude/skills/**`, `.claude/agent-report-contract.md`, `rustfmt.toml`, `clippy.toml`, `.config/nextest.toml`, `.rumdl.toml`, `.gitattributes`, `.gitignore`, `.gitleaksignore` |
 
 Each one is serialized **against itself**, never against the other. Their files never meet, so the
@@ -70,7 +70,7 @@ orchestrator does when a human directs it. The change lands before the work that
 | `crates/branch-tally/**` (except `Cargo.toml`) | CLI Builder |
 | `plugin/**`, `action.yml`, `action/**`, `examples/**` | Integration Author |
 | `data/**` | Core Implementer holding the `pricing` slice |
-| every `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `deny.toml`, release-tool config | Workspace Config Steward |
+| every `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `deny.toml`, `cliff.toml` | Workspace Config Steward |
 | `justfile`, `scripts/**` (including every Python script), `.githooks/**`, `.github/**`, `.claude/skills/**`, lint, format and runner config | Repository Tooling Steward |
 | `reference/**` | nobody: immutable. The original `token_report.py`, run as the parity oracle and token report until branch-tally replaces it, but never edited and never added to |
 | `.claude/agents/**`, `.claude/settings.json` | nobody: a scope boundary an agent can edit is not a boundary |
