@@ -7,6 +7,7 @@
 pub mod attribution;
 pub mod git;
 pub mod model;
+pub mod pr;
 pub mod pricing;
 pub mod render;
 pub mod report;

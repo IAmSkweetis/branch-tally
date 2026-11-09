@@ -49,7 +49,7 @@ strangers, tested, and must work on a machine that has never seen this repositor
 skill or workflow serves only us. They have different owners
 ([agents.md](agents.md#who-owns-a-given-path)), and one must never be "fixed" by editing the other.
 
-## Inside `branch-tally-core` *(`model` and the `Source` trait exist; `git`, `attribution`, `summary`, `pricing`, `render`, `report` are implemented; others planned)*
+## Inside `branch-tally-core` *(`model` and the `Source` trait exist; `git`, `attribution`, `summary`, `pricing`, `render`, `report`, `pr` are implemented; others planned)*
 
 The modules follow the pipeline, in order. A module may depend only on modules **above** it in this
 table, plus `model`:
@@ -65,6 +65,7 @@ table, plus `model`:
 | `pricing` | Costing a `Usage`. The `report` port's rates are one const table ported verbatim from the reference, to be replaced by data in #5 | define a price anywhere else |
 | `render` | Markdown, JSON and CSV output from an already-computed summary | compute totals or read transcripts |
 | `report` | The pipeline entry point: `build` (pure: records + worktrees + branch + strict to `Summary` and `Costs`, or an explicit no-records error) and `run` (the reference's `main()` resolution behind the `Git` and `Source` traits) | attribute, price or format anything itself; it only chains the stages |
+| `pr` | The `Gh` trait (the GitHub CLI, with a fake for tests) and `update_pr`: find the PR, splice the report into its body, say what happened. The real `SystemGh` writes the body to gh as UTF-8 bytes | build the report, or run anywhere but the CLI's `--pr` path |
 | `redact` | Applying the redaction policy (#9) | run anywhere except just before output or ledger write |
 
 Should a new file go in core or the CLI? **Ask whether a test could call it without a terminal.**
@@ -81,7 +82,7 @@ Rust has three places a test can live, and each has a use:
 | ---- | ----- | ---------- |
 | Unit | `#[cfg(test)] mod tests` at the bottom of the file under test | One function or type, including private items |
 | Integration | `crates/<crate>/tests/<module>.rs`, one file per core module | The module's public API against fixtures |
-| End-to-end | `crates/branch-tally/tests/` | Running the binary: output, exit codes, the PR splice (with `gh` faked) |
+| End-to-end | `crates/branch-tally/tests/` | Running the binary: output, exit codes, the PR splice (with `gh` faked; until a fake `gh` executable is portable, the splice is tested in core against `FakeGh`) |
 | Doc | `///` examples on public items | Keeping documented examples true. **Not run by nextest.** |
 
 A test file outside a crate's `tests/` directory, or not declared as a module, is **never
