@@ -9,6 +9,10 @@ exclude = [
     "target",
 ]
 
+# The PR template is pasted into a PR body under GitHub's own title, so it starts at level 2.
+[per-file-ignores]
+".github/PULL_REQUEST_TEMPLATE.md" = ["MD041"]
+
 [MD013]
 line-length = 100
 # A table row or a code line cannot wrap without breaking it, and a heading

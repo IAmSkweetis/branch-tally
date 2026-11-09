@@ -25,8 +25,10 @@ reported for the feature branch's baseline. If it's zero or far lower, the run d
 stopped. See the false-green table in `docs/references/testing.md` before investigating anything
 else.
 
-Until the workspace exists (#3), there is nothing to build. Confirm the hooks path and the
-toolchain, and say so in your report.
+Until the workspace exists (#3), there is nothing to build: `just test` prints "no Cargo.toml: Rust
+checks skipped" and exits 0, which is a skip and not a test count. Confirm the hooks path and the
+toolchain, and say so in your report. `just` itself, `gitleaks` and `uv` must be installed for the
+hooks to run. A hook with a missing tool fails with an install hint.
 
 ## What you do NOT need to do
 

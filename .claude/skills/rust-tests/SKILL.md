@@ -17,8 +17,8 @@ just test <filter>        # nextest filter: a module, a test name, a binary
 just ci                   # every gate CI runs
 ```
 
-Before the justfile exists: `cargo nextest run --workspace [filter]` and
-`cargo test --workspace --doc`.
+Until the workspace exists (#3) there is nothing to run: `just test` says "no Cargo.toml: Rust
+checks skipped" and exits 0. That is a skip, not a pass. Don't report it as green tests.
 
 Don't use plain `cargo test <filter>` to prove green. A filter that matches nothing exits 0.
 

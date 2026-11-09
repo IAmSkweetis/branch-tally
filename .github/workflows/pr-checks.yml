@@ -1,0 +1,91 @@
+name: PR checks
+
+# Merges are squashed, so the PR title becomes the commit on main and must be a Conventional
+# Commit. The head branch must be a Conventional Branch, and so must every commit. The rules live
+# in scripts/check-*.sh, which the git hooks run too. Dependabot's own branches (dependabot/...)
+# are exempt from the branch rule because the bot names them; its commits and titles still pass,
+# through the prefixes set in .github/dependabot.yml.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions: {}
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-title:
+    name: pr-title
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: PR title is a Conventional Commit
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: sh scripts/check-commit-subject.sh "$PR_TITLE"
+
+  branch-name:
+    name: branch-name
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Head branch is a Conventional Branch
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: sh scripts/check-branch-name.sh --allow-dependabot "$HEAD_REF"
+
+  commit-messages:
+    name: commit-messages
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Every commit is a Conventional Commit
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          failed=0
+          count=0
+          for sha in $(git rev-list --no-merges "$BASE_SHA..$HEAD_SHA"); do
+            count=$((count + 1))
+            sh scripts/check-commit-subject.sh "$(git log -1 --format=%s "$sha")" || failed=1
+          done
+          echo "checked $count commits"
+          if [ "$count" -eq 0 ]; then
+            echo "::error::found no commits between base and head; refusing to pass an empty check"
+            exit 1
+          fi
+          exit "$failed"
+
+  dependency-review:
+    name: dependency-review
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate

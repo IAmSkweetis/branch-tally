@@ -1,0 +1,6 @@
+#!/bin/sh
+# commit-msg: the subject must be a Conventional Commit (merge commits are allowed).
+set -eu
+
+subject=$(grep -v '^#' "$1" | sed -n '/./{p;q;}')
+exec sh "$(dirname "$0")/../scripts/check-commit-subject.sh" "$subject"

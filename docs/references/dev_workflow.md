@@ -55,6 +55,8 @@ These are set in GitHub, not in the repository. Apply them before the first PR m
 | Default squash message | PR title and description | So the Conventional Commit written in the title is what lands. |
 | Branch protection on `main` | require a PR, require CI green, block force-pushes and deletion | The hooks stop accidents locally; this stops them for everyone. |
 | Automatically delete head branches | off | `worktree-cleanup` deletes branches after checking their content landed. |
+| Required status checks on `main` | `lint`, `lint-md`, `scripts`, `test (ubuntu-latest)`, `test (macos-latest)`, `test (windows-latest)`, `msrv`, `deny`, `secret-scan`, `pr-title`, `branch-name`, `commit-messages`, `dependency-review` | The CI jobs above. Don't require `zizmor`: it only runs when `.github/` changes, so on other PRs it would never report. |
+| Dependency graph, Dependabot alerts, Dependabot security updates | on | Feeds `dependency-review` and the Dependabot PRs. |
 
 ## Branch names
 
@@ -136,45 +138,70 @@ message `main` actually carries, and the release tooling reads it to choose the 
 ## Commands
 
 The `justfile` at the repository root is the entrypoint for every script, gate and build. `just` on
-its own lists the recipes. **Status: planned.** The justfile, hooks and CI land next. Until then,
-the raw commands are shown.
+its own lists the recipes.
 
 | Recipe | Runs | Raw equivalent |
 | ------ | ---- | -------------- |
-| `just ci` | everything below except `fmt` and `audit-workflows`: every gate CI runs | — |
-| `just test [filter]` | nextest over the workspace, then doctests | `cargo nextest run --workspace [filter]` then `cargo test --workspace --doc` |
+| `just ci` | everything below except `fmt`, `fmt-md` and `audit-workflows`: every gate CI runs | — |
+| `just test [filter]` | nextest over the workspace (a run that matches no tests fails), then doctests | `cargo nextest run --workspace --no-tests=fail [filter]` then `cargo test --workspace --doc [filter]` |
 | `just lint` | `cargo fmt --check` and `cargo clippy --workspace --all-targets -- -D warnings` | same |
 | `just fmt` | `cargo fmt --all` | same |
-| `just lint-md [paths…]` | `rumdl check` | `uvx rumdl check .` |
-| `just fmt-md [paths…]` | `rumdl fmt`, which rewraps long paragraphs | `uvx rumdl fmt .` |
+| `just lint-md [paths…]` | `rumdl check`, pinned | `uvx rumdl@<pin> check .` |
+| `just fmt-md [paths…]` | `rumdl fmt`, which rewraps long paragraphs | `uvx rumdl@<pin> fmt .` |
 | `just secret-scan` | `gitleaks git` over the full history, redacted | `gitleaks git --redact .` |
-| `just audit-workflows` | `zizmor` over `.github/` | `zizmor .` |
+| `just audit-workflows [--offline]` | `zizmor` over `.github/`, pinned. Online audits run when `GH_TOKEN` is set. | `uvx zizmor@<pin> .github/` |
+| `just test-scripts` | proves `scripts/check-commit-subject.sh` and `scripts/check-branch-name.sh` reject what they must and accept what they should | `sh scripts/test-checks.sh` |
 | `just token-report [args…]` | this repo's own PR token report: the Python reference until the CLI can do it (#4), then `branch-tally` | `uv run reference/token_report.py` |
 
 Recipes run under PowerShell 7 on Windows and `sh` elsewhere, so a recipe line must be a plain tool
 call that reads the same in both. Anything shell-specific goes in a private `_helper` recipe
-written once under `[windows]` and once under `[unix]`.
+written once under `[windows]` and once under `[unix]` (the `_require*` helpers that check for a
+tool are the example). `test-scripts` needs `sh`, which Git for Windows provides.
 
 CI calls the same recipes, so a local `just ci` checks what CI checks.
+
+**Pinned tools.** The `justfile` holds the versions of `rumdl`, `zizmor` and `gitleaks`. CI reads
+them back with `just --evaluate`, so local and CI runs use the same ones. Bump a version in the
+justfile only. For gitleaks also bump the archive checksum in `ci.yml`; a mismatch fails the job.
+`just`, nextest and cargo-deny are pinned in `ci.yml`.
+
+**Before the workspace exists (#3).** The Rust recipes (`test`, `lint`, `fmt`) find no
+`Cargo.toml`, print "no Cargo.toml: Rust checks skipped" and exit 0. The CI Rust jobs do the same
+with a `::notice::` annotation, so the required checks still report and start checking on their
+own when the workspace lands. Markdown, workflow, secret and commit-message checks always run.
 
 ## Quality gates
 
 Every gate runs twice: **locally, as a git hook**, so mistakes are caught before they leave the
-machine, and **in CI**, so a skipped hook or a new contributor can't get around it.
-**Status: planned.** These are the gates the hooks and workflows will implement.
+machine, and **in CI**, so a skipped hook or a new contributor can't get around it. Both call the
+same `just` recipes and `scripts/check-*.sh`.
 
-| Gate | Local hook | CI |
-| ---- | ---------- | -- |
-| Secrets | `pre-commit`: `gitleaks git --pre-commit --staged --redact` | `gitleaks` over full history, pinned binary |
-| Formatting | `pre-commit`: `cargo fmt --check` | `just lint` |
-| Clippy | `pre-commit`: `cargo clippy -D warnings` | `just lint` |
-| Markdown | `pre-commit`: `rumdl check` | `just lint-md` |
-| Workflow security | `pre-commit`, when `.github/` is staged: `zizmor --offline` | `zizmor` with online audits on PRs touching `.github/` |
-| Commit message | `commit-msg`: Conventional Commits | every commit in the PR, plus the **PR title** |
-| Branch name | `pre-push`: Conventional Branch, and refuses a push to `main` | the PR's head branch |
-| Tests | `pre-push`: `just test` | `just test` on Linux, macOS and Windows, plus the MSRV |
-| Dependencies | — | `cargo deny check` (licences, advisories, duplicates) |
+| Gate | Local hook | CI (job name) |
+| ---- | ---------- | ------------- |
+| Secrets | `pre-commit`: `gitleaks git --pre-commit --staged --redact` | `secret-scan`: gitleaks over full history, pinned binary with a checked sha256 |
+| Formatting | `pre-commit`: `just lint` (`cargo fmt --check`) | `lint`: `just lint` |
+| Clippy | `pre-commit`: `just lint` (`cargo clippy -D warnings`) | `lint`: `just lint` |
+| Markdown | `pre-commit`: `just lint-md` (`rumdl check`) | `lint-md`: `just lint-md` |
+| Workflow security | `pre-commit`, when `.github/` is staged: `zizmor --offline` | `zizmor` (workflow `Workflow audit`): online audits when `.github/` or the justfile changes |
+| Commit message | `commit-msg`: Conventional Commits | `commit-messages`: every commit in the PR; `pr-title`: the **PR title** |
+| Branch name | `pre-push`: Conventional Branch, and refuses a push to `main` | `branch-name`: the PR's head branch |
+| Tests | `pre-push`: `just test` | `test (ubuntu-latest)`, `test (macos-latest)`, `test (windows-latest)` and `msrv`: `just test` |
+| Gate scripts | — | `scripts`: `just test-scripts`, so the commit and branch checks can't silently stop rejecting |
+| Dependencies | — | `deny`: `cargo deny check` (licences, advisories, duplicates), once `deny.toml` exists |
+| New vulnerable dependencies | — | `dependency-review`: fails a PR that adds a dependency with a known vulnerability of moderate severity or worse |
 | Edit-time lint | Claude Code `PostToolUse` hook: `rustfmt --check` on a `.rs` file, `rumdl check` on a `.md` file | — |
+
+**Dependabot** keeps the dependencies current. `.github/dependabot.yml` groups updates (one weekly
+PR per ecosystem), waits a week after a release before proposing it, and prefixes the commit and PR
+title with `ci(deps):` for workflow actions and `build(deps):` for crates, so the PR-title check
+passes. Its `dependabot/...` branches are exempt from the Conventional Branch check, since the bot
+names them. The cargo entry is commented out until the workspace exists (#3), because Dependabot
+reports an error for a directory with no `Cargo.toml`. Whoever lands #3 enables it. Dependabot
+alerts and security updates are repository settings (see the table above).
+
+While there is no `Cargo.toml`, the Rust jobs (`lint`'s Rust half, the `test` matrix, `msrv` and
+`deny`) pass with a "Rust checks skipped" notice rather than not running, so a required check is
+never stuck waiting. Once `Cargo.toml` exists, `msrv` fails unless it declares a `rust-version`.
 
 Tests run on `pre-push` rather than `pre-commit` so that a red commit is possible. Test-first
 produces one on purpose, and the commit history should show the red test landing before the code.

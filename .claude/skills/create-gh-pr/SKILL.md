@@ -30,7 +30,10 @@ $ARGUMENTS
   ask whether to open the PR as a draft.
 - `git fetch origin && git merge-base --is-ancestor origin/main HEAD`: if `main` has moved, offer
   to merge it in first (trunk-based: integrate before review).
-- `git push -u origin <branch>` once the user agrees to open the PR.
+- `git push -u origin <branch>` once the user agrees to open the PR. The `pre-push` hook runs
+  `just test` and checks the branch name. If it fails, fix what it found.
+- The PR title and branch are checked again in CI (`pr-title`, `branch-name`, `commit-messages`),
+  so a title that isn't a Conventional Commit turns the PR red.
 
 Only this branch is pushed, never an agent's worktree branch.
 
@@ -62,7 +65,10 @@ Title: a Conventional Commit matching the branch type (`feat(attribution): …`,
 `docs: …`). It becomes the squash commit on `main` and drives the release version, so get the type
 and any `!` right.
 
-Body (use `.github/PULL_REQUEST_TEMPLATE.md` once it exists, with the same sections):
+Body: start from `.github/PULL_REQUEST_TEMPLATE.md`, the single source for the sections and the
+`token-report` markers. Read it at run time rather than copying the text below, which only shows
+its shape. Fill in each section and leave the markers exactly as they are, because Step 5 replaces
+what sits between them.
 
 ```markdown
 ## Summary

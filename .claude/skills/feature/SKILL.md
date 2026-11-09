@@ -149,7 +149,7 @@ Parse the last fenced JSON block. Before merging:
 From the main checkout, on the feature branch, as each agent lands:
 
 ```bash
-git merge --no-ff <agent-branch> -m "merge: <slice> into <feature-branch>"
+git merge --no-ff <agent-branch> -m "chore: merge <slice> into <feature-branch>"
 just test
 ```
 
