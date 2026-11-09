@@ -63,8 +63,9 @@ situation it reproduces, which issue it came from, and what a correct report say
 **Fixtures are always scrubbed.** Governance III applies with extra force here, because a fixture
 is committed and published.
 
-- Derive fixtures from real transcripts only through the scrubbing tool (#2). It keeps only the
-  fields branch-tally reads and replaces every content field with a placeholder.
+- Derive fixtures from real transcripts only through the scrubbing tool (#2), which lives in
+  `scripts/` like every Python script here. It keeps only the fields branch-tally reads and
+  replaces every content field with a placeholder.
 - **Never hand-copy lines** from `~/.claude/projects/` into a fixture.
 - Rewrite user-specific paths to a neutral root (`/repo`, `C:\repo`). Keep both separators where a
   scenario depends on them.
@@ -81,6 +82,10 @@ each fixture is stored as a golden file. Rust output must match it, **except** w
 deliberately changes behaviour (#6, #7). Each deliberate divergence is listed in the golden test,
 next to the issue number that justifies it. Once Rust is the source of truth, the goldens become
 ordinary snapshots and the reference script is retired.
+
+The script is **immutable**. It is run, never edited, not even to fix a bug: a bug in it is a
+deliberate divergence, listed like any other. Anything that drives it, such as the golden-output
+generator, lives in `scripts/`, never in `reference/`.
 
 ## Snapshots
 
