@@ -126,7 +126,20 @@ silently, and a run that finds no manifest at all fails.
 The Python tooling's own tests are `just test-py` (stdlib `unittest`, part of `just ci`).
 
 The script is **immutable**. It is run, never edited, not even to fix a bug: a bug in it is a
-deliberate divergence, listed like any other. Anything that drives it, such as the golden-output
+deliberate divergence, listed like any other. When the reference crashes or is plain wrong on a
+whole scenario, list that in the manifest instead of working around it:
+
+```json
+"reference_divergence": {"issue": "#3", "reason": "reference crashes on a bare 42"}
+```
+
+The generator then does not run the reference for that scenario and writes no goldens. It prints a
+stderr line naming the scenario, issue and reason, and `just goldens --check` fails if goldens
+exist for it. Both keys are required, non-empty strings. The scenario's Rust test asserts the
+expected behaviour directly, next to the same issue number. `malformed-and-keyless` is the first
+(a bare `42` line makes the reference raise `AttributeError`; Rust counts it as malformed).
+
+Anything that drives the script, such as the golden-output
 generator, lives in `scripts/`, never in `reference/`.
 
 ## Snapshots
