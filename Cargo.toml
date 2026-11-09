@@ -18,6 +18,13 @@ thiserror = "2.0.21"
 tempfile = { version = "3.27.0", default-features = false }
 clap = { version = "4.6.7", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 insta = { version = "1.49.0", default-features = false }
+# issue #5: parse the bundled and user price tables. Deserialize only: no `display` (writing),
+# no `preserve_order`, no `fast_hash`.
+toml = { version = "1.2.1", default-features = false, features = ["std", "parse", "serde"] }
+# issue #5: `prices update` fetches one JSON file over HTTPS. rustls with the ring provider and
+# bundled webpki roots: no OpenSSL, no system trust store, same behaviour on all six targets.
+# gzip, cookies, json, charset and the proxy extras stay off (we deserialize with serde_json).
+ureq = { version = "3.5.1", default-features = false, features = ["rustls"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

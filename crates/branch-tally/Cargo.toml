@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 branch-tally-core = { path = "../branch-tally-core" }
 clap.workspace = true
+ureq.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
