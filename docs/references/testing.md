@@ -113,7 +113,12 @@ reference once per pair. It writes, next to the manifest:
   raw `gitBranch` in the usage-bearing records the reference reads (`"(none)"` for records with
   none). These feed the Phase 0 parity test: calls kept and token totals, per session and model.
 - `goldens/claim.json`: the same shape for the manifest's `claim_branches`, run without
-  `--strict`. They feed an ignored test until #4 (full report comparison).
+  `--strict`. They feed `rust_report_matches_the_reference_claim_goldens` (#4), which compares
+  the full `render::json` report against every `claim.json` key (claim mode) and every `strict.json`
+  key (strict mode) as parsed JSON, through `report::build`. Worktrees are built as git lists them
+  (main checkout on `main`, then `.claude/worktrees/<name>`), the reference's #37 behaviour kept
+  as is. Origins are compared lowercased: the reference lowercases them and the generator maps
+  them back to fixture spelling, which is not behaviour. No divergences are listed.
 
 A pair the reference answers with "No transcript records found" is recorded as
 `{"error": "no_records"}`, never dropped. Any other failure aborts the run. Session `origin` is

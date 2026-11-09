@@ -49,7 +49,7 @@ strangers, tested, and must work on a machine that has never seen this repositor
 skill or workflow serves only us. They have different owners
 ([agents.md](agents.md#who-owns-a-given-path)), and one must never be "fixed" by editing the other.
 
-## Inside `branch-tally-core` *(`model` and the `Source` trait exist; `git`, `attribution`, `summary`, `pricing` are documented stubs; `render` is implemented; others planned)*
+## Inside `branch-tally-core` *(`model` and the `Source` trait exist; `git`, `attribution`, `summary`, `pricing`, `render`, `report` are implemented; others planned)*
 
 The modules follow the pipeline, in order. A module may depend only on modules **above** it in this
 table, plus `model`:
@@ -64,6 +64,7 @@ table, plus `model`:
 | `ledger` | Reading and writing the repository ledger (#8) | know about any one harness |
 | `pricing` | Costing a `Usage`. The `report` port's rates are one const table ported verbatim from the reference, to be replaced by data in #5 | define a price anywhere else |
 | `render` | Markdown, JSON and CSV output from an already-computed summary | compute totals or read transcripts |
+| `report` | The pipeline entry point: `build` (pure: records + worktrees + branch + strict to `Summary` and `Costs`, or an explicit no-records error) and `run` (the reference's `main()` resolution behind the `Git` and `Source` traits) | attribute, price or format anything itself; it only chains the stages |
 | `redact` | Applying the redaction policy (#9) | run anywhere except just before output or ledger write |
 
 Should a new file go in core or the CLI? **Ask whether a test could call it without a terminal.**
