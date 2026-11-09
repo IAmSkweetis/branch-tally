@@ -25,7 +25,7 @@ default:
     @{{ just_executable() }} --list
 
 # Every gate CI runs (everything except fmt and audit-workflows).
-ci: lint lint-md test test-scripts secret-scan
+ci: lint lint-md test test-scripts test-py secret-scan
 
 # Prove the commit-message and branch-name checks reject what they must and accept what they should.
 [unix]
@@ -69,6 +69,18 @@ secret-scan *args: (_require "gitleaks" "install it: https://github.com/gitleaks
 # zizmor over .github/ (pinned). Pass --offline to skip the online audits.
 audit-workflows *args: (_require "uvx" "install uv: https://docs.astral.sh/uv/getting-started/installation/")
     uvx zizmor@{{ zizmor_version }} {{ args }} .github/
+
+# Unit tests for the Python tooling in scripts/ (stdlib unittest via uv; needs git for the e2e test).
+test-py: (_require "uv" "install uv: https://docs.astral.sh/uv/getting-started/installation/") (_require "git" "install git")
+    uv run python -m unittest discover -s scripts/tests
+
+# Scrub a real transcript tree into a committable fixture: just scrub --root <repo root> <src> <dest>
+scrub *args: (_require "uv" "install uv: https://docs.astral.sh/uv/getting-started/installation/")
+    uv run scripts/scrub_transcripts.py {{ args }}
+
+# Regenerate the fixture goldens from reference/token_report.py: just goldens [scenario] [--check]
+goldens *args: (_require "uv" "install uv: https://docs.astral.sh/uv/getting-started/installation/") (_require "git" "install git")
+    uv run scripts/make_goldens.py {{ args }}
 
 # This repository's own PR token report: the Python reference until the CLI can do it (#4).
 token-report *args: (_require "uv" "install uv: https://docs.astral.sh/uv/getting-started/installation/")
