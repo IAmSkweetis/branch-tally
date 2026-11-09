@@ -4,6 +4,9 @@ Thanks for helping. This page gets a working checkout set up and explains what h
 before a change lands. The rules behind it live in [AGENTS.md](AGENTS.md) and
 [docs/references/](docs/references/README.md).
 
+Everyone taking part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md). Found a
+vulnerability? Don't open an issue: report it privately as described in [SECURITY.md](SECURITY.md).
+
 ## Prerequisites
 
 | Tool | Why | Install |
