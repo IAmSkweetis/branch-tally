@@ -19,6 +19,10 @@ on:
       - "scripts/package.sh"
       - "scripts/smoke-test.sh"
       - "cliff.toml"
+      # A dependency or toolchain change can break one target only: ring needs a C compiler for
+      # musl, which PR #53 found out after merge.
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
 
 permissions: {}
 
@@ -66,6 +70,18 @@ jobs:
           set -euo pipefail
           sh scripts/ci-install-rust.sh
           rustup target add "$TARGET"
+
+      # ring (rustls's crypto) compiles C and assembly. cc-rs looks for "<arch>-linux-musl-gcc",
+      # which Ubuntu does not ship; musl-tools provides musl-gcc for the runner's own arch, and
+      # every musl target here builds on a native runner of that arch.
+      - name: Install the musl C toolchain
+        if: contains(matrix.target, 'linux-musl')
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+          echo "CC_${TARGET//-/_}=musl-gcc" >> "$GITHUB_ENV"
 
       # BRANCH_TALLY_VERSION is read at compile time; Cargo.toml stays at 0.0.0.
       - name: Build
