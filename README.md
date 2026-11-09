@@ -11,6 +11,23 @@ in git worktrees. Claude Code is the first harness supported; others follow.
 > PR token reports are produced by branch-tally. Follow the
 > [roadmap](https://github.com/IAmSkweetis/branch-tally/issues/16) for progress.
 
+## Why build branch-tally?
+
+As I've been working on different projects, I like to keep an eye on the costs of a PR and a
+project. There are not any good tools for doing this. I had found different plugins that get you
+partly there. The different labs do not provide the best metrics or tools for this either.
+
+What I had found are different projects that will give you a running token cost in a terminal. Or a
+plugin or extension for different harnesses that are specific to a branch. But nothing really fit
+the how I think most folks are using AI in their workflows. And there is definitely a gap on a
+larger project calculation.
+
+So I had created a [python script](reference\token_report.py) and added some instructions to a skill
+to to include the usage costs into my PRs.
+
+The goal with branch-tally is to expand on this idea. And honestly, fix some bugs that I've been
+putting off, too. We'll see where we get.
+
 ## Planned features
 
 - **Per-branch and per-PR totals** of tokens and estimated cost, by model.
@@ -28,6 +45,8 @@ in git worktrees. Claude Code is the first harness supported; others follow.
 | Roadmap | [#16](https://github.com/IAmSkweetis/branch-tally/issues/16) and its `roadmap` sub-issues |
 | Project board | [branch-tally](https://github.com/users/IAmSkweetis/projects/2) |
 | Contributing | [CONTRIBUTING.md](CONTRIBUTING.md): workspace setup and how a change lands |
+| Code of conduct | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) |
+| Security | [SECURITY.md](SECURITY.md): how to report a vulnerability privately |
 | Agent and project rules | [AGENTS.md](AGENTS.md) |
 | Reference docs | [docs/references/](docs/references/README.md) |
 | Issues | [github.com/IAmSkweetis/branch-tally/issues](https://github.com/IAmSkweetis/branch-tally/issues) |
