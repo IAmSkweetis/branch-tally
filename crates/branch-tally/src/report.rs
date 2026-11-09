@@ -33,8 +33,14 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), String> {
         args.branch.as_deref(),
         args.strict,
     )
-    .map_err(|e| describe(&e, &source))?;
+    .map_err(|e| {
+        if let ReportError::NoRecords { read_stats, .. } = &e {
+            note_skipped(read_stats);
+        }
+        describe(&e, &source)
+    })?;
 
+    note_skipped(&report.read_stats);
     if report.worktrees_unavailable.is_some() {
         // The reference treats this as "no worktrees"; say so rather than do it silently.
         stderr("note: git worktree list was unavailable, so worktree recovery was skipped");
@@ -90,6 +96,34 @@ fn update(
         }
     }
     Ok(())
+}
+
+/// Governance II: say what the read could not use. One stderr line with counts only (never
+/// content or paths), so stdout stays byte-identical to the reference.
+///
+/// Deduplicated replays are left out on purpose: a resumed session replays its history, the
+/// reference removes those the same way, and announcing something that happens on nearly every
+/// real run would teach people to ignore the note. Malformed lines, records without a request id
+/// and synthetic records are the ones the reference drops without a word.
+fn note_skipped(stats: &ReadStats) {
+    let parts = [
+        (stats.malformed_lines, "malformed"),
+        (stats.no_dedupe_key, "without a request id"),
+        (stats.synthetic, "synthetic"),
+    ];
+    let total: u64 = parts.iter().map(|(n, _)| n).sum();
+    if total == 0 {
+        return;
+    }
+    let detail: Vec<String> = parts
+        .iter()
+        .filter(|(n, _)| *n > 0)
+        .map(|(n, what)| format!("{n} {what}"))
+        .collect();
+    stderr(&format!(
+        "note: skipped {total} transcript record(s): {}",
+        detail.join(", ")
+    ));
 }
 
 /// The message for a failed report. Carries paths, branch names and git/IO errors, never
