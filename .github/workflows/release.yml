@@ -171,8 +171,9 @@ jobs:
       - name: Create the tag
         run: |
           set -euo pipefail
-          existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${VERSION}" --jq '.object.sha' 2>/dev/null || true)
-          if [ -z "$existing" ]; then
+          # Decide on gh's exit status, never its output: on a 404 it prints the error body to stdout
+          # and skips --jq, so a captured "sha" would be that JSON.
+          if ! existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${VERSION}" --jq '.object.sha' 2>/dev/null); then
             gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/tags/${VERSION}" -f sha="$SHA" > /dev/null
           elif [ "$existing" != "$SHA" ]; then
             echo "::error::Tag ${VERSION} already exists on ${existing}, not ${SHA}."
