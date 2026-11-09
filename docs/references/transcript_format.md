@@ -18,8 +18,9 @@ unless noted otherwise.
 - A sibling repository can share a prefix (`dodgeball` vs `dodgeball-cardgame`). Match a slug
   exactly, or by an explicit worktree suffix, never by bare prefix.
 - A worktree **entered as its own session** gets its own directory, whose slug is the repo slug
-  plus `--claude-worktrees-<name>`. (Inherited from `token_report.py`. None existed on the machine
-  this page was written on.)
+  plus `--claude-worktrees` and whatever follows it, usually `-<name>`; the bare prefix is what
+  matches (inherited from `token_report.py`). None existed on the machine this page was written
+  on.)
 - Transcripts are deleted after `cleanupPeriodDays` (default 30). Data not captured by then is
   gone, which is what the ledger (#8) and the pre-purge snapshot (#13) exist for.
 
@@ -57,12 +58,14 @@ Choices the parser makes where the format is silent. Fixtures for each are in
 `tests/fixtures/claude-code/`.
 
 - **Discovery.** A directory under the projects root is the repository's own when its name equals
-  the repo slug, and a worktree's when it is the slug plus `--claude-worktrees-` and a non-empty
-  suffix, both compared case-insensitively. Anything else is excluded, including a sibling repo
+  the repo slug, and a worktree's when it starts with the slug plus `--claude-worktrees` (as in the
+  reference's `transcript_roots`; no trailing `-` or suffix needed), both compared
+  case-insensitively. Anything else is excluded, including a sibling repo
   that shares a prefix. A repo path shaped like `/d/x` yields two candidate slugs, the literal one
   and the `D:` drive one, so both cwd forms find the same directory. A leading `\\?\` is stripped.
-- **Reading.** `<root>/*.jsonl` are main sessions. `<root>/<session>/subagents/agent-*.jsonl` are
-  subagent files, and the directory name becomes `parent_session`. `agent_id` and `is_sidechain`
+- **Reading.** `<root>/<session>/subagents/agent-*.jsonl` are subagent files, and the directory
+  name becomes `parent_session`. Every other `.jsonl` is read like a main session (see Read
+  order). `agent_id` and `is_sidechain`
   come from the record, never from the file name.
 - **What is counted.** A line without `message.usage` is not a usage record and is not counted in
   any counter. A blank line is ignored. A usage record lands in at most one counter, checked in
@@ -75,6 +78,18 @@ Choices the parser makes where the format is silent. Fixtures for each are in
   many calls were matched by `uuid`. A record with no `sessionId` takes the parent session (subagent
   file) or the file stem. Cache writes use the 5m/1h breakdown when it reports either figure,
   else `cache_creation_input_tokens` counts as 5m.
+- **Origin (2026-11-09).** `Record::origin` is `Origin::Main` for records read under the
+  repository's own root, including its `subagents/` files, and `Origin::Worktree(<root directory
+  name>)` for a worktree sibling root. This matches `origin` in the reference's `load_records`.
+- **Read order (2026-11-09, aligned with the reference).** Each root is read in one pass over
+  every `.jsonl` at any depth, sorted like Python's `sorted(root.rglob("*.jsonl"))`: `PurePath`
+  ordering compares path parts one by one, lower-cased on Windows (`PureWindowsPath`) and
+  case-sensitive on POSIX. The source follows the platform it is built for. Roots go in sorted
+  order, one dedupe set spans them all, and the first seen wins, so `aaa/subagents/x.jsonl` is read
+  before `zzz.jsonl`. Only `<session>/subagents/agent-*.jsonl` gets `parent_session` from its
+  directory; every other file, however deeply nested, has no `parent_session` and takes
+  `sessionId` from the record, else its file stem. Symlinked directories are not followed.
+  Fixture: `read-order`. (Resolves the divergence raised on 2026-11-09.)
 - **Raw stamps.** `gitBranch`, `cwd` and `timestamp` are copied untouched.
 
 ## Worktree subagents: what `gitBranch` actually says

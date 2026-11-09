@@ -1,0 +1,27 @@
+---
+source: crates/branch-tally/tests/report.rs
+expression: text
+---
+<!-- token-report:start -->
+| Model | Calls | Input | Cache write | Cache read | Output | (thinking) | Est. cost |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| `claude-opus-5[1m]` | 2 | 7,654,324 | 930,894 | 98,765,443 | 123,464 | 0 | $96.76 |
+| `claude-sonnet-4-6` | 2 | 1,235,344 | 269,356 | 4,569,002 | 89,456 | 0 | $7.51 |
+| `claude-fable-5-1` | 2 | 112,344 | 20,428 | 3,543,209 | 6,789 | 0 | $2.66 |
+| `claude-mystery-9` | 1 | 11,111 | 499 | 3,333 | 2,222 | 0 | — |
+| **Total** | **7** | **9,013,123** | **1,221,177** | **106,880,987** | **221,931** | **0** | **$106.93** |
+
+| Session | Where | Agents | Span (UTC) | Calls | Tokens |
+|---|---|---|---|--:|--:|
+| `s1` | main checkout | — | 01-01 00:00 → 01-01 00:00 | 7 | 117.3M |
+
+<sub>Branch `main` · 1 session(s), 0 in a worktree · 0 of 7 calls from subagents · 0.0M tokens recovered from pre-branch/worktree checkouts · est. cost at list API rates, not amounts billed</sub>
+
+<details><summary>Breakdown by skill / agent</summary>
+
+| Attribution | Calls | Tokens |
+|---|--:|--:|
+| main | 7 | 117,337,218 |
+
+</details>
+<!-- token-report:end -->

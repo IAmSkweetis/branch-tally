@@ -11,7 +11,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::model::{AgentId, Attribution, Harness, Record, RequestId, SessionId, Usage};
+use crate::model::{AgentId, Attribution, Harness, Origin, Record, RequestId, SessionId, Usage};
 use crate::sources::{ReadStats, SourceError};
 
 #[derive(Deserialize)]
@@ -88,6 +88,8 @@ pub(super) struct FileContext<'a> {
     /// The session id to use when a record carries none: the parent's for a subagent file,
     /// otherwise the file stem.
     pub fallback_session: &'a str,
+    /// The transcript root the file was found under, copied onto every record.
+    pub origin: &'a Origin,
 }
 
 fn non_empty(value: Option<String>) -> Option<String> {
@@ -171,6 +173,7 @@ fn to_record(
     record.request_id_is_fallback = is_fallback;
     record.agent_id = non_empty(line.agent_id).map(AgentId::new);
     record.parent_session = ctx.parent_session.map(SessionId::new);
+    record.origin = Some(ctx.origin.clone());
     record.ts = line.timestamp;
     record.model = message.model;
     record.cwd = line.cwd;

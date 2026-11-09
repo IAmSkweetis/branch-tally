@@ -20,6 +20,16 @@
 //! - `Record::session_id`: the record's `sessionId`, else the parent session (subagent file) or
 //!   the file stem (main file).
 //!
+//! - `Record::origin`: `Origin::Main` for records under the main checkout's root (including its
+//!   `subagents/` files, as the reference does; see #6), `Origin::Worktree(<root dir name>)` for a
+//!   worktree sibling root.
+//!
+//! # Read order
+//!
+//! Each root is read in one pass over every `.jsonl` at any depth, sorted like Python's
+//! `sorted(root.rglob("*.jsonl"))`. Only `<session>/subagents/agent-*.jsonl` takes its
+//! `parent_session` from the directory.
+//!
 //! # Privacy
 //!
 //! Content fields are not deserialized, and errors carry paths only.
@@ -28,7 +38,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::model::{Harness, Record};
+use crate::model::{Harness, Origin, Record};
 use crate::sources::{ReadStats, RepoIdentity, RootKind, Source, SourceError, TranscriptRoot};
 
 mod parse;
@@ -63,6 +73,40 @@ fn sorted_entries(dir: &Path, want_dirs: bool) -> Result<Vec<PathBuf>, SourceErr
     }
     found.sort();
     Ok(found)
+}
+
+/// Every `.jsonl` file under `dir` at any depth, with its path parts relative to the root.
+/// Symlinked directories are not followed, as `Path.rglob` does not on the reference's Pythons.
+fn collect_jsonl(
+    dir: &Path,
+    rel: &mut Vec<String>,
+    out: &mut Vec<(PathBuf, Vec<String>)>,
+) -> Result<(), SourceError> {
+    for entry in fs::read_dir(dir).map_err(io_error(dir))? {
+        let entry = entry.map_err(io_error(dir))?;
+        let path = entry.path();
+        let kind = entry.file_type().map_err(io_error(&path))?;
+        rel.push(file_name(&path));
+        if kind.is_dir() {
+            collect_jsonl(&path, rel, out)?;
+        } else if kind.is_file() && is_jsonl(&path) {
+            out.push((path, rel.clone()));
+        }
+        rel.pop();
+    }
+    Ok(())
+}
+
+/// How `PurePath` orders two paths: part by part. Windows paths compare case-insensitively
+/// (`PureWindowsPath` normcases to lower case); POSIX paths compare exactly. The reference runs on
+/// the user's own platform, so this follows the platform branch-tally is built for. Strings
+/// compare by code point (Python) which equals UTF-8 byte order (Rust).
+fn sort_key(parts: &[String]) -> Vec<String> {
+    if cfg!(windows) {
+        parts.iter().map(|p| p.to_lowercase()).collect()
+    } else {
+        parts.to_vec()
+    }
 }
 
 fn is_jsonl(path: &Path) -> bool {
@@ -119,36 +163,37 @@ impl Source for ClaudeCode {
         let mut seen = HashSet::new();
         for root in roots {
             let root_path = root.path();
-            for file in sorted_entries(root_path, false)?
-                .into_iter()
-                .filter(|p| is_jsonl(p))
-            {
+            // Same rule as the reference: the main checkout's root is "main", any other root is
+            // tagged by its own directory name. Subagent files share their root's origin.
+            let origin = match root.kind() {
+                RootKind::Repository => Origin::Main,
+                RootKind::Worktree => Origin::worktree(file_name(root_path)),
+            };
+            // One pass per root over every `.jsonl` at any depth, in the reference's
+            // `sorted(root.rglob("*.jsonl"))` order.
+            let mut files = Vec::new();
+            collect_jsonl(root_path, &mut Vec::new(), &mut files)?;
+            files.sort_by_cached_key(|f| sort_key(&f.1));
+            for (file, rel) in files {
                 let stem = file
                     .file_stem()
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_default();
+                // `<session>/subagents/agent-*.jsonl` takes its parent from the directory;
+                // every other file is read like a main file (the record's own `sessionId`
+                // wins, else the file stem).
+                let parent = match rel.as_slice() {
+                    [session, dir, name] if dir == "subagents" && name.starts_with("agent-") => {
+                        Some(session.as_str())
+                    }
+                    _ => None,
+                };
                 let ctx = FileContext {
-                    parent_session: None,
-                    fallback_session: &stem,
+                    parent_session: parent,
+                    fallback_session: parent.unwrap_or(&stem),
+                    origin: &origin,
                 };
                 read_file(&file, &ctx, &mut seen, &mut stats, sink)?;
-            }
-            for session_dir in sorted_entries(root_path, true)? {
-                let subagents = session_dir.join("subagents");
-                if !subagents.is_dir() {
-                    continue;
-                }
-                let parent = file_name(&session_dir);
-                for file in sorted_entries(&subagents, false)? {
-                    if !is_jsonl(&file) || !file_name(&file).starts_with("agent-") {
-                        continue;
-                    }
-                    let ctx = FileContext {
-                        parent_session: Some(&parent),
-                        fallback_session: &parent,
-                    };
-                    read_file(&file, &ctx, &mut seen, &mut stats, sink)?;
-                }
             }
         }
         Ok(stats)

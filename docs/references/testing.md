@@ -113,7 +113,12 @@ reference once per pair. It writes, next to the manifest:
   raw `gitBranch` in the usage-bearing records the reference reads (`"(none)"` for records with
   none). These feed the Phase 0 parity test: calls kept and token totals, per session and model.
 - `goldens/claim.json`: the same shape for the manifest's `claim_branches`, run without
-  `--strict`. They feed an ignored test until #4 (full report comparison).
+  `--strict`. They feed `rust_report_matches_the_reference_claim_goldens` (#4), which compares
+  the full `render::json` report against every `claim.json` key (claim mode) and every `strict.json`
+  key (strict mode) as parsed JSON, through `report::build`. Worktrees are built as git lists them
+  (main checkout on `main`, then `.claude/worktrees/<name>`), the reference's #37 behaviour kept
+  as is. Origins are compared lowercased: the reference lowercases them and the generator maps
+  them back to fixture spelling, which is not behaviour. No divergences are listed.
 
 A pair the reference answers with "No transcript records found" is recorded as
 `{"error": "no_records"}`, never dropped. Any other failure aborts the run. Session `origin` is
@@ -148,15 +153,23 @@ expected behaviour directly, next to the same issue number. `malformed-and-keyle
   both cache writes, cache read, output and thinking. Tokens follow the reference's
   `Record.tokens` (input + 5m + 1h + read + output; thinking is inside output). A `no_records`
   key must match zero Rust records. Cost, origin, first/last and agents are not compared. The
-  test pins the number of scenarios (12) and branch keys (29) compared, so it cannot go green
+  test pins the number of scenarios (14) and branch keys (35) compared, so it cannot go green
   on nothing, and fails on a scenario with a manifest but no goldens. Adding a scenario means
-  bumping those two constants.
+  bumping `EXPECTED_SCENARIOS`, `EXPECTED_BRANCH_KEYS` and `EXPECTED_CLAIM_PAIRS`.
 - Divergences are two lists in the test: `REFERENCE_DIVERGENT_SCENARIOS` (the manifest's
   `reference_divergence`; currently `malformed-and-keyless`, #3) and `DIVERGENCES` (a scenario
   and branch key where Rust deliberately differs, with its issue). A listed key must still
   differ, so an entry cannot outlive its reason. `DIVERGENCES` is empty today.
-- `rust_report_matches_the_reference_claim_goldens` is `#[ignore = "#4: ..."]`. It parses every
-  `claim.json` and fails with a message that claim-mode attribution does not exist yet.
+- `rust_report_matches_the_reference_claim_goldens` is live (not ignored). It compares the full
+  `render::json` report with every `claim.json` key (`EXPECTED_CLAIM_PAIRS`, 27) and every
+  `strict.json` key, as described above.
+- The binary is checked end to end in `crates/branch-tally/tests/report.rs`: `--json` against
+  the same `claim.json` and `strict.json` goldens, plus insta snapshots of the Markdown. Markdown
+  byte-parity with the reference was checked **manually** (every claim branch of every
+  non-divergent scenario, default, `--no-cost` and `--strict`: 81 runs, 0 differences, on a
+  throwaway repo with `HOME` and `USERPROFILE` pointed at the throwaway home, as the golden
+  generator does). It is not automated because the Rust test jobs have no `uv`; a test that
+  skipped itself without `uv` would be a false green.
 
 Anything that drives the script, such as the golden-output
 generator, lives in `scripts/`, never in `reference/`.
