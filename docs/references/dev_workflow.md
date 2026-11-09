@@ -148,7 +148,7 @@ its own lists the recipes.
 | `just fmt` | `cargo fmt --all` | same |
 | `just lint-md [paths…]` | `rumdl check`, pinned | `uvx rumdl@<pin> check .` |
 | `just fmt-md [paths…]` | `rumdl fmt`, which rewraps long paragraphs | `uvx rumdl@<pin> fmt .` |
-| `just secret-scan` | `gitleaks git` over the full history, redacted | `gitleaks git --redact .` |
+| `just secret-scan [args…]` | `gitleaks git` over the full history of every local ref, redacted. CI passes `--log-opts=HEAD` | `gitleaks git --redact .` |
 | `just audit-workflows [--offline]` | `zizmor` over `.github/`, pinned. Online audits run when `GH_TOKEN` is set. | `uvx zizmor@<pin> .github/` |
 | `just test-scripts` | proves `scripts/check-commit-subject.sh` and `scripts/check-branch-name.sh` reject what they must and accept what they should | `sh scripts/test-checks.sh` |
 | `just token-report [args…]` | this repo's own PR token report: the Python reference until the CLI can do it (#4), then `branch-tally` | `uv run reference/token_report.py` |
@@ -178,7 +178,7 @@ same `just` recipes and `scripts/check-*.sh`.
 
 | Gate | Local hook | CI (job name) |
 | ---- | ---------- | ------------- |
-| Secrets | `pre-commit`: `gitleaks git --pre-commit --staged --redact` | `secret-scan`: gitleaks over full history, pinned binary with a checked sha256 |
+| Secrets | `pre-commit`: `gitleaks git --pre-commit --staged --redact` | `secret-scan`: gitleaks over everything `HEAD` reaches (main plus the PR's commits, not other branches), pinned binary with a checked sha256 |
 | Formatting | `pre-commit`: `just lint` (`cargo fmt --check`) | `lint`: `just lint` |
 | Clippy | `pre-commit`: `just lint` (`cargo clippy -D warnings`) | `lint`: `just lint` |
 | Markdown | `pre-commit`: `just lint-md` (`rumdl check`) | `lint-md`: `just lint-md` |
