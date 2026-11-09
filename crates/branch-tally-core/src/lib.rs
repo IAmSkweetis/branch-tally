@@ -9,5 +9,6 @@ pub mod git;
 pub mod model;
 pub mod pricing;
 pub mod render;
+pub mod report;
 pub mod sources;
 pub mod summary;
