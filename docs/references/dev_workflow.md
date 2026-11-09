@@ -195,9 +195,7 @@ same `just` recipes and `scripts/check-*.sh`.
 PR per ecosystem), waits a week after a release before proposing it, and prefixes the commit and PR
 title with `ci(deps):` for workflow actions and `build(deps):` for crates, so the PR-title check
 passes. Its `dependabot/...` branches are exempt from the Conventional Branch check, since the bot
-names them. The cargo entry is commented out until the workspace exists (#3), because Dependabot
-reports an error for a directory with no `Cargo.toml`. Whoever lands #3 enables it. Dependabot
-alerts and security updates are repository settings (see the table above).
+names them. Dependabot alerts and security updates are repository settings (see the table above).
 
 While there is no `Cargo.toml`, the Rust jobs (`lint`'s Rust half, the `test` matrix, `msrv` and
 `deny`) pass with a "Rust checks skipped" notice rather than not running, so a required check is
