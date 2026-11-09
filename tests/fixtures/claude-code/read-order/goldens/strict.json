@@ -1,0 +1,123 @@
+{
+  "feat/bare": {
+    "branch": "feat/bare",
+    "mode": "strict",
+    "models": {
+      "claude-test-1": {
+        "cacheRead": 0,
+        "cacheWrite1h": 0,
+        "cacheWrite5m": 0,
+        "calls": 1,
+        "costUSD": null,
+        "input": 4,
+        "output": 1,
+        "thinking": 0
+      }
+    },
+    "sessions": [
+      {
+        "agents": [],
+        "calls": 1,
+        "first": "2026-01-01T00:00:00.000Z",
+        "id": "s2",
+        "last": "2026-01-01T00:00:00.000Z",
+        "origin": "C--repo--claude-worktrees",
+        "tokens": 5
+      }
+    ],
+    "totalCalls": 1,
+    "totalCostUSD": 0.0
+  },
+  "feat/deep": {
+    "branch": "feat/deep",
+    "mode": "strict",
+    "models": {
+      "claude-test-1": {
+        "cacheRead": 0,
+        "cacheWrite1h": 0,
+        "cacheWrite5m": 0,
+        "calls": 1,
+        "costUSD": null,
+        "input": 3,
+        "output": 1,
+        "thinking": 0
+      }
+    },
+    "sessions": [
+      {
+        "agents": [],
+        "calls": 1,
+        "first": "2026-01-01T00:00:00.000Z",
+        "id": "s9",
+        "last": "2026-01-01T00:00:00.000Z",
+        "origin": "main",
+        "tokens": 4
+      }
+    ],
+    "totalCalls": 1,
+    "totalCostUSD": 0.0
+  },
+  "feat/x": {
+    "branch": "feat/x",
+    "mode": "strict",
+    "models": {
+      "claude-test-1": {
+        "cacheRead": 0,
+        "cacheWrite1h": 0,
+        "cacheWrite5m": 0,
+        "calls": 1,
+        "costUSD": null,
+        "input": 5,
+        "output": 1,
+        "thinking": 0
+      }
+    },
+    "sessions": [
+      {
+        "agents": [],
+        "calls": 1,
+        "first": "2026-01-01T00:00:00.000Z",
+        "id": "s3",
+        "last": "2026-01-01T00:00:00.000Z",
+        "origin": "C--repo--claude-worktreesX",
+        "tokens": 6
+      }
+    ],
+    "totalCalls": 1,
+    "totalCostUSD": 0.0
+  },
+  "from-sub": {
+    "branch": "from-sub",
+    "mode": "strict",
+    "models": {
+      "claude-test-1": {
+        "cacheRead": 0,
+        "cacheWrite1h": 0,
+        "cacheWrite5m": 0,
+        "calls": 1,
+        "costUSD": null,
+        "input": 2,
+        "output": 1,
+        "thinking": 0
+      }
+    },
+    "sessions": [
+      {
+        "agents": [
+          "subagent"
+        ],
+        "calls": 1,
+        "first": "2026-01-01T00:00:00.000Z",
+        "id": "s1",
+        "last": "2026-01-01T00:00:00.000Z",
+        "origin": "main",
+        "tokens": 3
+      }
+    ],
+    "totalCalls": 1,
+    "totalCostUSD": 0.0
+  },
+  "from-top": {
+    "error": "no_records"
+  }
+}

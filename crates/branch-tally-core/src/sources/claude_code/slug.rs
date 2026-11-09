@@ -3,7 +3,7 @@
 use std::path::Path;
 
 /// Prefix that follows a repository slug in a worktree session's directory name.
-pub(super) const WORKTREE_INFIX: &str = "--claude-worktrees-";
+pub(super) const WORKTREE_INFIX: &str = "--claude-worktrees";
 
 /// Replaces every character outside `[A-Za-z0-9]` with `-`.
 fn slugify(path: &str) -> String {
@@ -52,12 +52,14 @@ pub(super) enum Match {
     Worktree,
 }
 
-/// Matches `dir_name` against one slug: exact, or slug plus the worktree infix and a non-empty
-/// suffix. Never a bare prefix, so `repo` does not match `repo-cardgame`.
+/// Matches `dir_name` against one slug: exact, or slug plus the worktree infix. Never a bare
+/// prefix, so `repo` does not match `repo-cardgame`.
 pub(super) fn classify(dir_name: &str, slug: &str) -> Option<Match> {
     if dir_name.eq_ignore_ascii_case(slug) {
         return Some(Match::Repository);
     }
+    // Same rule as `transcript_roots` in the reference: the slug plus `--claude-worktrees`, with
+    // no requirement for a trailing `-` or a suffix.
     let stem_len = slug.len() + WORKTREE_INFIX.len();
     let stem = dir_name.get(..stem_len)?;
     let matches = stem
@@ -66,5 +68,5 @@ pub(super) fn classify(dir_name: &str, slug: &str) -> Option<Match> {
         && stem
             .get(slug.len()..)
             .is_some_and(|s| s.eq_ignore_ascii_case(WORKTREE_INFIX));
-    (matches && dir_name.len() > stem_len).then_some(Match::Worktree)
+    matches.then_some(Match::Worktree)
 }
