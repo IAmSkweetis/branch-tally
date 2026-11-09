@@ -21,9 +21,9 @@ places a new file belongs in**.
 | `action.yml` | The **shipped** GitHub Action | *planned* (#12). Must sit at the root for `uses: IAmSkweetis/branch-tally@v1`. |
 | `docs/references/` | Reference pages | This page lives here. |
 | `docs/decisions/` | Architecture decision records, `NNNN-title.md` | Append-only. Supersede; don't rewrite. |
-| `scripts/` | Repository tooling that is not a `just` one-liner: the commit-subject and branch-name checks (shared by the hooks and CI), their self-test, CI helpers, and **every Python script** the project writes (such as the fixture scrubber and golden generator, #2) | Run through `just`, a hook or a workflow. Python runs with `uv`, never a system interpreter. |
+| `scripts/` | Repository tooling that is not a `just` one-liner: the commit-subject and branch-name checks (shared by the hooks and CI), their self-test, CI helpers, release packaging and smoke test (`package.sh`, `smoke-test.sh`), and **every Python script** the project writes (such as the fixture scrubber and golden generator, #2) | Run through `just`, a hook or a workflow. Python runs with `uv`, never a system interpreter. |
 | `.githooks/` | Git hooks (`pre-commit`, `commit-msg`, `pre-push`), enabled with `core.hooksPath .githooks` | See [dev_workflow.md](dev_workflow.md#quality-gates). |
-| `.github/` | CI and PR-check workflows, workflow audit, PR template, `CODEOWNERS`, `dependabot.yml`, `zizmor.yml` | CI for this repository, not the shipped Action. See [dev_workflow.md](dev_workflow.md#quality-gates). |
+| `.github/` | CI, PR-check, release (`release.yml`, `build.yml`) and workflow-audit workflows, PR template, `CODEOWNERS`, `dependabot.yml`, `zizmor.yml` | CI for this repository, not the shipped Action. See [dev_workflow.md](dev_workflow.md#quality-gates). |
 | `.claude/` | This repository's **own** agents, skills, settings and report contract | Development tooling. Not shipped. |
 | `Cargo.toml` | Workspace manifest: members, `[workspace.dependencies]`, `[workspace.lints]`, profiles | Lints are declared once here and each crate opts in with `lints.workspace = true`. |
 | `Cargo.lock` | Committed: this is a binary project | |
