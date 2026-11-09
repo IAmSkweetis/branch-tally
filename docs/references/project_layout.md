@@ -49,7 +49,7 @@ strangers, tested, and must work on a machine that has never seen this repositor
 skill or workflow serves only us. They have different owners
 ([agents.md](agents.md#who-owns-a-given-path)), and one must never be "fixed" by editing the other.
 
-## Inside `branch-tally-core` *(modules planned; only `lib.rs` exists)*
+## Inside `branch-tally-core` *(`model` and the `Source` trait exist; other modules planned)*
 
 The modules follow the pipeline, in order. A module may depend only on modules **above** it in this
 table, plus `model`:
@@ -57,7 +57,7 @@ table, plus `model`:
 | Module | Holds | Must not |
 | ------ | ----- | -------- |
 | `model` | `Record`, `Usage`, ids: the normalized types every stage shares | contain logic beyond constructors and accessors |
-| `sources/<harness>/` | Discovering a harness's transcript roots for a repo and parsing them into `Record`s | decide which branch a record belongs to |
+| `sources/` | The `Source` trait and its shared types (`sources/mod.rs`); each harness lives in `sources/<harness>/` (*planned*). Discovering a harness's transcript roots for a repo and parsing them into `Record`s | decide which branch a record belongs to |
 | `git` | The trait for asking git about branches and worktrees, with the real implementation | be called directly by anything that should take the trait |
 | `attribution` | Assigning each record to a branch, with a certainty level | format output, or read files itself |
 | `ledger` | Reading and writing the repository ledger (#8) | know about any one harness |
