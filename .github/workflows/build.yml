@@ -1,0 +1,95 @@
+name: Build
+
+# Builds, smoke-tests and packages branch-tally for six targets, each on a native runner.
+# release.yml calls it with the tag it just created and attaches the archives. A pull request that
+# touches the release machinery runs it with a dummy version and uploads nothing to any release, so
+# the matrix is proven before merge (release.yml itself can only run from main).
+# See docs/references/release.md.
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "The release tag to build, e.g. v0.4.0."
+        required: true
+        type: string
+  pull_request:
+    paths:
+      - ".github/workflows/build.yml"
+      - ".github/workflows/release.yml"
+      - "scripts/package.sh"
+      - "scripts/smoke-test.sh"
+      - "cliff.toml"
+
+permissions: {}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-24.04
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+          - target: aarch64-apple-darwin
+            os: macos-15
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: aarch64-pc-windows-msvc
+            os: windows-11-arm
+    permissions:
+      contents: read
+    env:
+      # A pull request has no release tag: build a dummy version that is never published.
+      VERSION: ${{ inputs.version || 'v0.0.0' }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The release tag when called by release.yml; the pull request's merge commit otherwise.
+          ref: ${{ inputs.version }}
+          persist-credentials: false
+
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh scripts/ci-install-rust.sh
+          rustup target add "$TARGET"
+
+      # BRANCH_TALLY_VERSION is read at compile time; Cargo.toml stays at 0.0.0.
+      - name: Build
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH_TALLY_VERSION="${VERSION#v}" cargo build --release --locked --target "$TARGET"
+
+      - name: Smoke-test
+        shell: bash
+        run: |
+          set -euo pipefail
+          ext=""
+          case "$TARGET" in *windows*) ext=".exe" ;; esac
+          sh scripts/smoke-test.sh "target/${TARGET}/release/branch-tally${ext}" "${VERSION#v}"
+
+      - name: Package
+        shell: bash
+        run: sh scripts/package.sh "$VERSION" "$TARGET"
+
+      - name: Upload archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: archive-${{ matrix.target }}
+          path: dist/branch-tally-*
+          if-no-files-found: error
+          retention-days: 14

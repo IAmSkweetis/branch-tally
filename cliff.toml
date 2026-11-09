@@ -1,0 +1,68 @@
+# git-cliff configuration - https://git-cliff.org/docs/configuration
+#
+# Drives the next version number and the GitHub release notes. CI runs
+#   git-cliff --config cliff.toml --bumped-version
+#   git-cliff --config cliff.toml --unreleased --tag <v> -o release-notes.md
+# Nothing is written back to the repository: there is no committed CHANGELOG
+# file, so a release never needs a commit on main. The notes go to the GitHub
+# release only. The crate version stays 0.0.0; the version lives in the tag.
+#
+# History is squash-merged PR titles in Conventional Commits form, each ending
+# in " (#NN)". The suffix is kept in the rendered line so a note links to its PR.
+# filter_unconventional is false so nothing is silently dropped: anything that
+# matches no parser below lands in "Other".
+
+[changelog]
+body = """
+{% for group, commits in commits | group_by(attribute="group") %}
+    ### {{ group | striptags | trim | upper_first }}
+    {% for commit in commits %}
+        - {% if commit.scope %}*({{ commit.scope }})* {% endif -%}
+            {{ commit.message | split(pat="\n") | first | trim | upper_first }} \
+            ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/IAmSkweetis/branch-tally/commit/{{ commit.id }}))
+    {% endfor %}
+{% endfor %}\n
+"""
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+split_commits = false
+protect_breaking_commits = false
+filter_commits = false
+# Only v-prefixed tags count as releases.
+tag_pattern = "v[0-9]*"
+topo_order = false
+sort_commits = "oldest"
+
+# Types match docs/references/dev_workflow.md#commit-messages. First match wins,
+# so the catch-all must stay last.
+commit_parsers = [
+  { message = "^Merge branch", skip = true },
+  { message = "^feat", group = "Features" },
+  { message = "^fix", group = "Bug Fixes" },
+  { message = "^perf", group = "Performance" },
+  { message = "^refactor", group = "Refactor" },
+  { message = "^docs?", group = "Documentation" },
+  { message = "^test", group = "Testing" },
+  { message = "^style", group = "Styling" },
+  { message = "^ci", group = "CI" },
+  { message = "^build", group = "Build" },
+  { message = "^chore", group = "Miscellaneous" },
+  { message = "^revert", group = "Revert" },
+  { message = ".*", group = "Other" },
+]
+
+[bump]
+# While the version is 0.x, git-cliff would otherwise bump only the patch for a
+# feat. A feature is a minor release here.
+features_always_bump_minor = true
+# While the version is 0.x, a `!` or `BREAKING CHANGE:` footer bumps the minor
+# instead of the major. Leaving 0.x is a deliberate decision, made by
+# dispatching the release workflow with an explicit version, never a side effect
+# of a footer that slipped into a squash body. From 1.x on, a breaking change
+# bumps the major again regardless of this flag.
+breaking_always_bump_major = false
+# The first release is v0.1.0 when no v* tag exists.
+initial_tag = "v0.1.0"
