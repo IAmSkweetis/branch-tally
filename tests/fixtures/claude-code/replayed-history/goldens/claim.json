@@ -1,0 +1,43 @@
+{
+  "main": {
+    "branch": "main",
+    "mode": "claim",
+    "models": {
+      "claude-test-1": {
+        "cacheRead": 90,
+        "cacheWrite1h": 0,
+        "cacheWrite5m": 0,
+        "calls": 3,
+        "costUSD": null,
+        "input": 30,
+        "output": 60,
+        "thinking": 0
+      }
+    },
+    "sessions": [
+      {
+        "agents": [],
+        "calls": 2,
+        "first": "2026-01-01T00:00:00.000Z",
+        "id": "s1",
+        "last": "2026-01-01T00:00:00.000Z",
+        "origin": "main",
+        "tokens": 120
+      },
+      {
+        "agents": [],
+        "calls": 1,
+        "first": "2026-01-01T00:00:00.000Z",
+        "id": "s2",
+        "last": "2026-01-01T00:00:00.000Z",
+        "origin": "main",
+        "tokens": 60
+      }
+    ],
+    "totalCalls": 3,
+    "totalCostUSD": 0.0
+  },
+  "wt-branch": {
+    "error": "no_records"
+  }
+}
