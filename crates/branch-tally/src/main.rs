@@ -10,19 +10,27 @@ use std::process::ExitCode;
 use clap::Parser;
 
 mod cli;
+mod prices;
 mod pyrepr;
 mod report;
 
 fn main() -> ExitCode {
     let args = cli::Cli::parse();
-    match args.command {
-        cli::Command::Report(args) => match report::run(&args) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(message) => {
-                // Python's `sys.exit(msg)`: the message and a newline on stderr, status 1.
-                let _ = writeln!(std::io::stderr(), "{message}");
-                ExitCode::from(1)
-            }
-        },
+    let result = match args.command {
+        cli::Command::Report(args) => report::run(&args),
+        cli::Command::Prices(command) => prices::run(&command).map(|text| {
+            // Verbatim UTF-8 with LF, whatever the console codepage.
+            let mut out = std::io::stdout().lock();
+            let _ = out.write_all(text.as_bytes());
+            let _ = out.flush();
+        }),
+    };
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(message) => {
+            // Python's `sys.exit(msg)`: the message and a newline on stderr, status 1.
+            let _ = writeln!(std::io::stderr(), "{message}");
+            ExitCode::from(1)
+        }
     }
 }

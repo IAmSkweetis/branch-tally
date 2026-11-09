@@ -15,6 +15,7 @@ use branch_tally_core::sources::claude_code::{ClaudeCode, slug_candidates};
 use branch_tally_core::sources::{ReadStats, RepoIdentity, Source, SourceError, TranscriptRoot};
 
 use crate::cli::ReportArgs;
+use crate::prices;
 use crate::pyrepr::repr;
 
 /// Runs the command. `Err` carries the one-line message for stderr.
@@ -24,6 +25,8 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), String> {
     let projects = home.join(".claude").join("projects");
     let cwd = normalize_path(&args.repo);
 
+    let table = prices::resolve_table(&prices::Locations::for_repo(&cwd))?;
+
     let source = CheckedSource::default();
     let report = branch_tally_core::report::run(
         &SystemGit,
@@ -32,7 +35,7 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), String> {
         &cwd,
         args.branch.as_deref(),
         args.strict,
-        branch_tally_core::pricing::PriceTable::bundled(),
+        &table,
     )
     .map_err(|e| {
         if let ReportError::NoRecords { read_stats, .. } = &e {
@@ -42,6 +45,18 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), String> {
     })?;
 
     note_skipped(&report.read_stats);
+    for (model, _) in report
+        .costs
+        .by_model
+        .iter()
+        .filter(|(_, cost)| cost.is_none())
+    {
+        // Governance II: the floor is stated, and the unpriced models are named (ids only).
+        stderr(&format!(
+            "warning: no price for {model} in the price table (as of {}); the total is a floor",
+            report.costs.price_table.as_of
+        ));
+    }
     if report.worktrees_unavailable.is_some() {
         // The reference treats this as "no worktrees"; say so rather than do it silently.
         stderr("note: git worktree list was unavailable, so worktree recovery was skipped");

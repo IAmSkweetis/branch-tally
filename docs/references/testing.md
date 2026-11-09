@@ -167,6 +167,19 @@ expected behaviour directly, next to the same issue number. `malformed-and-keyle
   and `branch-tally/tests/report.rs` (inline in `tests/render.rs`). Each test asserts the
   keys are present and consistent with the per-model costs, removes only those, then compares
   everything else to the goldens exactly. Markdown is not compared with the reference.
+- The bundled table was reseeded from LiteLLM's current rates (#5), not the reference's `PRICES`.
+  Every model the goldens price (`claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-4-6`) has the
+  same input, output and cache-read rate in both, so every cost still matches the goldens exactly
+  and `DIVERGENCES` stays empty. A listed divergence must still differ, so none was added. If a
+  later reseed moves one of those rates, list exactly the cost keys (`totalCostUSD`, `costUSD`)
+  in `DIVERGENCES` and in `crates/branch-tally/tests/report.rs`, with the reason "bundled prices
+  come from LiteLLM, not token_report.py's PRICES", and keep every token and call key compared.
+- The price table is tested end to end in `crates/branch-tally/tests/prices.rs`: override, cache
+  and bundled lookup, the unpriced-model warning, and `prices update` and `prices show`. No test
+  reaches the network: `update` talks to a loopback server through `BRANCH_TALLY_PRICES_URL`, a
+  **test-only** variable. The harness points `LOCALAPPDATA` and `XDG_CACHE_HOME` (and `HOME`,
+  which macOS derives the cache from) at the throwaway home so a developer's real cache never
+  leaks into a run. The update logic is also unit-tested with an injected feed, date and path.
 - `rust_report_matches_the_reference_claim_goldens` is live (not ignored). It compares the full
   `render::json` report with every `claim.json` key (`EXPECTED_CLAIM_PAIRS`, 27) and every
   `strict.json` key, as described above.

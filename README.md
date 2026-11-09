@@ -38,6 +38,44 @@ putting off, too. We'll see where we get.
   content never leaves your machine, and a redaction toggle hides identifiers on request.
 - **Ships as** a CLI, a Claude Code plugin and skill, and a GitHub Action.
 
+## Price table
+
+Estimated costs come from a price table, never from numbers in the code. Every report states the
+table's date and where it came from, and a model with no price is named on stderr and makes the
+total an "at least" floor.
+
+The table is chosen by the first of these that exists, and that one is used whole, with no
+per-model merging:
+
+1. `.tally/prices.toml` in the repository's main checkout (the override).
+2. The per-user cache written by `branch-tally prices update`.
+3. The table built into the binary.
+
+The cache is `branch-tally/prices.toml` under `%LOCALAPPDATA%` on Windows, `$HOME/Library/Caches`
+on macOS, and `$XDG_CACHE_HOME` (default `$HOME/.cache`) elsewhere.
+
+```bash
+branch-tally prices update   # refresh the cache from LiteLLM's price list (the only network call)
+branch-tally prices show     # which table reports would use: source, date, model count, path
+```
+
+`prices update` downloads LiteLLM's `model_prices_and_context_window.json` from GitHub, keeps the
+Anthropic chat models, and replaces the cache only if the download and conversion both succeed.
+It sends no account or identifying data, only a `branch-tally/<version>` User-Agent. A malformed
+override or cache stops the report with a message naming the file; it is never skipped silently.
+
+The override and cache share one TOML format. Its schema, with every key and default, is the
+header of [`prices.toml`](crates/branch-tally-core/data/prices.toml), the bundled table. A minimal
+override:
+
+```toml
+as_of = "2026-11-09"
+
+[models."claude-opus-5"]
+input = 5.0   # $ per million tokens
+output = 25.0
+```
+
 ## Links
 
 | | |
