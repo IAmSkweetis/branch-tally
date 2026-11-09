@@ -75,6 +75,14 @@ Choices the parser makes where the format is silent. Fixtures for each are in
   many calls were matched by `uuid`. A record with no `sessionId` takes the parent session (subagent
   file) or the file stem. Cache writes use the 5m/1h breakdown when it reports either figure,
   else `cache_creation_input_tokens` counts as 5m.
+- **Origin (2026-11-09).** `Record::origin` is `Origin::Main` for records read under the
+  repository's own root, including its `subagents/` files, and `Origin::Worktree(<root directory
+  name>)` for a worktree sibling root. This matches `origin` in the reference's `load_records`.
+- **Known divergences from the reference's read order (2026-11-09).** The reference walks each
+  root with `sorted(root.rglob("*.jsonl"))`, a single path-sorted pass that reads any `.jsonl` at
+  any depth. The source reads top-level files first, then `<session>/subagents/agent-*.jsonl`.
+  Which duplicate wins can differ when a key repeats across those files. Discovery also needs the
+  trailing `-` and a non-empty suffix after `--claude-worktrees`. Raised for a decision.
 - **Raw stamps.** `gitBranch`, `cwd` and `timestamp` are copied untouched.
 
 ## Worktree subagents: what `gitBranch` actually says

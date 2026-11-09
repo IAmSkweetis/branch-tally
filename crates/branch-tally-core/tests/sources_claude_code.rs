@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use branch_tally_core::model::{AgentId, Harness, Record, SessionId};
+use branch_tally_core::model::{AgentId, Harness, Origin, Record, SessionId};
 use branch_tally_core::sources::claude_code::{ClaudeCode, slug_candidates};
 use branch_tally_core::sources::{
     ReadStats, RepoIdentity, RootKind, Source, SourceError, TranscriptRoot,
@@ -467,4 +467,34 @@ fn session_on_branch_a_edits_branch_b_through_a_second_worktree() {
     assert_eq!(input_sum(&on_branch(&records, "feat/b")), 5);
     assert_eq!(input_sum(&on_branch(&records, "feat/a")), 10);
     assert!(records.iter().all(|r| r.session_id.as_str() == "s1"));
+}
+
+#[test]
+fn records_are_tagged_with_the_root_they_were_read_from() {
+    let (records, _) = read_all("worktree-and-siblings", r"C:\repo");
+    assert_eq!(by_request(&records, "req_1").origin, Some(Origin::Main));
+    assert_eq!(
+        by_request(&records, "req_2").origin,
+        Some(Origin::worktree("C--repo--claude-worktrees-feat-a"))
+    );
+    // Root names compare and label case-insensitively, like the reference's lowercased name.
+    let wt_b = by_request(&records, "req_3").origin.clone().unwrap();
+    assert_eq!(wt_b, Origin::worktree("c--repo--claude-worktrees-b"));
+    assert_eq!(wt_b.label(), "c--repo--claude-worktrees-b");
+}
+
+#[test]
+fn main_root_matching_the_slug_case_insensitively_is_main_origin() {
+    let (records, _) = read_all("slug-case", r"C:\repo");
+    assert_eq!(records.len(), 1);
+    // The lowercase `c--repo` directory is the main checkout's root despite the case difference.
+    assert_eq!(records[0].origin, Some(Origin::Main));
+}
+
+#[test]
+fn subagent_files_under_the_main_root_are_main_origin() {
+    // The reference tags by root, so a subagent file under the main slug is "main" (issue #6).
+    let (records, _) = read_all("subagent", r"C:\repo");
+    assert_eq!(by_request(&records, "req_a2").origin, Some(Origin::Main));
+    assert!(records.iter().all(|r| r.origin == Some(Origin::Main)));
 }
