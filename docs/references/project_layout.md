@@ -15,7 +15,7 @@ places a new file belongs in**.
 | `crates/branch-tally-core/` | The library: every piece of logic | *planned* (#3). See below. |
 | `crates/branch-tally/` | The binary: CLI parsing and wiring | *planned* (#3). Thin by design. |
 | `tests/fixtures/<harness>/` | Scrubbed transcript trees, one directory per scenario | *planned* (#2). Shared by both crates' tests. See [testing.md](testing.md#fixtures). |
-| `reference/token_report.py` | The original Python script, frozen | *planned* (#2). The parity oracle. Never edited except to fix a bug that is also fixed in Rust. |
+| `reference/token_report.py` | The original Python script, frozen | The parity oracle, and what `just token-report` runs until #4. Never edited except to fix a bug that is also fixed in Rust. |
 | `data/` | Data shipped with the binary, such as the bundled price table | *planned* (#5). Tuned, not coded. |
 | `plugin/` | The **shipped** Claude Code plugin: manifest and the skill users install | *planned* (#11). Not this repository's own skills. |
 | `action.yml` | The **shipped** GitHub Action | *planned* (#12). Must sit at the root for `uses: IAmSkweetis/branch-tally@v1`. |
@@ -23,7 +23,7 @@ places a new file belongs in**.
 | `docs/decisions/` | Architecture decision records, `NNNN-title.md` | Append-only. Supersede; don't rewrite. |
 | `scripts/` | Repository tooling that is not a `just` one-liner: the commit-subject and branch-name checks (shared by the hooks and CI), their self-test, and CI helpers | Run through `just`, a hook or a workflow. |
 | `.githooks/` | Git hooks (`pre-commit`, `commit-msg`, `pre-push`), enabled with `core.hooksPath .githooks` | See [dev_workflow.md](dev_workflow.md#quality-gates). |
-| `.github/` | CI and PR-check workflows, workflow audit, PR template, `dependabot.yml`, `zizmor.yml` | CI for this repository, not the shipped Action. See [dev_workflow.md](dev_workflow.md#quality-gates). |
+| `.github/` | CI and PR-check workflows, workflow audit, PR template, `CODEOWNERS`, `dependabot.yml`, `zizmor.yml` | CI for this repository, not the shipped Action. See [dev_workflow.md](dev_workflow.md#quality-gates). |
 | `.claude/` | This repository's **own** agents, skills, settings and report contract | Development tooling. Not shipped. |
 | `Cargo.toml` | Workspace manifest: members, `[workspace.dependencies]`, `[workspace.lints]`, profiles | *planned* (#3). |
 | `Cargo.lock` | Committed: this is a binary project | |
@@ -32,6 +32,7 @@ places a new file belongs in**.
 | `deny.toml` | Dependency policy | *planned* (#3). CI's `deny` job starts checking once it exists. |
 | `justfile` | The command entrypoint, with the pinned tool versions | See [dev_workflow.md](dev_workflow.md#commands). |
 | `.gitattributes`, `.gitignore`, `.rumdl.toml` | Formatting, line endings, ignores, Markdown lint | |
+| `README.md`, `CONTRIBUTING.md`, `LICENSE` | What the project is and its links; workspace setup and how a change lands; MIT | `CONTRIBUTING.md` summarises [dev_workflow.md](dev_workflow.md). Change both together. |
 
 ## Shipped vs. development: the distinction that gets confused
 
