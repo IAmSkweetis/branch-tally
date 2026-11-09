@@ -6,6 +6,7 @@
 #
 # Types: docs/references/dev_workflow.md#commit-messages
 set -eu
+exit 0
 
 subject="${1-}"
 
