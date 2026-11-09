@@ -15,6 +15,7 @@ set shell := ["pwsh.exe", "-NoLogo", "-NoProfile", "-Command"]
 rumdl_version := "0.3.2"
 zizmor_version := "1.31.1"
 gitleaks_version := "8.30.1"
+cliff_version := "2.13.1"
 
 # Rust checks run only once the workspace exists (#3). Until then they say so and exit 0.
 has_cargo := path_exists(justfile_directory() / "Cargo.toml")
@@ -85,6 +86,27 @@ goldens *args: (_require "uv" "install uv: https://docs.astral.sh/uv/getting-sta
 # This repository's own PR token report: the Python reference until the CLI can do it (#4).
 token-report *args: (_require "uv" "install uv: https://docs.astral.sh/uv/getting-started/installation/")
     uv run reference/token_report.py {{ args }}
+
+# The version the next release would get, from the Conventional Commits since the last v* tag.
+# Needs git-cliff at cliff_version and the full history (a shallow clone gets the wrong answer).
+next-version: (_require "git-cliff" ("install it: cargo install git-cliff --version " + cliff_version + " --locked"))
+    git-cliff --config cliff.toml --bumped-version
+
+# Preview the release notes for the unreleased commits. Writes nothing. Pass a version (v1.0.0) to
+# name it, else git-cliff picks the bump.
+release-notes version="": (_require "git-cliff" ("install it: cargo install git-cliff --version " + cliff_version + " --locked"))
+    git-cliff --config cliff.toml --unreleased {{ if version == "" { "--bump" } else { "--tag " + version } }}
+
+# Package a built binary as a release archive in dist/: just package v0.1.0 <target> [binary].
+# See scripts/package.sh. Build first: BRANCH_TALLY_VERSION=0.1.0 cargo build --release --locked.
+[unix]
+package *args: (_require "sh" "install a POSIX sh")
+    sh scripts/package.sh {{ args }}
+
+# Same sh lookup as test-scripts.
+[windows]
+package *args: (_require "git" "install Git for Windows: https://gitforwindows.org")
+    @$sh = (Get-Command sh -ErrorAction SilentlyContinue).Source; if (-not $sh) { $sh = Join-Path (git --exec-path) '../../../bin/sh.exe' }; if (-not (Test-Path $sh)) { [Console]::Error.WriteLine('error: sh not found on PATH or beside git; install Git for Windows: https://gitforwindows.org'); exit 1 }; & $sh scripts/package.sh {{ args }}; exit $LASTEXITCODE
 
 # Fail with an install hint when a tool is missing. Never skips the check.
 [private]

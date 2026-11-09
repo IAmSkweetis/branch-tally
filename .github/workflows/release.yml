@@ -1,0 +1,250 @@
+name: Release
+
+# Every commit that lands on main and passes CI is released: tag, draft GitHub release with
+# git-cliff's notes, a six-target build, then publish with SHA256SUMS and build-provenance
+# attestations. A manual dispatch does the same for the current head of main, optionally naming the
+# version. See docs/references/release.md.
+on:
+  # zizmor: ignore[dangerous-triggers] -- workflow_run is the only way to start after CI finishes
+  # on main. It is safe here because the jobs run only for a successful `push` run of this
+  # repository (never a fork's pull request), act on that run's head_sha rather than anything the
+  # triggering run produced, and read no artifacts from it.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. v1.0.0). Leave empty to let git-cliff bump from the commits since the last tag."
+        required: false
+        default: ""
+
+permissions: {}
+
+# One release at a time, and never cancel one halfway. A run queued behind another can be replaced
+# by a newer one; that is fine, because the newer release includes those commits.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Determine version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository)
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      skip: ${{ steps.version.outputs.skip }}
+      version: ${{ steps.version.outputs.version }}
+      sha: ${{ steps.sha.outputs.sha }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # The commit CI passed on, never github.sha (which is main's head when the run starts).
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - name: Check the commit is releasable
+        id: sha
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            if [ "$REF" != "refs/heads/main" ]; then
+              echo "::error::Releases are cut from main only; this dispatch ran on ${REF}."
+              exit 1
+            fi
+            passed=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&event=push&status=success" --jq '.total_count')
+            if [ "$passed" -lt 1 ]; then
+              echo "::error::CI has no successful push run for ${SHA}; wait for it or fix it first."
+              exit 1
+            fi
+          fi
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.sha.outputs.sha }}
+          # git-cliff needs every tag and commit; the release is made through the API, so the
+          # checkout never pushes.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install just
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: just@1.59.0
+
+      - name: Read the git-cliff pin
+        id: pin
+        run: echo "cliff=$(just --evaluate cliff_version)" >> "$GITHUB_OUTPUT"
+
+      - name: Install git-cliff
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: git-cliff@${{ steps.pin.outputs.cliff }}
+
+      - name: Determine version
+        id: version
+        env:
+          REQUESTED: ${{ inputs.version }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          latest_tag=$(git tag --list 'v*' --sort=-v:refname | head -n1)
+          if [ -n "$latest_tag" ]; then
+            if [ "$EVENT" != "workflow_dispatch" ] && git merge-base --is-ancestor "$SHA" "$latest_tag"; then
+              # A newer run already released past this commit, so this one has nothing to add.
+              echo "::notice title=Already released::${SHA} is contained in ${latest_tag}; nothing to release."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [ "$(git rev-list --count "${latest_tag}..${SHA}")" = "0" ]; then
+              echo "::error::No commits since ${latest_tag}; nothing to release."
+              exit 1
+            fi
+          fi
+          if [ -n "$REQUESTED" ]; then
+            version="$REQUESTED"
+          else
+            version=$(git-cliff --config cliff.toml --bumped-version)
+          fi
+          if ! [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version '${version}' is not of the form vMAJOR.MINOR.PATCH."
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/${version}" > /dev/null; then
+            echo "::error::Tag ${version} already exists."
+            exit 1
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Releasing ${version} (previous: ${latest_tag:-none})"
+
+      - name: Generate release notes
+        if: steps.version.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git-cliff --config cliff.toml --unreleased --tag "$VERSION" -o release-notes.md
+          cat release-notes.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload release notes
+        if: steps.version.outputs.skip != 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+
+  release:
+    name: Tag and draft release
+    needs: version
+    if: needs.version.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      SHA: ${{ needs.version.outputs.sha }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download release notes
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-notes
+
+      # The tag goes on the exact commit CI passed on, through the API, before anything is built:
+      # a failed build leaves the tag and a draft, and the next release still bumps from it.
+      # Written to be re-runnable: an existing tag on the same commit is fine, one elsewhere is not.
+      - name: Create the tag
+        run: |
+          set -euo pipefail
+          existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${VERSION}" --jq '.object.sha' 2>/dev/null || true)
+          if [ -z "$existing" ]; then
+            gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/tags/${VERSION}" -f sha="$SHA" > /dev/null
+          elif [ "$existing" != "$SHA" ]; then
+            echo "::error::Tag ${VERSION} already exists on ${existing}, not ${SHA}."
+            exit 1
+          fi
+
+      # A draft is invisible to users and to "latest" until the binaries are attached.
+      - name: Create the draft release
+        run: |
+          set -euo pipefail
+          if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release ${VERSION} already exists; leaving it."
+          else
+            gh release create "$VERSION" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+              --title "$VERSION" --notes-file release-notes.md
+          fi
+
+  build:
+    name: Build
+    needs: [version, release]
+    permissions:
+      contents: read
+    uses: $/.github/workflows/build.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+
+  publish:
+    name: Attach and publish
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # upload the assets and publish the draft
+      id-token: write # sign the attestations
+      attestations: write # store them
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download the archives
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: archive-*
+          merge-multiple: true
+          path: dist
+
+      - name: Checksum
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          count=$(ls | grep -Ec '\.(tar\.gz|zip)$' || true)
+          if [ "$count" != "6" ]; then
+            echo "::error::Expected 6 archives, found ${count}."
+            ls
+            exit 1
+          fi
+          sha256sum -- *.tar.gz *.zip > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+
+      - name: Upload to the draft release
+        run: gh release upload "$VERSION" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+
+      # Latest only ever points at a release that has binaries.
+      - name: Publish
+        run: |
+          set -euo pipefail
+          gh release edit "$VERSION" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          echo "Published ${VERSION}: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${VERSION}" >> "$GITHUB_STEP_SUMMARY"
