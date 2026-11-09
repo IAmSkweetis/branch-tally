@@ -43,7 +43,7 @@ bypass the hook with `--no-verify`.
 | `just lint` | `cargo fmt --check` and Clippy with warnings denied |
 | `just fmt` | format the Rust code |
 | `just lint-md` / `just fmt-md` | check or rewrap Markdown (100 columns) |
-| `just secret-scan` | gitleaks over the full history |
+| `just secret-scan` | gitleaks over the full history of every local branch |
 | `just audit-workflows` | zizmor over `.github/` |
 
 The full list, and what CI runs on top, is in

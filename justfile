@@ -60,9 +60,11 @@ lint-md *paths: (_require "uvx" "install uv: https://docs.astral.sh/uv/getting-s
 fmt-md *paths: (_require "uvx" "install uv: https://docs.astral.sh/uv/getting-started/installation/")
     uvx rumdl@{{ rumdl_version }} fmt {{ if paths == "" { "." } else { paths } }}
 
-# gitleaks over the full history, redacted. Warns when the local gitleaks differs from CI's pin.
-secret-scan: (_require "gitleaks" "install it: https://github.com/gitleaks/gitleaks#installing") _gitleaks-version
-    gitleaks git --redact --no-banner .
+# gitleaks over the full history of every local ref, redacted. Warns when the local gitleaks differs
+# from CI's pin. CI passes `--log-opts=HEAD` so a PR is judged on main plus its own commits only:
+# `fetch-depth: 0` fetches every branch, and one leaky branch would otherwise turn every PR red.
+secret-scan *args: (_require "gitleaks" "install it: https://github.com/gitleaks/gitleaks#installing") _gitleaks-version
+    gitleaks git --redact --no-banner {{ args }} .
 
 # zizmor over .github/ (pinned). Pass --offline to skip the online audits.
 audit-workflows *args: (_require "uvx" "install uv: https://docs.astral.sh/uv/getting-started/installation/")

@@ -172,4 +172,6 @@ jobs:
           tar -xzf gitleaks.tar.gz gitleaks
           sudo install gitleaks /usr/local/bin/gitleaks
           rm gitleaks.tar.gz gitleaks
-      - run: just secret-scan
+      # Only what HEAD reaches: on a PR that is main's full history plus the PR's own commits.
+      # fetch-depth: 0 also fetches every other branch, and a leak there must not fail this PR.
+      - run: just secret-scan --log-opts=HEAD
