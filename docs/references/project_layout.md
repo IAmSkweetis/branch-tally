@@ -49,7 +49,7 @@ strangers, tested, and must work on a machine that has never seen this repositor
 skill or workflow serves only us. They have different owners
 ([agents.md](agents.md#who-owns-a-given-path)), and one must never be "fixed" by editing the other.
 
-## Inside `branch-tally-core` *(`model` and the `Source` trait exist; other modules planned)*
+## Inside `branch-tally-core` *(`model` and the `Source` trait exist; `git`, `attribution`, `summary`, `pricing` and `render` are documented stubs; others planned)*
 
 The modules follow the pipeline, in order. A module may depend only on modules **above** it in this
 table, plus `model`:
@@ -60,8 +60,9 @@ table, plus `model`:
 | `sources/` | The `Source` trait and its shared types (`sources/mod.rs`); each harness lives in `sources/<harness>/` (`claude_code/` exists; others *planned*). Discovering a harness's transcript roots for a repo and parsing them into `Record`s | decide which branch a record belongs to |
 | `git` | The trait for asking git about branches and worktrees, with the real implementation | be called directly by anything that should take the trait |
 | `attribution` | Assigning each record to a branch, with a certainty level | format output, or read files itself |
+| `summary` | Aggregating attributed records into the by-model, by-attribution and by-session tables (the reference's `summarize`) | assign branches, price, or format output |
 | `ledger` | Reading and writing the repository ledger (#8) | know about any one harness |
-| `pricing` | Loading price tables and costing a `Usage` | hard-code a price (#5) |
+| `pricing` | Costing a `Usage`. The `report` port's rates are one const table ported verbatim from the reference, to be replaced by data in #5 | define a price anywhere else |
 | `render` | Markdown, JSON and CSV output from an already-computed summary | compute totals or read transcripts |
 | `redact` | Applying the redaction policy (#9) | run anywhere except just before output or ledger write |
 
