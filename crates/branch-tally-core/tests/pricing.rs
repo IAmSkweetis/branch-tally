@@ -183,7 +183,7 @@ fn bundled_table_parses_and_has_a_date() {
     let t = PriceTable::bundled();
     assert_eq!(t.as_of(), "2026-11-09");
     assert_eq!(t.source(), PriceTableSource::Bundled);
-    assert_eq!(t.models().len(), 9);
+    assert_eq!(t.models().len(), 23);
 }
 
 #[test]
