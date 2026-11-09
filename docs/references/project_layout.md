@@ -15,7 +15,7 @@ places a new file belongs in**.
 | `crates/branch-tally-core/` | The library: every piece of logic | See below. |
 | `crates/branch-tally/` | The binary: CLI parsing and wiring | Thin by design. |
 | `tests/fixtures/<harness>/` | Scrubbed transcript trees, one directory per scenario | Shared by both crates' tests. See [testing.md](testing.md#fixtures). |
-| `reference/token_report.py` | The original Python script, **immutable** | The parity oracle, and what `just token-report` runs until branch-tally dogfoods its own PRs (#4), after which nothing runs it. Until then it may be run, but is never edited, not even to fix a bug, and nothing else is ever added to `reference/`. New Python goes in `scripts/`. |
+| `reference/token_report.py` | The original Python script, **immutable** | The parity oracle, run only by the golden generator (`just goldens`). This repository's PR token reports come from branch-tally itself (#41). It is never edited, not even to fix a bug, and nothing else is ever added to `reference/`. New Python goes in `scripts/`. |
 | `data/` | Data shipped with the binary, such as the bundled price table | *planned* (#5). Tuned, not coded. |
 | `plugin/` | The **shipped** Claude Code plugin: manifest and the skill users install | *planned* (#11). Not this repository's own skills. |
 | `action.yml` | The **shipped** GitHub Action | *planned* (#12). Must sit at the root for `uses: IAmSkweetis/branch-tally@v1`. |
