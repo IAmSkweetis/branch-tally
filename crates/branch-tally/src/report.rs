@@ -2,19 +2,17 @@
 //!
 //! Errors are returned as the message to print; `main` writes it to stderr and exits 1.
 
-use std::cell::RefCell;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use branch_tally_core::config::{self, Flags, Format};
 use branch_tally_core::git::{Git, SystemGit, normalize_path};
-use branch_tally_core::model::{Harness, Mode};
-use branch_tally_core::paths::slug_candidates;
+use branch_tally_core::model::Mode;
 use branch_tally_core::pr::{PrError, PrOutcome, SystemGh, update_pr};
 use branch_tally_core::render;
 use branch_tally_core::report::{Options, Report, ReportError, WorkBranch};
 use branch_tally_core::sources::claude_code::ClaudeCode;
-use branch_tally_core::sources::{ReadStats, RepoIdentity, Source, SourceError, TranscriptRoot};
+use branch_tally_core::sources::{ReadStats, SourceError};
 
 use clap::CommandFactory;
 use clap::error::ErrorKind;
@@ -56,11 +54,10 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), String> {
 
     let table = prices::resolve_table(&prices::Locations::for_repo(&cwd))?;
 
-    let source = CheckedSource::default();
     let matches = |branch: &str| args.work_branch.as_ref().is_some_and(|p| p.matches(branch));
     let report = branch_tally_core::report::run(
         &SystemGit,
-        &source,
+        &ClaudeCode,
         &projects,
         &cwd,
         args.branch.as_deref(),
@@ -71,7 +68,7 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), String> {
         if let ReportError::NoRecords { read_stats, .. } = &e {
             note_skipped(read_stats);
         }
-        describe(&e, &source)
+        describe(&e)
     })?;
 
     note_skipped(&report.read_stats);
@@ -206,72 +203,17 @@ fn note_skipped(stats: &ReadStats) {
 
 /// The message for a failed report. Carries paths, branch names and git/IO errors, never
 /// transcript content.
-fn describe(error: &ReportError, source: &CheckedSource) -> String {
+fn describe(error: &ReportError) -> String {
     match error {
-        ReportError::NoRecords { branch, .. } => {
-            if let Some((repo, slug)) = source.no_directory.borrow().as_ref() {
-                return format!(
-                    "No transcript directory for {} (expected slug {slug})",
-                    repo.display()
-                );
-            }
-            format!(
-                "No transcript records found for branch {}. Transcripts are local and purged \
-                 after cleanupPeriodDays (default 30).",
-                repr(branch)
-            )
-        }
+        ReportError::NoRecords { branch, .. } => format!(
+            "No transcript records found for branch {}. Transcripts are local and purged \
+             after cleanupPeriodDays (default 30).",
+            repr(branch)
+        ),
         ReportError::Source(SourceError::ProjectsRootMissing { path }) => {
             format!("No Claude Code transcript directory at {}", path.display())
         }
         other => other.to_string(),
-    }
-}
-
-/// Wraps the Claude Code source to notice when no transcript directory matches the repository,
-/// which the reference reports differently from "no records on this branch".
-#[derive(Default)]
-struct CheckedSource {
-    inner: ClaudeCode,
-    /// The repository and the slug looked for, set when discovery found no directory.
-    no_directory: RefCell<Option<(PathBuf, String)>>,
-}
-
-impl Source for CheckedSource {
-    fn harness(&self) -> Harness {
-        self.inner.harness()
-    }
-
-    fn discover(
-        &self,
-        projects_root: &Path,
-        repo: &RepoIdentity,
-    ) -> Result<Vec<TranscriptRoot>, SourceError> {
-        let roots = self.inner.discover(projects_root, repo)?;
-        if roots.is_empty() {
-            let slug = slug_candidates(repo.root())
-                .into_iter()
-                .next()
-                .unwrap_or_default()
-                .to_lowercase();
-            *self.no_directory.borrow_mut() = Some((repo.root().to_path_buf(), slug));
-        }
-        Ok(roots)
-    }
-
-    fn read(
-        &self,
-        roots: &[TranscriptRoot],
-        sink: &mut dyn FnMut(branch_tally_core::model::Record),
-    ) -> Result<ReadStats, SourceError> {
-        self.inner.read(roots, sink)
-    }
-
-    fn dispatches(
-        &self,
-        roots: &[TranscriptRoot],
-    ) -> Result<Vec<branch_tally_core::model::Dispatch>, SourceError> {
-        self.inner.dispatches(roots)
     }
 }
 
