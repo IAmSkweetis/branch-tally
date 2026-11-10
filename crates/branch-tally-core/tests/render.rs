@@ -548,7 +548,27 @@ fn from_payload(p: &serde_json::Value) -> (Summary, Costs) {
 
 // ---- Subagent breakdown (#6) ----
 
-use branch_tally_core::model::{AgentId, SubagentRow, SubagentSummary, Workspace};
+use branch_tally_core::model::{AgentId, RowCost, SubagentRow, SubagentSummary, Workspace};
+
+/// A row split by model, as Summary fills it: `tokens` and `calls` follow the bucket.
+fn sub_row_m(ws: Workspace, name: &str, id: &str, b: Bucket) -> SubagentRow {
+    SubagentRow {
+        workspace: ws,
+        subagent: name.to_owned(),
+        calls: b.calls,
+        tokens: b.tokens(),
+        agent_ids: [AgentId::new(id)].into_iter().collect(),
+        by_model: vec![("claude-a".to_owned(), b)],
+    }
+}
+
+fn row_cost(known: f64, priced: u64, unpriced: u64) -> RowCost {
+    RowCost {
+        known,
+        priced_models: priced,
+        unpriced_models: unpriced,
+    }
+}
 
 fn sub_row(ws: Workspace, name: &str, calls: u64, tokens: u64, ids: &[&str]) -> SubagentRow {
     SubagentRow {
@@ -568,30 +588,32 @@ fn with_subagents(unattributed: (u64, u64)) -> (Summary, Costs) {
 
 /// As [`with_subagents`], with `in_total` unlinked calls included in the branch total.
 fn with_subagents_unlinked(unattributed: (u64, u64), in_total: (u64, u64)) -> (Summary, Costs) {
-    let (mut s, c) = sample();
+    let (mut s, mut c) = sample();
     s.subagents = SubagentSummary {
         rows: vec![
-            sub_row(Workspace::Main, "Explore", 4, 12_000, &["e1"]),
-            sub_row(
+            sub_row_m(
+                Workspace::Main,
+                "Explore",
+                "e1",
+                bucket(1_000, 200, 100, 9_000, 1_700, 500, 4),
+            ),
+            sub_row_m(
                 Workspace::worktree("agent-a1"),
                 "Core Implementer",
-                20,
-                410_000,
-                &["a1"],
+                "a1",
+                bucket(4_000, 60_000, 40_000, 300_000, 6_000, 2_000, 20),
             ),
-            sub_row(
+            sub_row_m(
                 Workspace::worktree("agent-a1"),
                 "Reviewer",
-                2,
-                5_000,
-                &["a2"],
+                "a2",
+                bucket(500, 0, 0, 4_000, 500, 0, 2),
             ),
-            sub_row(
+            sub_row_m(
                 Workspace::worktree("agent-b2"),
                 "Harness Source Author",
-                18,
-                380_000,
-                &["b1"],
+                "b1",
+                bucket(80_000, 0, 0, 200_000, 100_000, 10_000, 18),
             ),
         ],
         unattributed_calls: unattributed.0,
@@ -599,24 +621,35 @@ fn with_subagents_unlinked(unattributed: (u64, u64), in_total: (u64, u64)) -> (S
         unlinked_in_total_calls: in_total.0,
         unlinked_in_total_tokens: in_total.1,
     };
+    // Row 0 priced, row 1 a floor, row 2 unpriced, row 3 has no entry (pricing never saw it).
+    c.subagent_rows = vec![
+        row_cost(0.5, 1, 0),
+        row_cost(12.25, 1, 1),
+        row_cost(0.0, 0, 1),
+    ];
+    c.subagent_total = row_cost(12.75, 2, 2);
     (s, c)
 }
 
 #[test]
 fn markdown_lists_each_workspace_and_subagent_row_with_totals() {
     let (s, c) = with_subagents((0, 0));
-    let md = markdown(&s, &c, false);
+    let md = markdown(&s, &c, true);
+    // Priced, floor, unpriced, and no cost entry at all (last row).
     let want = "### Subagent usage (rolled up to `feat/x`)\n\
         \n\
-        | Workspace | Subagent | Calls | Tokens |\n\
-        |---|---|--:|--:|\n\
-        | main checkout | Explore | 4 | 12,000 |\n\
-        | worktree `agent-a1` | Core Implementer | 20 | 410,000 |\n\
-        | worktree `agent-a1` | Reviewer | 2 | 5,000 |\n\
-        | worktree `agent-b2` | Harness Source Author | 18 | 380,000 |\n\
+        | Workspace | Subagent | Calls | Input | Cache write | Cache read | Output | (thinking) \
+        | Tokens | Est. cost |\n\
+        |---|---|--:|--:|--:|--:|--:|--:|--:|--:|\n\
+        | main checkout | Explore | 4 | 1,000 | 300 | 9,000 | 1,700 | 500 | 12,000 | $0.50 |\n\
+        | worktree `agent-a1` | Core Implementer | 20 | 4,000 | 100,000 | 300,000 | 6,000 \
+        | 2,000 | 410,000 | at least $12.25 |\n\
+        | worktree `agent-a1` | Reviewer | 2 | 500 | 0 | 4,000 | 500 | 0 | 5,000 | \u{2014} |\n\
+        | worktree `agent-b2` | Harness Source Author | 18 | 80,000 | 0 | 200,000 | 100,000 \
+        | 10,000 | 380,000 | \u{2014} |\n\
         \n\
         807,000 tokens (44 calls) from 4 dispatched subagent(s) across 3 workspace(s) \
-        (2 worktree(s)).\n\
+        (2 worktree(s)); est. cost at least $12.75.\n\
         0 subagent call(s) had no dispatch link.\n";
     assert!(md.contains(want), "{md}");
     // The section sits between the footnote and the attribution details.
@@ -690,7 +723,12 @@ fn markdown_escapes_pipes_in_subagent_cells() {
     let (mut s, c) = sample();
     s.subagents.rows = vec![sub_row(Workspace::Main, "a|b", 1, 1, &["x"])];
     let md = markdown(&s, &c, false);
-    assert!(md.contains("| main checkout | a\\|b | 1 | 1 |"), "{md}");
+    assert!(
+        md.contains(
+            "| main checkout | a\\|b | 1 | \u{2014} | \u{2014} | \u{2014} | \u{2014} | \u{2014} | 1 |"
+        ),
+        "{md}"
+    );
 }
 
 #[test]
@@ -749,11 +787,15 @@ fn unknown_workspace_row_is_labelled_in_markdown_and_unambiguous_in_json() {
     ];
     let md = markdown(&s, &c, false);
     assert!(
-        md.contains("| unknown workspace | Explore | 2 | 10 |"),
+        md.contains(
+            "| unknown workspace | Explore | 2 | \u{2014} | \u{2014} | \u{2014} | \u{2014} | \u{2014} | 10 |"
+        ),
         "{md}"
     );
     assert!(
-        md.contains("| worktree `unknown` | Explore | 1 | 5 |"),
+        md.contains(
+            "| worktree `unknown` | Explore | 1 | \u{2014} | \u{2014} | \u{2014} | \u{2014} | \u{2014} | 5 |"
+        ),
         "{md}"
     );
     assert!(!md.contains("| main checkout | Explore"), "{md}");
@@ -765,4 +807,100 @@ fn unknown_workspace_row_is_labelled_in_markdown_and_unambiguous_in_json() {
     assert_eq!(rows[1]["workspace"], "unknown");
     assert_eq!(v["subagents"]["workspaces"], 2);
     assert_eq!(v["subagents"]["worktrees"], 1);
+}
+
+// ---- Subagent cost and usage columns ----
+
+#[test]
+fn markdown_drops_the_subagent_cost_column_and_total_under_no_cost() {
+    let (s, c) = with_subagents((0, 0));
+    let md = markdown(&s, &c, false);
+    let want = "| Workspace | Subagent | Calls | Input | Cache write | Cache read | Output | \
+        (thinking) | Tokens |\n\
+        |---|---|--:|--:|--:|--:|--:|--:|--:|\n\
+        | main checkout | Explore | 4 | 1,000 | 300 | 9,000 | 1,700 | 500 | 12,000 |\n";
+    assert!(md.contains(want), "{md}");
+    let section = &md[md.find("### Subagent usage").unwrap()..md.find("<details>").unwrap()];
+    assert!(!section.to_lowercase().contains("est. cost"), "{section}");
+    assert!(!section.contains('$'), "{section}");
+    assert!(section.contains("(2 worktree(s)).\n"), "{section}");
+}
+
+#[test]
+fn markdown_shows_a_dash_for_the_section_total_when_nothing_was_priced() {
+    let (s, mut c) = with_subagents((0, 0));
+    c.subagent_total = row_cost(0.0, 0, 2);
+    let md = markdown(&s, &c, true);
+    assert!(
+        md.contains("(2 worktree(s)); est. cost \u{2014}.\n"),
+        "{md}"
+    );
+}
+
+#[test]
+fn markdown_section_total_is_exact_when_every_row_was_priced() {
+    let (s, mut c) = with_subagents((0, 0));
+    c.subagent_total = row_cost(1.5, 4, 0);
+    let md = markdown(&s, &c, true);
+    assert!(md.contains("(2 worktree(s)); est. cost $1.50.\n"), "{md}");
+}
+
+#[test]
+fn markdown_without_a_model_split_shows_dashes_not_zero_usage() {
+    let (mut s, c) = sample();
+    s.subagents.rows = vec![sub_row(Workspace::Main, "Old", 3, 99, &["o1"])];
+    let md = markdown(&s, &c, true);
+    assert!(
+        md.contains(
+            "| main checkout | Old | 3 | \u{2014} | \u{2014} | \u{2014} | \u{2014} | \u{2014} \
+             | 99 | \u{2014} |\n"
+        ),
+        "{md}"
+    );
+}
+
+#[test]
+fn json_subagent_rows_carry_usage_split_and_cost() {
+    use serde_json::Value;
+    let (s, c) = with_subagents((0, 0));
+    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    let rows = v["subagents"]["rows"].as_array().unwrap();
+    let r = &rows[0];
+    assert_eq!(r["input"], 1_000);
+    assert_eq!(r["cacheWrite5m"], 200);
+    assert_eq!(r["cacheWrite1h"], 100);
+    assert_eq!(r["cacheRead"], 9_000);
+    assert_eq!(r["output"], 1_700);
+    assert_eq!(r["thinking"], 500);
+    assert_eq!(r["costUSD"], 0.5);
+    assert_eq!(r["costIsFloor"], false);
+    // Existing keys stay.
+    assert_eq!(r["tokens"], 12_000);
+    assert_eq!(r["agents"], 1);
+    // Floor: a number that is a lower bound.
+    assert_eq!(rows[1]["costUSD"], 12.25);
+    assert_eq!(rows[1]["costIsFloor"], true);
+    // Unpriced and absent: null, not zero.
+    assert!(rows[2]["costUSD"].is_null());
+    assert_eq!(rows[2]["costIsFloor"], false);
+    assert!(rows[3]["costUSD"].is_null());
+    assert_eq!(rows[3]["costIsFloor"], false);
+    // Section cost.
+    assert_eq!(v["subagents"]["costUSD"], 12.75);
+    assert_eq!(v["subagents"]["costIsFloor"], true);
+}
+
+#[test]
+fn json_subagent_section_cost_is_null_when_unpriced_and_split_null_without_models() {
+    use serde_json::Value;
+    let (mut s, c) = sample();
+    s.subagents.rows = vec![sub_row(Workspace::Main, "Old", 3, 99, &["o1"])];
+    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    assert!(v["subagents"]["costUSD"].is_null());
+    assert_eq!(v["subagents"]["costIsFloor"], false);
+    let r = &v["subagents"]["rows"][0];
+    assert!(r["input"].is_null());
+    assert!(r["thinking"].is_null());
+    assert!(r["costUSD"].is_null());
+    assert_eq!(r["tokens"], 99);
 }
