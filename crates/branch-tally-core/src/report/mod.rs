@@ -71,7 +71,7 @@ pub fn build(
             .iter()
             .map(|w| (w.path.as_path(), w.branch.as_str())),
     );
-    let attributed = crate::attribution::attribute(records, &map, strict);
+    let attributed = crate::attribution::attribute(records, &[], &map, strict);
     let selected = crate::attribution::select(attributed, branch, strict);
     if selected.is_empty() {
         return Err(ReportError::NoRecords {
