@@ -12,9 +12,34 @@
 use std::collections::{BTreeSet, HashMap};
 
 use crate::model::{
-    BranchBasis, Bucket, Mode, Origin, SelectedRecord, SessionId, SessionRow, SubagentRow,
-    SubagentSummary, SubagentTags, Summary,
+    AttributedRecord, BranchBasis, Bucket, HeuristicCount, Mode, Origin, SelectedRecord, Selection,
+    SessionId, SessionRow, SubagentRow, SubagentSummary, SubagentTags, Summary,
 };
+
+/// Calls and tokens of every [`BranchBasis::TimelineAmbiguous`] or
+/// [`BranchBasis::SubagentUnlinked`] record in `attributed` (selected or not) whose session has
+/// at least one record in `selected`. Pass the result to [`summarize`].
+#[must_use]
+pub fn count_ambiguous(
+    attributed: &[AttributedRecord],
+    selected: &[SelectedRecord],
+) -> HeuristicCount {
+    let sessions: std::collections::HashSet<&SessionId> = selected
+        .iter()
+        .map(|s| &s.attributed.record.session_id)
+        .collect();
+    let mut count = HeuristicCount::default();
+    for a in attributed {
+        if matches!(
+            a.basis,
+            BranchBasis::TimelineAmbiguous | BranchBasis::SubagentUnlinked
+        ) && sessions.contains(&a.record.session_id)
+        {
+            count.add(a.record.usage.tokens());
+        }
+    }
+    count
+}
 
 /// The `origin` text used when a record has no origin. The reference always has one, so this can
 /// only come from a source that could not tell; it is never counted as a worktree session.
@@ -32,12 +57,18 @@ const UNKNOWN_ORIGIN: &str = "unknown";
 /// [`BranchBasis::DispatcherRolledUp`]; selected unlinked records are counted into
 /// `unlinked_in_total_*` instead (they are in the total via session claim). In
 /// [`Mode::Strict`] the subagent breakdown (rows and unattributed) is left empty.
+///
+/// `footnote.heuristics` counts each selected record under one field, by its basis (a `Stamped`
+/// record kept by [`Selection::SessionClaim`] counts as session claim). `ambiguous` comes from
+/// [`count_ambiguous`] over the full attributed set and fills `heuristics.ambiguous`. In
+/// [`Mode::Strict`], the raw view, the whole breakdown stays at its default.
 #[must_use]
 pub fn summarize(
     branch: &str,
     mode: Mode,
     selected: &[SelectedRecord],
     unattributed: (u64, u64),
+    ambiguous: HeuristicCount,
 ) -> Summary {
     let mut sub_rows: Vec<SubagentRow> = Vec::new();
     let mut by_model: Vec<(String, Bucket)> = Vec::new();
@@ -108,22 +139,22 @@ pub fn summarize(
         if r.is_sidechain {
             footnote.subagent_calls += 1;
         }
+        // One field per record. The basis wins over the selection reason; a selected ambiguous or
+        // unlinked record is counted by the `ambiguous` argument instead.
+        count_heuristic(&mut footnote.heuristics, sel);
         if attributed.branch != branch {
             footnote.off_branch_tokens += u.tokens();
         }
     }
+    // Strict is the raw view: no heuristic ran, so there is nothing to break down.
+    if mode == Mode::Strict {
+        footnote.heuristics = crate::model::HeuristicBreakdown::default();
+    } else {
+        footnote.heuristics.ambiguous = ambiguous;
+    }
     footnote.worktree_sessions = is_worktree.iter().filter(|w| **w).count() as u64;
 
-    let mut total = Bucket::default();
-    for (_, b) in &by_model {
-        total.input += b.input;
-        total.cache_write_5m += b.cache_write_5m;
-        total.cache_write_1h += b.cache_write_1h;
-        total.cache_read += b.cache_read;
-        total.output += b.output;
-        total.thinking += b.thinking;
-        total.calls += b.calls;
-    }
+    let total = sum_buckets(&by_model);
 
     // Strict mode is the raw view: no roll-up, so no breakdown and nothing to call unattributed.
     let subagents = if mode == Mode::Strict {
@@ -147,6 +178,39 @@ pub fn summarize(
         by_attribution,
         sessions,
         subagents,
+    }
+}
+
+/// The Total row: every bucket of the by-model table added together.
+fn sum_buckets(by_model: &[(String, Bucket)]) -> Bucket {
+    let mut total = Bucket::default();
+    for (_, b) in by_model {
+        total.input += b.input;
+        total.cache_write_5m += b.cache_write_5m;
+        total.cache_write_1h += b.cache_write_1h;
+        total.cache_read += b.cache_read;
+        total.output += b.output;
+        total.thinking += b.thinking;
+        total.calls += b.calls;
+    }
+    total
+}
+
+/// Counts one selected record under the one heuristic that placed it, if any.
+fn count_heuristic(h: &mut crate::model::HeuristicBreakdown, sel: &SelectedRecord) {
+    let tokens = sel.attributed.record.usage.tokens();
+    match sel.attributed.basis {
+        BranchBasis::WorktreeRecovered => h.worktree_recovery.add(tokens),
+        BranchBasis::OriginRecovered => h.origin_recovery.add(tokens),
+        BranchBasis::DispatcherRolledUp => h.dispatcher_roll_up.add(tokens),
+        BranchBasis::TimelineForward => h.timeline_forward.add(tokens),
+        BranchBasis::TimelineCarried => h.timeline_carried.add(tokens),
+        BranchBasis::TimelineAmbiguous | BranchBasis::SubagentUnlinked => {}
+        BranchBasis::Stamped => {
+            if sel.kept_by == Selection::SessionClaim {
+                h.session_claim.add(tokens);
+            }
+        }
     }
 }
 
