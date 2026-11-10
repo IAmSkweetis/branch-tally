@@ -137,10 +137,14 @@ pub struct SubagentRow {
 
 /// The subagent breakdown, precomputed by the summary stage so render never re-derives it.
 ///
-/// `rows` cover subagent records **selected** for the branch. `unattributed_*` count subagent
-/// records with no usable dispatch link ([`BranchBasis::SubagentUnlinked`]) across the whole
-/// attributed set, since those are normally not selected for the branch at all; use
+/// `rows` cover only subagent records **selected** for the branch whose dispatch link was
+/// verified ([`BranchBasis::DispatcherRolledUp`]); the accessors ([`SubagentSummary::calls`] and
+/// friends) therefore count rolled-up records only. `unattributed_*` count subagent records with
+/// no usable dispatch link ([`BranchBasis::SubagentUnlinked`]) across the whole attributed set,
+/// since those are normally not selected for the branch at all; use
 /// [`SubagentSummary::count_unattributed`] on the attributed records before selection.
+/// `unlinked_in_total_*` are the subset of those that were selected anyway (via session claim),
+/// so they are inside the branch total although their branch is unverified.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubagentSummary {
     /// Rows in first-seen order.
@@ -149,6 +153,12 @@ pub struct SubagentSummary {
     pub unattributed_calls: u64,
     /// Tokens of those calls.
     pub unattributed_tokens: u64,
+    /// Unlinked calls that are included in this report's total (selected via session claim).
+    #[serde(default)]
+    pub unlinked_in_total_calls: u64,
+    /// Tokens of those calls.
+    #[serde(default)]
+    pub unlinked_in_total_tokens: u64,
 }
 
 impl SubagentSummary {
@@ -162,7 +172,7 @@ impl SubagentSummary {
             .fold((0, 0), |(c, t), a| (c + 1, t + a.record.usage.tokens()))
     }
 
-    /// Calls across all rows.
+    /// Calls across all rows (rolled-up records only; unlinked ones are not in any row).
     #[must_use]
     pub fn calls(&self) -> u64 {
         self.rows.iter().map(|r| r.calls).sum()
@@ -174,7 +184,8 @@ impl SubagentSummary {
         self.rows.iter().map(|r| r.tokens).sum()
     }
 
-    /// Distinct dispatched subagents (distinct agent ids) across all rows.
+    /// Distinct dispatched subagents (distinct agent ids) across all rows, so only subagents whose
+    /// dispatch link was verified.
     #[must_use]
     pub fn dispatched(&self) -> u64 {
         let ids: BTreeSet<&AgentId> = self.rows.iter().flat_map(|r| &r.agent_ids).collect();
@@ -203,7 +214,7 @@ impl SubagentSummary {
     /// Whether there is anything to report: rows, or unattributed subagent calls.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.rows.is_empty() && self.unattributed_calls == 0
+        self.rows.is_empty() && self.unattributed_calls == 0 && self.unlinked_in_total_calls == 0
     }
 }
 
@@ -255,6 +266,8 @@ mod tests {
             ],
             unattributed_calls: 0,
             unattributed_tokens: 0,
+            unlinked_in_total_calls: 0,
+            unlinked_in_total_tokens: 0,
         }
     }
 
@@ -325,6 +338,13 @@ mod tests {
             ..SubagentSummary::default()
         };
         assert_eq!((s.workspaces(), s.worktrees()), (2, 1));
+    }
+
+    #[test]
+    fn summaries_serialized_before_the_unlinked_counts_existed_still_load() {
+        let old = r#"{"rows":[],"unattributed_calls":2,"unattributed_tokens":9}"#;
+        let s: SubagentSummary = serde_json::from_str(old).unwrap();
+        assert_eq!((s.unattributed_calls, s.unlinked_in_total_calls), (2, 0));
     }
 
     #[test]

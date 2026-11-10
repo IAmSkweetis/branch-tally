@@ -321,6 +321,60 @@ fn strict_mode_leaves_subagents_empty() {
 }
 
 #[test]
+fn rows_hold_only_rolled_up_records_and_unlinked_ones_are_counted_separately() {
+    let recs = vec![
+        sub(
+            rec("s", "feat/x").usage([10, 0, 0, 0, 0], None),
+            Workspace::worktree("wt-a"),
+            "writer",
+            "a1",
+        ),
+        unlinked(
+            rec("s", "feat/x").usage([0, 0, 0, 0, 7], None),
+            Workspace::Unknown,
+            "n1",
+            "n1",
+        ),
+        unlinked(
+            rec("s", "feat/x").usage([3, 0, 0, 0, 0], None),
+            Workspace::Unknown,
+            "n1",
+            "n1",
+        ),
+    ];
+    let s = run_with(recs, Mode::Claim, (2, 10));
+    let sub = &s.subagents;
+    assert_eq!(sub.rows.len(), 1, "unlinked records must not make rows");
+    assert_eq!((sub.calls(), sub.tokens(), sub.dispatched()), (1, 10, 1));
+    assert_eq!((sub.unattributed_calls, sub.unattributed_tokens), (2, 10));
+    assert_eq!(
+        (sub.unlinked_in_total_calls, sub.unlinked_in_total_tokens),
+        (2, 10)
+    );
+    // They stay in the branch total.
+    assert_eq!(s.total.calls, 3);
+}
+
+#[test]
+fn unlinked_in_total_counts_only_selected_records_not_the_repository_wide_figure() {
+    // Repository-wide there are 4 unlinked calls, but none was selected for this branch.
+    let s = run_with(vec![rec("s", "feat/x")], Mode::Claim, (4, 40));
+    assert_eq!(s.subagents.unattributed_calls, 4);
+    assert_eq!(s.subagents.unlinked_in_total_calls, 0);
+    assert_eq!(s.subagents.unlinked_in_total_tokens, 0);
+}
+
+fn unlinked(mut r: Rec, ws: Workspace, name: &str, id: &str) -> Rec {
+    r.0.attributed.basis = BranchBasis::SubagentUnlinked;
+    r.0.attributed.subagent = Some(SubagentTags {
+        workspace: ws,
+        subagent: name.to_owned(),
+        agent_id: AgentId::new(id),
+    });
+    r
+}
+
+#[test]
 fn unattributed_is_reported_even_without_selected_subagents() {
     let s = run_with(vec![rec("s", "feat/x")], Mode::Claim, (4, 40));
     assert_eq!(s.subagents.rows.len(), 0);

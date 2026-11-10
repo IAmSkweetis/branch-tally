@@ -171,16 +171,14 @@ pub trait Source {
     /// and the parent's raw branch stamp at that moment. Raw facts only; deciding what a stamp
     /// means is attribution's job.
     ///
-    /// The default reports none, so a source that cannot see dispatches (or has not been taught
-    /// yet) leaves its subagent records unlinked and therefore counted as unattributed.
+    /// There is deliberately no default body: a wrapper that forgot to forward this would
+    /// silently leave every subagent record unlinked. A source that cannot see dispatches returns
+    /// `Ok(Vec::new())` explicitly, and its subagent records are then counted as unattributed.
     ///
     /// # Errors
     ///
     /// Returns [`SourceError`] if a file cannot be read. Bad lines are not errors.
-    fn dispatches(&self, roots: &[TranscriptRoot]) -> Result<Vec<Dispatch>, SourceError> {
-        let _ = roots;
-        Ok(Vec::new())
-    }
+    fn dispatches(&self, roots: &[TranscriptRoot]) -> Result<Vec<Dispatch>, SourceError>;
 }
 
 #[cfg(test)]
@@ -236,6 +234,10 @@ mod tests {
             stats.duplicates_removed = 4;
             Ok(stats)
         }
+
+        fn dispatches(&self, _roots: &[TranscriptRoot]) -> Result<Vec<Dispatch>, SourceError> {
+            Ok(Vec::new())
+        }
     }
 
     #[test]
@@ -260,7 +262,7 @@ mod tests {
     }
 
     #[test]
-    fn dispatches_default_reports_none_so_existing_sources_still_compile() {
+    fn a_source_with_no_dispatch_knowledge_says_so_explicitly() {
         let source: Box<dyn Source> = Box::new(Fake);
         assert_eq!(source.dispatches(&[]).unwrap(), Vec::new());
     }

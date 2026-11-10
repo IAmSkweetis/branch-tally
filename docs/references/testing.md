@@ -169,12 +169,19 @@ expected behaviour directly, next to the same issue number. `malformed-and-keyle
   everything else to the goldens exactly. Markdown is not compared with the reference.
 - Output divergence #6 (subagent rollup): when `Summary.subagents` is not empty, the JSON report
   has a top-level `subagents` object (`calls`, `tokens`, `dispatched`, `workspaces`, `worktrees`,
-  `unattributedCalls`, `unattributedTokens`, `rows[]` of `workspace`, `workspaceKind` (`main`,
+  `unattributedCalls`, `unattributedTokens`, `unlinkedInTotalCalls`, `unlinkedInTotalTokens`,
+  `rows[]` of `workspace`, `workspaceKind` (`main`,
   `worktree` or `unknown`, the last for a missing or outside-repo cwd), `isWorktree`, `subagent`,
   `calls`, `tokens`, `agents`) and the Markdown report has a `### Subagent usage` section between
   the footnote and the attribution details. Both are omitted when empty, so `--strict` and
   reports without dispatched subagents are unchanged. The unattributed count spans all attributed
-  records, not only the branch, and the Markdown line says so. In the parity test,
+  records, not only the branch, and the Markdown line says so. `rows[]`, `calls`, `tokens`,
+  `dispatched`, `workspaces` and `worktrees` count only verified roll-ups
+  (`BranchBasis::DispatcherRolledUp`). Unlinked records stay in the branch total through the
+  session claim; `unlinkedInTotal*` say how many (the Markdown line ends "N call(s) (T tokens) of
+  them are included in this report's total via session claim", or "none of them ..."). Every
+  `Source` must implement `dispatches` (no default body), so a wrapper cannot silently drop links.
+  In the parity test,
   `without_subagent_divergence` checks the `subagents` object adds up (`calls` and `tokens` equal
   the sum of `rows`; absent in strict mode), removes it, and compares the rest, like
   `PRICE_DIVERGENT_KEYS`. `report::build` takes the source's dispatches, so the claim report is

@@ -561,6 +561,11 @@ fn sub_row(ws: Workspace, name: &str, calls: u64, tokens: u64, ids: &[&str]) -> 
 
 /// Main checkout plus two worktrees, one of which holds two subagents.
 fn with_subagents(unattributed: (u64, u64)) -> (Summary, Costs) {
+    with_subagents_unlinked(unattributed, (0, 0))
+}
+
+/// As [`with_subagents`], with `in_total` unlinked calls included in the branch total.
+fn with_subagents_unlinked(unattributed: (u64, u64), in_total: (u64, u64)) -> (Summary, Costs) {
     let (mut s, c) = sample();
     s.subagents = SubagentSummary {
         rows: vec![
@@ -589,6 +594,8 @@ fn with_subagents(unattributed: (u64, u64)) -> (Summary, Costs) {
         ],
         unattributed_calls: unattributed.0,
         unattributed_tokens: unattributed.1,
+        unlinked_in_total_calls: in_total.0,
+        unlinked_in_total_tokens: in_total.1,
     };
     (s, c)
 }
@@ -623,8 +630,28 @@ fn markdown_reports_unattributed_subagent_calls_without_claiming_a_branch() {
     assert!(
         md.contains(
             "3 subagent call(s) (1,500 tokens) across this repository's transcripts had no \
-             dispatch link, so their branch is unverified (raw stamp kept).\n"
+             dispatch link, so their branch is unverified (raw stamp kept); none of them are \
+             included in this report's total.\n"
         ),
+        "{md}"
+    );
+}
+
+#[test]
+fn markdown_says_how_many_unlinked_calls_are_inside_this_reports_total() {
+    let (s, c) = with_subagents_unlinked((3, 1_500), (2, 900));
+    let md = markdown(&s, &c, false);
+    assert!(
+        md.contains(
+            "3 subagent call(s) (1,500 tokens) across this repository's transcripts had no \
+             dispatch link, so their branch is unverified (raw stamp kept); 2 call(s) (900 \
+             tokens) of them are included in this report's total via session claim.\n"
+        ),
+        "{md}"
+    );
+    // The headline line still counts only rolled-up rows.
+    assert!(
+        md.contains("807,000 tokens (44 calls) from 4 dispatched subagent(s)"),
         "{md}"
     );
 }
@@ -667,9 +694,11 @@ fn markdown_escapes_pipes_in_subagent_cells() {
 #[test]
 fn json_has_a_subagents_object_with_rows_and_totals() {
     use serde_json::Value;
-    let (s, c) = with_subagents((3, 1_500));
+    let (s, c) = with_subagents_unlinked((3, 1_500), (2, 900));
     let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
     let sub = &v["subagents"];
+    assert_eq!(sub["unlinkedInTotalCalls"], 2);
+    assert_eq!(sub["unlinkedInTotalTokens"], 900);
     assert_eq!(sub["calls"], 44);
     assert_eq!(sub["tokens"], 807_000);
     assert_eq!(sub["dispatched"], 4);

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use branch_tally_core::git::{FakeGit, Worktree};
 use branch_tally_core::model::{
-    Harness, Mode, Origin, PriceTableSource, Record, RequestId, SessionId, Usage,
+    Dispatch, Harness, Mode, Origin, PriceTableSource, Record, RequestId, SessionId, Usage,
 };
 use branch_tally_core::pricing::PriceTable;
 use branch_tally_core::report::{ReportError, build, run};
@@ -67,6 +67,9 @@ impl Source for FakeSource {
             sink(r.clone());
         }
         Ok(self.stats)
+    }
+    fn dispatches(&self, _roots: &[TranscriptRoot]) -> Result<Vec<Dispatch>, SourceError> {
+        Ok(Vec::new())
     }
 }
 
@@ -355,10 +358,16 @@ fn a_subagent_with_no_dispatch_link_is_counted_unattributed_not_guessed() {
     // calls are also counted as unattributed.
     assert_eq!(r.summary.total.calls, 4);
     assert_eq!(r.summary.total.input, 14);
-    // The breakdown covers every selected subagent record, linked or not (n1 plus n2's two).
-    assert_eq!(r.summary.subagents.calls(), 3);
+    // Requirement 7: the breakdown covers only rolled-up records (n1's one call). n2's two
+    // unlinked calls are in the total via the claim and reported as such, not as rows.
+    assert_eq!(r.summary.subagents.calls(), 1);
     assert_eq!(r.summary.subagents.unattributed_calls, 2);
     assert!(r.summary.subagents.unattributed_tokens > 0);
+    assert_eq!(r.summary.subagents.unlinked_in_total_calls, 2);
+    assert_eq!(
+        r.summary.subagents.unlinked_in_total_tokens,
+        r.summary.subagents.unattributed_tokens
+    );
 }
 
 #[test]
@@ -367,6 +376,58 @@ fn unusable_dispatchers_keep_raw_stamps_and_are_counted() {
     // All five calls (1..=5 input) ride the session claims; g2 and g3 stay counted unattributed.
     assert_eq!(r.summary.total.input, 15);
     assert_eq!(r.summary.subagents.unattributed_calls, 2);
+    assert_eq!(r.summary.subagents.unlinked_in_total_calls, 2);
+}
+
+/// A wrapper that forwards everything, as the CLI's `CheckedSource` must. `Source::dispatches`
+/// has no default, so leaving it out here would not compile.
+struct Forwarding(ClaudeCode);
+
+impl Source for Forwarding {
+    fn harness(&self) -> Harness {
+        self.0.harness()
+    }
+    fn discover(
+        &self,
+        projects_root: &Path,
+        repo: &RepoIdentity,
+    ) -> Result<Vec<TranscriptRoot>, SourceError> {
+        self.0.discover(projects_root, repo)
+    }
+    fn read(
+        &self,
+        roots: &[TranscriptRoot],
+        sink: &mut dyn FnMut(Record),
+    ) -> Result<ReadStats, SourceError> {
+        self.0.read(roots, sink)
+    }
+    fn dispatches(&self, roots: &[TranscriptRoot]) -> Result<Vec<Dispatch>, SourceError> {
+        self.0.dispatches(roots)
+    }
+}
+
+#[test]
+fn a_forwarding_wrapper_source_still_links_subagents() {
+    let repo = PathBuf::from(r"C:\repo");
+    let git = FakeGit::new().with_worktrees(
+        &repo,
+        vec![Worktree {
+            path: repo.clone(),
+            branch: "main".to_owned(),
+        }],
+    );
+    let r = run(
+        &git,
+        &Forwarding(ClaudeCode),
+        &fixture("subagent-removed-worktree"),
+        &repo,
+        Some("feat/x"),
+        false,
+        bundled(),
+    )
+    .unwrap();
+    assert_eq!(r.summary.subagents.unattributed_calls, 0);
+    assert_eq!(r.summary.subagents.calls(), 5);
 }
 
 #[test]
