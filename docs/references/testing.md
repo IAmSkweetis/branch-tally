@@ -169,7 +169,8 @@ expected behaviour directly, next to the same issue number. `malformed-and-keyle
   everything else to the goldens exactly. Markdown is not compared with the reference.
 - Output divergence #6 (subagent rollup): when `Summary.subagents` is not empty, the JSON report
   has a top-level `subagents` object (`calls`, `tokens`, `dispatched`, `workspaces`, `worktrees`,
-  `unattributedCalls`, `unattributedTokens`, `rows[]` of `workspace`, `isWorktree`, `subagent`,
+  `unattributedCalls`, `unattributedTokens`, `rows[]` of `workspace`, `workspaceKind` (`main`,
+  `worktree` or `unknown`, the last for a missing or outside-repo cwd), `isWorktree`, `subagent`,
   `calls`, `tokens`, `agents`) and the Markdown report has a `### Subagent usage` section between
   the footnote and the attribution details. Both are omitted when empty, so `--strict` and
   reports without dispatched subagents are unchanged. Once attribution fills the summary, a

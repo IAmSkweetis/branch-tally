@@ -707,3 +707,31 @@ fn json_keeps_subagents_for_unattributed_only() {
     assert_eq!(v["subagents"]["unattributedCalls"], 2);
     assert_eq!(v["subagents"]["rows"].as_array().unwrap().len(), 0);
 }
+
+#[test]
+fn unknown_workspace_row_is_labelled_in_markdown_and_unambiguous_in_json() {
+    use serde_json::Value;
+    let (mut s, c) = sample();
+    s.subagents.rows = vec![
+        sub_row(Workspace::Unknown, "Explore", 2, 10, &["u1"]),
+        sub_row(Workspace::worktree("unknown"), "Explore", 1, 5, &["u2"]),
+    ];
+    let md = markdown(&s, &c, false);
+    assert!(
+        md.contains("| unknown workspace | Explore | 2 | 10 |"),
+        "{md}"
+    );
+    assert!(
+        md.contains("| worktree `unknown` | Explore | 1 | 5 |"),
+        "{md}"
+    );
+    assert!(!md.contains("| main checkout | Explore"), "{md}");
+    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    let rows = v["subagents"]["rows"].as_array().unwrap();
+    assert_eq!(rows[0]["workspaceKind"], "unknown");
+    assert_eq!(rows[0]["isWorktree"], false);
+    assert_eq!(rows[1]["workspaceKind"], "worktree");
+    assert_eq!(rows[1]["workspace"], "unknown");
+    assert_eq!(v["subagents"]["workspaces"], 2);
+    assert_eq!(v["subagents"]["worktrees"], 1);
+}

@@ -39,8 +39,10 @@ pub struct AttributedRecord {
     pub branch: String,
     /// How `branch` was decided.
     pub basis: BranchBasis,
-    /// Workspace and subagent tags. `Some` for every record from a subagent file (rolled up or
-    /// unlinked), `None` otherwise. Absent in older serialized data.
+    /// Workspace and subagent tags. `Some` for every claim-mode record from a subagent file that
+    /// carries an agent id (rolled up or unlinked; a missing or outside-repo cwd is
+    /// [`super::Workspace::Unknown`]). `None` for other records, and in strict mode, which keeps
+    /// raw stamps. Absent in older serialized data.
     #[serde(default)]
     pub subagent: Option<SubagentTags>,
 }

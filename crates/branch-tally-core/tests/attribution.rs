@@ -451,7 +451,9 @@ fn cwd_missing_or_outside_the_repository_still_rolls_up_but_is_not_tagged_main()
     for a in &out {
         assert_eq!(a.branch, "feat/x");
         assert_eq!(a.basis, BranchBasis::DispatcherRolledUp);
-        assert!(a.subagent.is_none(), "no guessed workspace");
+        let tags = a.subagent.as_ref().expect("tagged");
+        assert_eq!(tags.workspace, Workspace::Unknown);
+        assert_ne!(tags.workspace, Workspace::Main);
     }
 }
 

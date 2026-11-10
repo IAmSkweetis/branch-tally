@@ -27,8 +27,9 @@ pub struct Dispatch {
     pub ts: Option<String>,
 }
 
-/// Where a subagent ran: the main checkout, or a worktree named from its recorded cwd, so the
-/// name survives the worktree being deleted.
+/// Where a subagent ran: the main checkout, a worktree named from its recorded cwd (so the name
+/// survives the worktree being deleted), or [`Workspace::Unknown`] when the cwd was missing or
+/// outside the repository.
 ///
 /// Worktree names compare case-insensitively (AGENTS.md Paths).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +39,10 @@ pub enum Workspace {
     Main,
     /// A worktree, by the name derived from its cwd (its final directory name).
     Worktree(String),
+    /// The recorded cwd was missing or outside the repository, so the workspace cannot be told.
+    /// Never the main checkout: the record still rolls up to its dispatcher's branch, but
+    /// nothing is claimed about where it ran. It is a workspace for counting, not a worktree.
+    Unknown,
 }
 
 impl Workspace {
@@ -53,6 +58,19 @@ impl Workspace {
         match self {
             Self::Main => "main".to_owned(),
             Self::Worktree(name) => name.clone(),
+            Self::Unknown => "unknown".to_owned(),
+        }
+    }
+
+    /// The variant as a stable machine-readable string: `"main"`, `"worktree"` or `"unknown"`.
+    /// Unlike [`Workspace::label`], a worktree literally named `unknown` cannot be confused
+    /// with [`Workspace::Unknown`].
+    #[must_use]
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Main => "main",
+            Self::Worktree(_) => "worktree",
+            Self::Unknown => "unknown",
         }
     }
 
@@ -62,10 +80,11 @@ impl Workspace {
         matches!(self, Self::Worktree(_))
     }
 
-    fn key(&self) -> (bool, String) {
+    fn key(&self) -> (u8, String) {
         match self {
-            Self::Main => (false, String::new()),
-            Self::Worktree(n) => (true, n.to_lowercase()),
+            Self::Main => (0, String::new()),
+            Self::Worktree(n) => (1, n.to_lowercase()),
+            Self::Unknown => (2, String::new()),
         }
     }
 }
@@ -285,6 +304,27 @@ mod tests {
         assert_ne!(Workspace::Main, Workspace::worktree("main"));
         assert_eq!(Workspace::Main.label(), "main");
         assert_eq!(Workspace::worktree("Wt").label(), "Wt");
+    }
+
+    #[test]
+    fn unknown_workspace_is_its_own_kind_and_counts_as_a_workspace_not_a_worktree() {
+        let u = Workspace::Unknown;
+        assert_ne!(u, Workspace::Main);
+        assert_ne!(u, Workspace::worktree("unknown"));
+        assert_eq!(u.label(), "unknown");
+        assert_eq!(u.kind(), "unknown");
+        assert_eq!(Workspace::Main.kind(), "main");
+        assert_eq!(Workspace::worktree("x").kind(), "worktree");
+        assert!(!u.is_worktree());
+        assert_eq!(serde_json::to_string(&u).unwrap(), "\"unknown\"");
+        let s = SubagentSummary {
+            rows: vec![
+                row(Workspace::Unknown, "a", 1, 5, &["a"]),
+                row(Workspace::worktree("w"), "b", 1, 5, &["b"]),
+            ],
+            ..SubagentSummary::default()
+        };
+        assert_eq!((s.workspaces(), s.worktrees()), (2, 1));
     }
 
     #[test]
