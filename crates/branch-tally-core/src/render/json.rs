@@ -93,7 +93,8 @@ fn repr(x: f64) -> String {
 
 /// The `subagents` object (#6). Not in the reference: omitted when empty, so strict mode and
 /// reports without dispatched subagents keep the reference's shape. Totals come from the
-/// accessors; `unattributed*` span every attributed record, not only this branch's.
+/// accessors and count rolled-up records only; `unattributed*` span every attributed record, not
+/// only this branch's; `unlinkedInTotal*` are the unlinked calls inside this report's total.
 fn subagents(sub: &SubagentSummary, o: &mut String) {
     if sub.is_empty() {
         return;
@@ -109,6 +110,16 @@ fn subagents(sub: &SubagentSummary, o: &mut String) {
         o,
         "    \"unattributedTokens\": {},",
         sub.unattributed_tokens
+    );
+    let _ = writeln!(
+        o,
+        "    \"unlinkedInTotalCalls\": {},",
+        sub.unlinked_in_total_calls
+    );
+    let _ = writeln!(
+        o,
+        "    \"unlinkedInTotalTokens\": {},",
+        sub.unlinked_in_total_tokens
     );
     if sub.rows.is_empty() {
         o.push_str("    \"rows\": []\n");

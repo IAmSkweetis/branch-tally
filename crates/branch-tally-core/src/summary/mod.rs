@@ -12,8 +12,8 @@
 use std::collections::{BTreeSet, HashMap};
 
 use crate::model::{
-    Bucket, Mode, Origin, SelectedRecord, SessionId, SessionRow, SubagentRow, SubagentSummary,
-    SubagentTags, Summary,
+    BranchBasis, Bucket, Mode, Origin, SelectedRecord, SessionId, SessionRow, SubagentRow,
+    SubagentSummary, SubagentTags, Summary,
 };
 
 /// The `origin` text used when a record has no origin. The reference always has one, so this can
@@ -28,7 +28,9 @@ const UNKNOWN_ORIGIN: &str = "unknown";
 /// `unattributed` is `(calls, tokens)` from [`SubagentSummary::count_unattributed`] over the
 /// **full attributed set before selection**, so it is repository-wide: every subagent record the
 /// read saw that had no usable dispatch link, not only those in the selected sessions. Render
-/// must label it that way. Subagent rows cover only the selected records. In
+/// must label it that way. Subagent rows cover only the selected records whose basis is
+/// [`BranchBasis::DispatcherRolledUp`]; selected unlinked records are counted into
+/// `unlinked_in_total_*` instead (they are in the total via session claim). In
 /// [`Mode::Strict`] the subagent breakdown (rows and unattributed) is left empty.
 #[must_use]
 pub fn summarize(
@@ -47,6 +49,7 @@ pub fn summarize(
     // Parallel to `sessions`: whether the session's origin is known and not the main checkout.
     let mut is_worktree: Vec<bool> = Vec::new();
     let mut footnote = crate::model::Footnote::default();
+    let (mut unlinked_calls, mut unlinked_tokens) = (0_u64, 0_u64);
 
     for sel in selected {
         let attributed = &sel.attributed;
@@ -89,8 +92,17 @@ pub fn summarize(
             row.agents.insert(agent.to_owned());
         }
 
-        if let Some(tags) = &attributed.subagent {
-            add_subagent(&mut sub_rows, tags, u.tokens());
+        // Only verified roll-ups make breakdown rows; an unlinked record stays in the total via
+        // the session claim but is reported separately as unverified.
+        match (&attributed.subagent, attributed.basis) {
+            (Some(tags), BranchBasis::DispatcherRolledUp) => {
+                add_subagent(&mut sub_rows, tags, u.tokens());
+            }
+            (_, BranchBasis::SubagentUnlinked) => {
+                unlinked_calls += 1;
+                unlinked_tokens += u.tokens();
+            }
+            _ => {}
         }
 
         if r.is_sidechain {
@@ -121,6 +133,8 @@ pub fn summarize(
             rows: sub_rows,
             unattributed_calls: unattributed.0,
             unattributed_tokens: unattributed.1,
+            unlinked_in_total_calls: unlinked_calls,
+            unlinked_in_total_tokens: unlinked_tokens,
         }
     };
 

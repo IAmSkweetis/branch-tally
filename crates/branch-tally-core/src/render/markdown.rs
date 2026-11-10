@@ -86,8 +86,9 @@ fn cell(s: &str) -> String {
 ///
 /// Not in the reference, so it is omitted entirely when [`SubagentSummary::is_empty`]: that keeps
 /// strict mode (which never fills it) and reports with no subagents byte-identical to before.
-/// All totals come from the summary's accessors. The unattributed count spans every attributed
-/// record, not only this branch's, and the line says so rather than imply otherwise.
+/// All totals come from the summary's accessors and count rolled-up records only. The
+/// unattributed count spans every attributed record, not only this branch's, and the line says so
+/// rather than imply otherwise, then says how many of those are inside this report's total.
 fn subagent_section(summary: &Summary, o: &mut Vec<String>) {
     let sub = &summary.subagents;
     if sub.is_empty() {
@@ -130,10 +131,20 @@ fn subagent_section(summary: &Summary, o: &mut Vec<String>) {
     if sub.unattributed_calls == 0 {
         text.push_str("0 subagent call(s) had no dispatch link.\n");
     } else {
+        let in_total = if sub.unlinked_in_total_calls == 0 {
+            "none of them are included in this report's total".to_owned()
+        } else {
+            format!(
+                "{} call(s) ({} tokens) of them are included in this report's total via \
+                 session claim",
+                n(sub.unlinked_in_total_calls),
+                n(sub.unlinked_in_total_tokens),
+            )
+        };
         let _ = writeln!(
             text,
             "{} subagent call(s) ({} tokens) across this repository's transcripts had no \
-             dispatch link, so their branch is unverified (raw stamp kept).",
+             dispatch link, so their branch is unverified (raw stamp kept); {in_total}.",
             n(sub.unattributed_calls),
             n(sub.unattributed_tokens),
         );

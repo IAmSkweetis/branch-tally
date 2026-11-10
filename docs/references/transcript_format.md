@@ -145,7 +145,10 @@ assistant record holding the Agent `tool_use`; its `gitBranch` matched the user 
 - A `(session, agent)` pair seen twice (replayed history) is reported once, first in read order.
 - A malformed line, a non-object result, a missing/empty/non-string `agentId`: no dispatch, no
   panic, no `ReadStats` counter. The subagent it would have linked stays unlinked, which attribution
-  counts as unattributed.
+  counts as unattributed. Such unlinked records are never rows in the subagent breakdown; the
+  report states how many of them sit inside its total via the session claim.
+- `Source::dispatches` has no default body. A wrapper that did not forward it would leave every
+  subagent unlinked without any error, so each implementor must provide it.
 - `agent-<id>.meta.json` beside each file is not read.
 
 Fixtures: `subagent-*` scenarios; `malformed-and-keyless` holds the non-dispatch shapes.
