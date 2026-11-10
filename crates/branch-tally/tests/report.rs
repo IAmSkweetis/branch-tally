@@ -530,6 +530,42 @@ fn removed_worktree_subagents_roll_up_to_the_dispatcher_through_the_binary() {
     assert_eq!(sub["unlinkedInTotalCalls"], 0);
 }
 
+/// Each subagent row's usage split must add up to its Tokens cell, and the rows must add up to
+/// the section (#6).
+#[test]
+fn subagent_rows_usage_split_sums_to_their_tokens_through_the_binary() {
+    for scenario in ["subagent", "subagent-removed-worktree"] {
+        let world = World::scenario(scenario);
+        let out = world.run(&["report", "feat/x", "--json"]);
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        let json: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+        let sub = &json["subagents"];
+        let rows = sub["rows"].as_array().unwrap();
+        assert!(!rows.is_empty(), "{scenario}: no subagent rows");
+        let (mut calls, mut tokens) = (0, 0);
+        for row in rows {
+            let split: u64 = [
+                "input",
+                "cacheWrite5m",
+                "cacheWrite1h",
+                "cacheRead",
+                "output",
+            ]
+            .iter()
+            .map(|k| row[*k].as_u64().expect("usage field is a number"))
+            .sum();
+            assert_eq!(split, row["tokens"].as_u64().unwrap(), "{scenario}");
+            assert!(row["thinking"].is_u64(), "{scenario}");
+            assert!(row["costIsFloor"].is_boolean(), "{scenario}");
+            calls += row["calls"].as_u64().unwrap();
+            tokens += row["tokens"].as_u64().unwrap();
+        }
+        assert_eq!(calls, sub["calls"].as_u64().unwrap(), "{scenario}");
+        assert_eq!(tokens, sub["tokens"].as_u64().unwrap(), "{scenario}");
+        assert!(sub["costIsFloor"].is_boolean(), "{scenario}");
+    }
+}
+
 #[test]
 fn strict_never_shows_the_subagent_usage_section() {
     for scenario in ["subagent", "subagent-removed-worktree"] {
