@@ -478,3 +478,138 @@ fn fs_text_reads_files_and_reports_missing_as_none() {
     std::fs::write(&p, "x").unwrap();
     assert_eq!(FsText.read(&p).unwrap().as_deref(), Some("x"));
 }
+
+// ---- subagent row costs ---------------------------------------------------------------------
+
+mod subagent_rows {
+    use super::{b, cost, price};
+    use branch_tally_core::model::{Bucket, SubagentRow, SubagentSummary, Summary, Workspace};
+    use branch_tally_core::pricing::sum_costs;
+    use std::collections::BTreeSet;
+
+    fn row(name: &str, by_model: Vec<(&str, Bucket)>) -> SubagentRow {
+        let by_model: Vec<(String, Bucket)> = by_model
+            .into_iter()
+            .map(|(m, k)| (m.to_owned(), k))
+            .collect();
+        let mut r = SubagentRow {
+            workspace: Workspace::Main,
+            subagent: name.to_owned(),
+            calls: 0,
+            tokens: 0,
+            agent_ids: BTreeSet::new(),
+            by_model,
+        };
+        let t = r.total();
+        r.calls = t.calls;
+        r.tokens = t.tokens();
+        r
+    }
+
+    fn summary(rows: Vec<SubagentRow>, by_model: Vec<(&str, Bucket)>) -> Summary {
+        Summary {
+            by_model: by_model
+                .into_iter()
+                .map(|(m, k)| (m.to_owned(), k))
+                .collect(),
+            subagents: SubagentSummary {
+                rows,
+                ..SubagentSummary::default()
+            },
+            ..Summary::default()
+        }
+    }
+
+    #[test]
+    fn two_priced_models_sum_their_own_costs() {
+        let (s, f) = (b(1000, 200, 30, 4000, 500), b(10, 20, 30, 40, 50));
+        let sum = summary(
+            vec![row(
+                "a",
+                vec![("claude-sonnet-4-6", s), ("claude-fable-5", f)],
+            )],
+            vec![("claude-sonnet-4-6", s), ("claude-fable-5", f)],
+        );
+        let costs = price(&sum);
+        let want = sum_costs([
+            cost(&s, "claude-sonnet-4-6").unwrap_or(0.0),
+            cost(&f, "claude-fable-5").unwrap_or(0.0),
+        ]);
+        let r = costs.subagent_row(0).copied().unwrap_or_default();
+        assert_eq!(r.known.to_bits(), want.to_bits());
+        assert!(want > 0.0);
+        assert_eq!((r.priced_models, r.unpriced_models), (2, 0));
+        assert!(!r.is_floor() && !r.is_unpriced());
+    }
+
+    #[test]
+    fn an_unpriced_model_makes_the_row_a_floor_and_all_unpriced_is_unpriced() {
+        let (s, x) = (b(1000, 0, 0, 0, 500), b(5, 5, 5, 5, 5));
+        let sum = summary(
+            vec![
+                row(
+                    "floor",
+                    vec![("claude-sonnet-4-6", s), ("claude-nope-1", x)],
+                ),
+                row("none", vec![("claude-nope-1", x)]),
+            ],
+            vec![("claude-sonnet-4-6", s), ("claude-nope-1", x)],
+        );
+        let costs = price(&sum);
+        let f = costs.subagent_row(0).copied().unwrap_or_default();
+        assert!(f.is_floor() && !f.is_unpriced());
+        assert_eq!((f.priced_models, f.unpriced_models), (1, 1));
+        assert_eq!(
+            f.known.to_bits(),
+            cost(&s, "claude-sonnet-4-6").unwrap_or(0.0).to_bits()
+        );
+        let n = costs.subagent_row(1).copied().unwrap_or_default();
+        assert!(n.is_unpriced() && n.is_floor());
+        assert_eq!(n.known.to_bits(), 0.0_f64.to_bits());
+    }
+
+    #[test]
+    fn rows_sum_to_the_section_total_which_is_within_the_overall_total() {
+        let (s, f, x) = (
+            b(1000, 200, 30, 4000, 500),
+            b(10, 20, 30, 40, 50),
+            b(5, 5, 5, 5, 5),
+        );
+        let sum = summary(
+            vec![
+                row("a", vec![("claude-sonnet-4-6", s), ("claude-nope-1", x)]),
+                row("b", vec![("claude-fable-5", f)]),
+            ],
+            vec![
+                ("claude-sonnet-4-6", b(2000, 400, 60, 8000, 1000)),
+                ("claude-fable-5", f),
+                ("claude-nope-1", x),
+            ],
+        );
+        let costs = price(&sum);
+        assert_eq!(costs.subagent_rows.len(), 2);
+        let t = costs.subagent_total;
+        assert_eq!(
+            t.known.to_bits(),
+            sum_costs(costs.subagent_rows.iter().map(|r| r.known)).to_bits()
+        );
+        assert_eq!(
+            t.priced_models,
+            costs
+                .subagent_rows
+                .iter()
+                .map(|r| r.priced_models)
+                .sum::<u64>()
+        );
+        assert_eq!(t.unpriced_models, 1);
+        assert!(t.is_floor());
+        assert!(t.known > 0.0 && t.known <= costs.total);
+    }
+
+    #[test]
+    fn no_rows_means_no_row_costs() {
+        let costs = price(&Summary::default());
+        assert_eq!(costs.subagent_rows.len(), 0);
+        assert!(costs.subagent_total.is_unpriced());
+    }
+}
