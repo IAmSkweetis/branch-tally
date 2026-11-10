@@ -153,7 +153,7 @@ expected behaviour directly, next to the same issue number. `malformed-and-keyle
   both cache writes, cache read, output and thinking. Tokens follow the reference's
   `Record.tokens` (input + 5m + 1h + read + output; thinking is inside output). A `no_records`
   key must match zero Rust records. Cost, origin, first/last and agents are not compared. The
-  test pins the number of scenarios (14) and branch keys (35) compared, so it cannot go green
+  test pins the number of scenarios (19) and branch keys (47) compared, so it cannot go green
   on nothing, and fails on a scenario with a manifest but no goldens. Adding a scenario means
   bumping `EXPECTED_SCENARIOS`, `EXPECTED_BRANCH_KEYS` and `EXPECTED_CLAIM_PAIRS`.
 - Divergences are two lists in the test: `REFERENCE_DIVERGENT_SCENARIOS` (the manifest's
@@ -167,6 +167,35 @@ expected behaviour directly, next to the same issue number. `malformed-and-keyle
   and `branch-tally/tests/report.rs` (inline in `tests/render.rs`). Each test asserts the
   keys are present and consistent with the per-model costs, removes only those, then compares
   everything else to the goldens exactly. Markdown is not compared with the reference.
+- Output divergence #6 (subagent rollup): when `Summary.subagents` is not empty, the JSON report has
+  a top-level `subagents` object (`calls`, `tokens`, `dispatched`, `workspaces`, `worktrees`,
+  `unattributedCalls`, `unattributedTokens`, `unlinkedInTotalCalls`, `unlinkedInTotalTokens`,
+  `rows[]` of `workspace`, `workspaceKind` (`main`, `worktree` or `unknown`, the last for a missing
+  or outside-repo cwd), `isWorktree`, `subagent`, `model` (rows are keyed by workspace, subagent and
+  model, so one subagent on two models is two rows; `null` on a row from before the field existed),
+  `calls`, `tokens`, `agents`, the usage split `input`, `cacheWrite5m`, `cacheWrite1h`, `cacheRead`,
+  `output`, `thinking`, and `costUSD` with `costIsFloor`; the object itself has
+  `costUSD`/`costIsFloor` too. `costUSD` is `null` when nothing was priced, and the usage split is
+  `null` for a row with no per-model split) and the Markdown report has a `### Subagent usage`
+  section (a `Model` column after `Subagent`, usage columns like the per-model table, an `Est. cost`
+  column that shows a dash, "at least $X" or "$X", and `est. cost` on the totals line; `--no-cost`
+  drops both) between the footnote and the attribution details. Both are omitted when empty, so
+  `--strict` and reports without dispatched subagents are unchanged. The unattributed count spans
+  all attributed records, not only the branch, and the Markdown line says so. `rows[]`, `calls`,
+  `tokens`, `dispatched`, `workspaces` and `worktrees` count only verified roll-ups
+  (`BranchBasis::DispatcherRolledUp`). Unlinked records stay in the branch total through the session
+  claim; `unlinkedInTotal*` say how many (the Markdown line ends "N call(s) (T tokens) of them are
+  included in this report's total via session claim", or "none of them ..."). Every `Source` must
+  implement `dispatches` (no default body), so a wrapper cannot silently drop links. In the parity
+  test, `without_subagent_divergence` checks the `subagents` object adds up (`calls` and `tokens`
+  equal the sum of `rows`; absent in strict mode), removes it, and compares the rest, like
+  `PRICE_DIVERGENT_KEYS`. `report::build` takes the source's dispatches, so the claim report is
+  compared with the rollup applied. Strict mode stays raw, so every strict pair still equals the
+  goldens. In claim mode the rollup deliberately changes six pairs, listed in `CLAIM_DIVERGENCES`
+  (scenario, branch, issue `#6`, reason; a listed pair must still differ): `feat/x` in `subagent`,
+  `subagent-renamed-branch` and `subagent-switches-branch` (calls stamped elsewhere roll up to the
+  dispatcher), and `chore/x-part`, `chore/d1-data` and `chore/d2-data` (their records belong to the
+  dispatcher, so claim mode finds none). `DIVERGENCES`, the raw-stamp comparison, stays empty.
 - The bundled table was reseeded from LiteLLM's current rates (#5), not the reference's `PRICES`.
   Every model the goldens price (`claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-4-6`) has the
   same input, output and cache-read rate in both, so every cost still matches the goldens exactly

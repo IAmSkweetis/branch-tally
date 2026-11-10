@@ -1,0 +1,44 @@
+{
+  "feat/x": {
+    "branch": "feat/x",
+    "mode": "claim",
+    "models": {
+      "claude-test-1": {
+        "cacheRead": 5015,
+        "cacheWrite1h": 0,
+        "cacheWrite5m": 0,
+        "calls": 5,
+        "costUSD": null,
+        "input": 15,
+        "output": 515,
+        "thinking": 0
+      }
+    },
+    "sessions": [
+      {
+        "agents": [
+          "subagent"
+        ],
+        "calls": 3,
+        "first": "2026-01-01T00:00:00.000Z",
+        "id": "s1",
+        "last": "2026-01-01T00:04:00.000Z",
+        "origin": "main",
+        "tokens": 3318
+      },
+      {
+        "agents": [
+          "subagent"
+        ],
+        "calls": 2,
+        "first": "2026-01-01T00:05:00.000Z",
+        "id": "s2",
+        "last": "2026-01-01T00:07:00.000Z",
+        "origin": "main",
+        "tokens": 2227
+      }
+    ],
+    "totalCalls": 5,
+    "totalCostUSD": 0.0
+  }
+}

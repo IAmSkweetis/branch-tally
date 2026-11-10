@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::model::{Harness, Record};
+use crate::model::{Dispatch, Harness, Record};
 
 pub mod claude_code;
 
@@ -166,6 +166,19 @@ pub trait Source {
         roots: &[TranscriptRoot],
         sink: &mut dyn FnMut(Record),
     ) -> Result<ReadStats, SourceError>;
+
+    /// Every dispatch link found under `roots`: which parent session launched which subagent,
+    /// and the parent's raw branch stamp at that moment. Raw facts only; deciding what a stamp
+    /// means is attribution's job.
+    ///
+    /// There is deliberately no default body: a wrapper that forgot to forward this would
+    /// silently leave every subagent record unlinked. A source that cannot see dispatches returns
+    /// `Ok(Vec::new())` explicitly, and its subagent records are then counted as unattributed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SourceError`] if a file cannot be read. Bad lines are not errors.
+    fn dispatches(&self, roots: &[TranscriptRoot]) -> Result<Vec<Dispatch>, SourceError>;
 }
 
 #[cfg(test)]
@@ -221,6 +234,10 @@ mod tests {
             stats.duplicates_removed = 4;
             Ok(stats)
         }
+
+        fn dispatches(&self, _roots: &[TranscriptRoot]) -> Result<Vec<Dispatch>, SourceError> {
+            Ok(Vec::new())
+        }
     }
 
     #[test]
@@ -242,6 +259,12 @@ mod tests {
         assert_eq!(seen.len(), 2);
         assert_eq!(stats.records_emitted, 2);
         assert_eq!(source.harness(), Harness::ClaudeCode);
+    }
+
+    #[test]
+    fn a_source_with_no_dispatch_knowledge_says_so_explicitly() {
+        let source: Box<dyn Source> = Box::new(Fake);
+        assert_eq!(source.dispatches(&[]).unwrap(), Vec::new());
     }
 
     #[test]

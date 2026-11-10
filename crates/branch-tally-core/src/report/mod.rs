@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use crate::git::{Git, GitError, Worktree};
-use crate::model::{Costs, Mode, Record, Summary};
+use crate::model::{Costs, Dispatch, Mode, Record, Summary};
 use crate::pricing::PriceTable;
 use crate::sources::{ReadStats, RepoIdentity, Source, SourceError};
 
@@ -51,13 +51,21 @@ pub enum ReportError {
 /// `worktrees` is git's branch-holding worktree list, which includes the main checkout itself
 /// (kept as the reference does; #37).
 ///
+/// `dispatches` link dispatching sessions to their subagents. They roll subagent records up to
+/// the dispatcher's branch (#6) and are ignored in strict mode.
+///
 /// `table` prices the summary; the caller resolves it (override, cache or bundled).
 ///
 /// # Errors
 ///
 /// [`ReportError::NoRecords`] when nothing is selected.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a pure pipeline entry point; each input is a distinct stage input"
+)]
 pub fn build(
     records: Vec<Record>,
+    dispatches: &[Dispatch],
     read_stats: ReadStats,
     main_checkout: &Path,
     worktrees: &[Worktree],
@@ -71,7 +79,8 @@ pub fn build(
             .iter()
             .map(|w| (w.path.as_path(), w.branch.as_str())),
     );
-    let attributed = crate::attribution::attribute(records, &map, strict);
+    let attributed = crate::attribution::attribute(records, dispatches, &map, strict);
+    let unattributed = crate::model::SubagentSummary::count_unattributed(&attributed);
     let selected = crate::attribution::select(attributed, branch, strict);
     if selected.is_empty() {
         return Err(ReportError::NoRecords {
@@ -80,7 +89,7 @@ pub fn build(
         });
     }
     let mode = if strict { Mode::Strict } else { Mode::Claim };
-    let summary = crate::summary::summarize(branch, mode, &selected);
+    let summary = crate::summary::summarize(branch, mode, &selected, unattributed);
     let costs = crate::pricing::price(&summary, table);
     Ok(Report {
         branch: branch.to_owned(),
@@ -115,12 +124,14 @@ pub fn run(
     let roots = source.discover(projects_root, &RepoIdentity::new(&main_checkout))?;
     let mut records = Vec::new();
     let stats = source.read(&roots, &mut |r| records.push(r))?;
+    let dispatches = source.dispatches(&roots)?;
     let (worktrees, unavailable) = match git.worktrees(&main_checkout) {
         Ok(w) => (w, None),
         Err(e) => (Vec::new(), Some(e)),
     };
     let mut report = build(
         records,
+        &dispatches,
         stats,
         &main_checkout,
         &worktrees,

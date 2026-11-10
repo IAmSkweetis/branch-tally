@@ -9,7 +9,7 @@
 use std::cmp::Reverse;
 use std::fmt::Write as _;
 
-use crate::model::{Costs, PriceTableSource, Summary};
+use crate::model::{Costs, PriceTableSource, RowCost, SubagentSummary, Summary};
 
 /// Python `json.dumps` string escaping with `ensure_ascii=True`.
 fn string(s: &str) -> String {
@@ -91,6 +91,107 @@ fn repr(x: f64) -> String {
     }
 }
 
+/// A subagent cost as JSON: the number (`null` when nothing was priced or there is no entry) and
+/// whether it is only a floor.
+fn row_cost(cost: Option<&RowCost>) -> (String, bool) {
+    match cost {
+        Some(c) if !c.is_unpriced() => (float(c.known), c.is_floor()),
+        _ => ("null".to_owned(), false),
+    }
+}
+
+/// The `subagents` object (#6). Not in the reference: omitted when empty, so strict mode and
+/// reports without dispatched subagents keep the reference's shape. Totals come from the
+/// accessors and count rolled-up records only; `unattributed*` span every attributed record, not
+/// only this branch's; `unlinkedInTotal*` are the unlinked calls inside this report's total.
+fn subagents(sub: &SubagentSummary, costs: &Costs, o: &mut String) {
+    if sub.is_empty() {
+        return;
+    }
+    o.push_str("  \"subagents\": {\n");
+    let _ = writeln!(o, "    \"calls\": {},", sub.calls());
+    let _ = writeln!(o, "    \"tokens\": {},", sub.tokens());
+    let _ = writeln!(o, "    \"dispatched\": {},", sub.dispatched());
+    let _ = writeln!(o, "    \"workspaces\": {},", sub.workspaces());
+    let _ = writeln!(o, "    \"worktrees\": {},", sub.worktrees());
+    let _ = writeln!(o, "    \"unattributedCalls\": {},", sub.unattributed_calls);
+    let _ = writeln!(
+        o,
+        "    \"unattributedTokens\": {},",
+        sub.unattributed_tokens
+    );
+    let _ = writeln!(
+        o,
+        "    \"unlinkedInTotalCalls\": {},",
+        sub.unlinked_in_total_calls
+    );
+    let _ = writeln!(
+        o,
+        "    \"unlinkedInTotalTokens\": {},",
+        sub.unlinked_in_total_tokens
+    );
+    let (cost, floor) = row_cost(Some(&costs.subagent_total));
+    let _ = writeln!(o, "    \"costUSD\": {cost},");
+    let _ = writeln!(o, "    \"costIsFloor\": {floor},");
+    if sub.rows.is_empty() {
+        o.push_str("    \"rows\": []\n");
+    } else {
+        o.push_str("    \"rows\": [\n");
+        for (i, r) in sub.rows.iter().enumerate() {
+            o.push_str("      {\n");
+            let _ = writeln!(
+                o,
+                "        \"workspace\": {},",
+                string(&r.workspace.label())
+            );
+            let _ = writeln!(
+                o,
+                "        \"workspaceKind\": {},",
+                string(r.workspace.kind())
+            );
+            let _ = writeln!(o, "        \"isWorktree\": {},", r.workspace.is_worktree());
+            let _ = writeln!(o, "        \"subagent\": {},", string(&r.subagent));
+            // Empty only on a row from before rows carried a model: unknown, so null.
+            let model = if r.model.is_empty() {
+                "null".to_owned()
+            } else {
+                string(&r.model)
+            };
+            let _ = writeln!(o, "        \"model\": {model},");
+            let _ = writeln!(o, "        \"calls\": {},", r.calls);
+            let _ = writeln!(o, "        \"tokens\": {},", r.tokens);
+            let _ = writeln!(o, "        \"agents\": {},", r.agent_ids.len());
+            // Without a per-model split (older data) the usage is unknown, not zero.
+            let t = r.total();
+            for (key, v) in [
+                ("input", t.input),
+                ("cacheWrite5m", t.cache_write_5m),
+                ("cacheWrite1h", t.cache_write_1h),
+                ("cacheRead", t.cache_read),
+                ("output", t.output),
+                ("thinking", t.thinking),
+            ] {
+                let v = if r.by_model.is_empty() {
+                    "null".to_owned()
+                } else {
+                    v.to_string()
+                };
+                let _ = writeln!(o, "        \"{key}\": {v},");
+            }
+            let (cost, floor) = row_cost(costs.subagent_row(i));
+            let _ = writeln!(o, "        \"costUSD\": {cost},");
+            let _ = writeln!(o, "        \"costIsFloor\": {floor}");
+            o.push_str(if i + 1 == sub.rows.len() {
+                "      }\n"
+            } else {
+                "      },\n"
+            });
+        }
+        o.push_str("    ]\n");
+    }
+    o.push_str("  },\n");
+}
+
 /// The report as JSON (`as_json` in the reference).
 ///
 /// `totalCalls` is `Summary::total.calls` (the reference's `len(mine)`, the same number as the
@@ -138,6 +239,8 @@ pub fn json(summary: &Summary, costs: &Costs) -> String {
     let _ = writeln!(o, "    \"asOf\": {as_of},");
     let _ = writeln!(o, "    \"source\": \"{source}\"");
     o.push_str("  },\n");
+
+    subagents(&summary.subagents, costs, &mut o);
 
     if sessions.is_empty() {
         o.push_str("  \"sessions\": [],\n");

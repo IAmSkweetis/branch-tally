@@ -1,0 +1,33 @@
+{
+  "feat/x": {
+    "branch": "feat/x",
+    "mode": "strict",
+    "models": {
+      "claude-test-1": {
+        "cacheRead": 3006,
+        "cacheWrite1h": 0,
+        "cacheWrite5m": 0,
+        "calls": 3,
+        "costUSD": null,
+        "input": 6,
+        "output": 306,
+        "thinking": 0
+      }
+    },
+    "sessions": [
+      {
+        "agents": [
+          "subagent"
+        ],
+        "calls": 3,
+        "first": "2026-01-01T00:00:00.000Z",
+        "id": "s1",
+        "last": "2026-01-01T00:03:00.000Z",
+        "origin": "main",
+        "tokens": 3318
+      }
+    ],
+    "totalCalls": 3,
+    "totalCostUSD": 0.0
+  }
+}

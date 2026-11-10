@@ -9,7 +9,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::model::{
-    AttributedRecord, BranchBasis, Origin, Record, SelectedRecord, Selection, SessionId,
+    AgentId, AttributedRecord, BranchBasis, Dispatch, Origin, Record, SelectedRecord, Selection,
+    SessionId, SubagentTags, Workspace,
 };
 
 /// The branch the reference reports for a record with no stamp.
@@ -25,6 +26,7 @@ const NONE: &str = "(none)";
 pub struct WorktreeMap {
     by_key: HashMap<String, String>,
     main_slug: String,
+    main_components: Vec<String>,
 }
 
 impl WorktreeMap {
@@ -46,6 +48,7 @@ impl WorktreeMap {
         Self {
             by_key,
             main_slug: slug_for(main_checkout).to_lowercase(),
+            main_components: components(&path_text(main_checkout)),
         }
     }
 
@@ -99,9 +102,14 @@ fn is_feature(branch: &str) -> bool {
 #[must_use]
 pub fn attribute(
     records: impl IntoIterator<Item = Record>,
+    dispatches: &[Dispatch],
     map: &WorktreeMap,
     strict: bool,
 ) -> Vec<AttributedRecord> {
+    let mut links: HashMap<(&SessionId, &AgentId), &Dispatch> = HashMap::new();
+    for d in dispatches {
+        links.entry((&d.session_id, &d.agent_id)).or_insert(d);
+    }
     records
         .into_iter()
         .map(|record| {
@@ -110,18 +118,100 @@ pub fn attribute(
                 .as_deref()
                 .filter(|b| !b.is_empty())
                 .unwrap_or(NONE);
-            let (branch, basis) = if strict {
-                (stamp.to_owned(), BranchBasis::Stamped)
+            let (branch, basis, subagent) = if strict {
+                (stamp.to_owned(), BranchBasis::Stamped, None)
+            } else if let Some(parent) = &record.parent_session {
+                roll_up(&record, parent, stamp, &links, map)
             } else {
-                recover(&record, stamp, map)
+                let (branch, basis) = recover(&record, stamp, map);
+                (branch, basis, None)
             };
             AttributedRecord {
                 record,
                 branch,
                 basis,
+                subagent,
             }
         })
         .collect()
+}
+
+/// Claim-mode handling of a record from a subagent file. The branch is the dispatcher's raw
+/// stamp at dispatch time when the dispatch link is found and that stamp is usable; otherwise
+/// the record keeps its raw stamp and is [`BranchBasis::SubagentUnlinked`]. Neither path
+/// consults the live worktree list.
+fn roll_up(
+    record: &Record,
+    parent: &SessionId,
+    stamp: &str,
+    links: &HashMap<(&SessionId, &AgentId), &Dispatch>,
+    map: &WorktreeMap,
+) -> (String, BranchBasis, Option<SubagentTags>) {
+    let tags = record.agent_id.as_ref().map(|id| SubagentTags {
+        workspace: record
+            .cwd
+            .as_deref()
+            .and_then(|cwd| workspace_of(cwd, map))
+            .unwrap_or(Workspace::Unknown),
+        subagent: record
+            .attribution
+            .agent
+            .clone()
+            .filter(|a| !a.is_empty())
+            .unwrap_or_else(|| id.to_string()),
+        agent_id: id.clone(),
+    });
+    let dispatcher_branch = record
+        .agent_id
+        .as_ref()
+        .and_then(|id| links.get(&(parent, id)))
+        .and_then(|d| d.git_branch.as_deref())
+        .filter(|b| !b.is_empty() && !b.starts_with("worktree-agent-"));
+    match dispatcher_branch {
+        Some(branch) => (branch.to_owned(), BranchBasis::DispatcherRolledUp, tags),
+        None => (stamp.to_owned(), BranchBasis::SubagentUnlinked, tags),
+    }
+}
+
+/// Path components for comparison: either separator, a Git-Bash `/d/...` drive form read as
+/// `d:`, empty components dropped. Case is kept; callers compare case-insensitively.
+fn components(text: &str) -> Vec<String> {
+    let text = text.replace('\\', "/");
+    let mut parts: Vec<String> = text
+        .split('/')
+        .filter(|c| !c.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if text.starts_with('/')
+        && parts.len() > 1
+        && parts[0].len() == 1
+        && parts[0].chars().all(|c| c.is_ascii_alphabetic())
+    {
+        parts[0].push(':');
+    }
+    parts
+}
+
+/// Where a subagent ran, from its raw cwd: a worktree named by the directory under
+/// `.claude/worktrees/`, or the main checkout. `None` when the cwd is outside both (never
+/// guessed as main; the caller tags it [`Workspace::Unknown`]).
+fn workspace_of(cwd: &str, map: &WorktreeMap) -> Option<Workspace> {
+    let parts = components(&path_text(Path::new(cwd)));
+    let worktree = parts.windows(3).find_map(|w| {
+        (w[0].eq_ignore_ascii_case(".claude") && w[1].eq_ignore_ascii_case("worktrees"))
+            .then(|| w[2].clone())
+    });
+    if let Some(name) = worktree {
+        return Some(Workspace::Worktree(name));
+    }
+    let main = &map.main_components;
+    let inside = !main.is_empty()
+        && parts.len() >= main.len()
+        && parts
+            .iter()
+            .zip(main)
+            .all(|(a, b)| a.eq_ignore_ascii_case(b));
+    inside.then_some(Workspace::Main)
 }
 
 /// Non-strict recovery: a known `worktree-agent-` stamp, else `(none)` plus an origin lookup.

@@ -1,5 +1,6 @@
 //! Integration tests for `summary`, built from in-code records (no transcript content).
 
+use branch_tally_core::model::{AgentId, SubagentSummary, SubagentTags, Workspace};
 use branch_tally_core::model::{
     AttributedRecord, BranchBasis, Harness, Mode, Origin, Record, RequestId, SelectedRecord,
     Selection, SessionId, Summary, Usage,
@@ -23,6 +24,7 @@ fn rec(session: &str, branch: &str) -> Rec {
             record: r,
             branch: branch.to_owned(),
             basis: BranchBasis::Stamped,
+            subagent: None,
         },
         kept_by: Selection::Exact,
     })
@@ -66,12 +68,12 @@ impl Rec {
 
 fn run(recs: Vec<Rec>) -> Summary {
     let v: Vec<SelectedRecord> = recs.into_iter().map(|r| r.0).collect();
-    summarize("feat/x", Mode::Claim, &v)
+    summarize("feat/x", Mode::Claim, &v, (0, 0))
 }
 
 #[test]
 fn carries_branch_and_mode() {
-    let s = summarize("feat/x", Mode::Strict, &[]);
+    let s = summarize("feat/x", Mode::Strict, &[], (0, 0));
     assert_eq!(s.branch, "feat/x");
     assert_eq!(s.mode, Mode::Strict);
     assert!(s.by_model.is_empty() && s.sessions.is_empty());
@@ -249,4 +251,275 @@ fn unknown_origin_is_labelled_and_not_counted_as_a_worktree() {
     let s = run(vec![rec("s", "feat/x").origin(None)]);
     assert_eq!(s.sessions[0].1.origin, "unknown");
     assert_eq!(s.footnote.worktree_sessions, 0);
+}
+
+fn sub(mut r: Rec, ws: Workspace, name: &str, id: &str) -> Rec {
+    r.0.attributed.basis = BranchBasis::DispatcherRolledUp;
+    r.0.attributed.subagent = Some(SubagentTags {
+        workspace: ws,
+        subagent: name.to_owned(),
+        agent_id: AgentId::new(id),
+    });
+    r
+}
+
+fn run_with(recs: Vec<Rec>, mode: Mode, un: (u64, u64)) -> Summary {
+    let v: Vec<SelectedRecord> = recs.into_iter().map(|r| r.0).collect();
+    summarize("feat/x", mode, &v, un)
+}
+
+#[test]
+fn subagent_rows_merge_by_workspace_and_name_in_first_seen_order() {
+    let recs = vec![
+        sub(
+            rec("s", "feat/x").usage([10, 0, 0, 0, 0], None),
+            Workspace::worktree("wt-a"),
+            "writer",
+            "a1",
+        ),
+        sub(
+            rec("s", "feat/x").usage([0, 0, 0, 0, 5], None),
+            Workspace::Main,
+            "a9",
+            "a9",
+        ),
+        sub(
+            rec("s", "feat/x").usage([1, 0, 0, 0, 1], None),
+            Workspace::worktree("WT-A"),
+            "writer",
+            "a2",
+        ),
+        rec("s", "feat/x").usage([100, 0, 0, 0, 0], None),
+    ];
+    let s = run_with(recs, Mode::Claim, (2, 30));
+    let rows = &s.subagents.rows;
+    assert_eq!(rows.len(), 2);
+    assert_eq!(
+        (rows[0].subagent.as_str(), rows[0].calls, rows[0].tokens),
+        ("writer", 2, 12)
+    );
+    assert_eq!(rows[0].agent_ids.len(), 2);
+    assert_eq!(
+        (rows[1].workspace.clone(), rows[1].calls, rows[1].tokens),
+        (Workspace::Main, 1, 5)
+    );
+    assert_eq!(
+        (
+            s.subagents.unattributed_calls,
+            s.subagents.unattributed_tokens
+        ),
+        (2, 30)
+    );
+    assert_eq!(s.total.calls, 4);
+}
+
+#[test]
+fn subagent_rows_split_by_model_keep_exact_usage_and_by_model_totals_are_unchanged() {
+    let wt = || Workspace::worktree("wt-a");
+    let recs = vec![
+        sub(
+            rec("s", "feat/x")
+                .model(Some("m1"))
+                .usage([10, 1, 2, 3, 4], Some(2)),
+            wt(),
+            "writer",
+            "a1",
+        ),
+        sub(
+            rec("s", "feat/x")
+                .model(Some("m2"))
+                .usage([20, 0, 0, 5, 6], None),
+            wt(),
+            "writer",
+            "a1",
+        ),
+        sub(
+            rec("s", "feat/x")
+                .model(Some("m1"))
+                .usage([1, 0, 0, 0, 1], Some(1)),
+            wt(),
+            "writer",
+            "a2",
+        ),
+        rec("s", "feat/x")
+            .model(Some("m1"))
+            .usage([100, 0, 0, 0, 0], None),
+    ];
+    let s = run_with(recs, Mode::Claim, (0, 0));
+    let rows = &s.subagents.rows;
+    let models: Vec<&str> = rows.iter().map(|r| r.model.as_str()).collect();
+    assert_eq!(models, ["m1", "m2"]);
+    let row = &rows[0];
+    assert_eq!(row.by_model.len(), 1);
+    let m1 = &row.by_model[0].1;
+    assert_eq!(
+        (
+            m1.input,
+            m1.cache_write_5m,
+            m1.cache_write_1h,
+            m1.cache_read
+        ),
+        (11, 1, 2, 3)
+    );
+    assert_eq!((m1.output, m1.thinking, m1.calls), (5, 3, 2));
+    assert_eq!(rows[1].by_model[0].1.calls, 1);
+    // Each row's bucket agrees with its calls/tokens, and the rows sum to the old merged row.
+    let t = row.total();
+    assert_eq!((t.calls, t.tokens()), (row.calls, row.tokens));
+    assert_eq!((t.input, t.output, t.thinking), (11, 5, 3));
+    assert_eq!(rows.iter().map(|r| r.total().input).sum::<u64>(), 31);
+    assert_eq!(s.subagents.dispatched(), 2);
+    // by_model totals are untouched by the breakdown.
+    let m = |k: &str| s.by_model.iter().find(|(n, _)| n == k).unwrap().1;
+    assert_eq!((m("m1").input, m("m1").calls), (111, 3));
+    assert_eq!((m("m2").input, m("m2").calls), (20, 1));
+    assert_eq!(s.total.calls, 4);
+}
+
+#[test]
+fn strict_mode_leaves_subagents_empty() {
+    let recs = vec![sub(rec("s", "feat/x"), Workspace::Main, "a", "a")];
+    let s = run_with(recs, Mode::Strict, (3, 9));
+    assert_eq!(s.subagents, SubagentSummary::default());
+}
+
+#[test]
+fn rows_hold_only_rolled_up_records_and_unlinked_ones_are_counted_separately() {
+    let recs = vec![
+        sub(
+            rec("s", "feat/x").usage([10, 0, 0, 0, 0], None),
+            Workspace::worktree("wt-a"),
+            "writer",
+            "a1",
+        ),
+        unlinked(
+            rec("s", "feat/x").usage([0, 0, 0, 0, 7], None),
+            Workspace::Unknown,
+            "n1",
+            "n1",
+        ),
+        unlinked(
+            rec("s", "feat/x").usage([3, 0, 0, 0, 0], None),
+            Workspace::Unknown,
+            "n1",
+            "n1",
+        ),
+    ];
+    let s = run_with(recs, Mode::Claim, (2, 10));
+    let sub = &s.subagents;
+    assert_eq!(sub.rows.len(), 1, "unlinked records must not make rows");
+    assert_eq!((sub.calls(), sub.tokens(), sub.dispatched()), (1, 10, 1));
+    assert_eq!((sub.unattributed_calls, sub.unattributed_tokens), (2, 10));
+    assert_eq!(
+        (sub.unlinked_in_total_calls, sub.unlinked_in_total_tokens),
+        (2, 10)
+    );
+    // They stay in the branch total.
+    assert_eq!(s.total.calls, 3);
+}
+
+#[test]
+fn unlinked_in_total_counts_only_selected_records_not_the_repository_wide_figure() {
+    // Repository-wide there are 4 unlinked calls, but none was selected for this branch.
+    let s = run_with(vec![rec("s", "feat/x")], Mode::Claim, (4, 40));
+    assert_eq!(s.subagents.unattributed_calls, 4);
+    assert_eq!(s.subagents.unlinked_in_total_calls, 0);
+    assert_eq!(s.subagents.unlinked_in_total_tokens, 0);
+}
+
+fn unlinked(mut r: Rec, ws: Workspace, name: &str, id: &str) -> Rec {
+    r.0.attributed.basis = BranchBasis::SubagentUnlinked;
+    r.0.attributed.subagent = Some(SubagentTags {
+        workspace: ws,
+        subagent: name.to_owned(),
+        agent_id: AgentId::new(id),
+    });
+    r
+}
+
+#[test]
+fn unattributed_is_reported_even_without_selected_subagents() {
+    let s = run_with(vec![rec("s", "feat/x")], Mode::Claim, (4, 40));
+    assert_eq!(s.subagents.rows.len(), 0);
+    assert_eq!(
+        (
+            s.subagents.unattributed_calls,
+            s.subagents.unattributed_tokens
+        ),
+        (4, 40)
+    );
+}
+
+#[test]
+fn a_subagent_with_two_models_is_separate_rows_but_one_dispatched_agent_and_same_totals() {
+    let wt = || Workspace::worktree("wt-a");
+    let recs = vec![
+        sub(
+            rec("s", "feat/x")
+                .model(Some("m1"))
+                .usage([10, 0, 0, 0, 1], None),
+            wt(),
+            "writer",
+            "a1",
+        ),
+        sub(
+            rec("s", "feat/x")
+                .model(Some("m2"))
+                .usage([20, 0, 0, 0, 2], None),
+            wt(),
+            "writer",
+            "a1",
+        ),
+        sub(
+            rec("s", "feat/x")
+                .model(Some("m1"))
+                .usage([5, 0, 0, 0, 1], None),
+            wt(),
+            "writer",
+            "a1",
+        ),
+        sub(
+            rec("s", "feat/x").model(None).usage([7, 0, 0, 0, 0], None),
+            wt(),
+            "writer",
+            "a1",
+        ),
+        sub(
+            rec("s", "feat/x")
+                .model(Some("m1"))
+                .usage([1, 0, 0, 0, 0], None),
+            Workspace::Main,
+            "writer",
+            "a2",
+        ),
+    ];
+    let s = run_with(recs, Mode::Claim, (0, 0));
+    let sub = &s.subagents;
+    let keys: Vec<(String, &str, u64)> = sub
+        .rows
+        .iter()
+        .map(|r| (r.workspace.label(), r.model.as_str(), r.calls))
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            ("wt-a".to_owned(), "m1", 2),
+            ("wt-a".to_owned(), "m2", 1),
+            ("wt-a".to_owned(), "unknown", 1),
+            ("main".to_owned(), "m1", 1),
+        ]
+    );
+    for r in &sub.rows {
+        assert_eq!(r.by_model.len(), 1);
+        assert_eq!(r.by_model[0].0, r.model);
+        assert_eq!((r.total().calls, r.total().tokens()), (r.calls, r.tokens));
+    }
+    assert_eq!(
+        (sub.calls(), sub.tokens()),
+        (5, 10 + 1 + 20 + 2 + 5 + 1 + 7 + 1)
+    );
+    assert_eq!(
+        (sub.dispatched(), sub.workspaces(), sub.worktrees()),
+        (2, 2, 1)
+    );
 }

@@ -1,0 +1,93 @@
+{
+  "chore/x-part": {
+    "branch": "chore/x-part",
+    "mode": "strict",
+    "models": {
+      "claude-test-1": {
+        "cacheRead": 1004,
+        "cacheWrite1h": 0,
+        "cacheWrite5m": 0,
+        "calls": 1,
+        "costUSD": null,
+        "input": 4,
+        "output": 104,
+        "thinking": 0
+      }
+    },
+    "sessions": [
+      {
+        "agents": [
+          "subagent"
+        ],
+        "calls": 1,
+        "first": "2026-01-01T00:04:00.000Z",
+        "id": "s1",
+        "last": "2026-01-01T00:04:00.000Z",
+        "origin": "main",
+        "tokens": 1112
+      }
+    ],
+    "totalCalls": 1,
+    "totalCostUSD": 0.0
+  },
+  "feat/x": {
+    "branch": "feat/x",
+    "mode": "strict",
+    "models": {
+      "claude-test-1": {
+        "cacheRead": 1001,
+        "cacheWrite1h": 0,
+        "cacheWrite5m": 0,
+        "calls": 1,
+        "costUSD": null,
+        "input": 1,
+        "output": 101,
+        "thinking": 0
+      }
+    },
+    "sessions": [
+      {
+        "agents": [],
+        "calls": 1,
+        "first": "2026-01-01T00:00:00.000Z",
+        "id": "s1",
+        "last": "2026-01-01T00:00:00.000Z",
+        "origin": "main",
+        "tokens": 1103
+      }
+    ],
+    "totalCalls": 1,
+    "totalCostUSD": 0.0
+  },
+  "worktree-agent-e1": {
+    "branch": "worktree-agent-e1",
+    "mode": "strict",
+    "models": {
+      "claude-test-1": {
+        "cacheRead": 2005,
+        "cacheWrite1h": 0,
+        "cacheWrite5m": 0,
+        "calls": 2,
+        "costUSD": null,
+        "input": 5,
+        "output": 205,
+        "thinking": 0
+      }
+    },
+    "sessions": [
+      {
+        "agents": [
+          "subagent"
+        ],
+        "calls": 2,
+        "first": "2026-01-01T00:02:00.000Z",
+        "id": "s1",
+        "last": "2026-01-01T00:03:00.000Z",
+        "origin": "main",
+        "tokens": 2215
+      }
+    ],
+    "totalCalls": 2,
+    "totalCostUSD": 0.0
+  }
+}

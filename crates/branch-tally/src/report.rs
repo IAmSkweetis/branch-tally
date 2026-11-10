@@ -204,6 +204,13 @@ impl Source for CheckedSource {
     ) -> Result<ReadStats, SourceError> {
         self.inner.read(roots, sink)
     }
+
+    fn dispatches(
+        &self,
+        roots: &[TranscriptRoot],
+    ) -> Result<Vec<branch_tally_core::model::Dispatch>, SourceError> {
+        self.inner.dispatches(roots)
+    }
 }
 
 /// Writes UTF-8 bytes verbatim: no newline translation, whatever the console codepage.

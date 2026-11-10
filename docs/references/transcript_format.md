@@ -121,6 +121,38 @@ What follows for attribution:
 - An orchestrator session commonly touches several work branches (session `ae8c842c` touched four),
   so "one session, one branch" doesn't hold (#7).
 
+## The dispatch link
+
+Observed 2026-11-09, Claude Code 2.1.3xx, by probing real transcripts for ids and key names only:
+every `<slug>/<session>/subagents/agent-<id>.jsonl` (33 of 33) is linked from its parent session
+file by a `type: "user"` line carrying a `toolUseResult` **object** with `agentId`. The same line
+has `gitBranch`, `timestamp`, `sessionId`, `cwd` and `sourceToolAssistantUUID` (the uuid of the
+assistant record holding the Agent `tool_use`; its `gitBranch` matched the user line's in 33 of
+33). All 33 were async launches (`toolUseResult.isAsync: true`) at spawn depth 1. The line has no
+`message.usage`, so it is not a usage record.
+
+- `toolUseResult` also holds `prompt`, `description` and `outputFile`: **content**. The parser
+  deserializes `toolUseResult.agentId` only. For other tools `toolUseResult` is usually a string
+  or an object without `agentId`; neither is a dispatch.
+- The source reports `Dispatch { session_id, agent_id, git_branch, ts }` per line: `git_branch` is
+  the line's raw stamp (possibly absent, possibly `worktree-agent-<id>`); deciding what that means
+  is attribution's.
+- Dispatch lines are also looked for **inside subagent files**, since a subagent could dispatch its
+  own subagents (not yet seen in real data; depth 1 only on 2026-11-09). The dispatch session is
+  the line's own `sessionId` (the stamped one, i.e. the top-level parent's, in a subagent file),
+  else the file's session as for records. Nested dispatch is reported as written and not chased:
+  the nested subagent's dispatcher stamp is the first subagent's raw stamp.
+- A `(session, agent)` pair seen twice (replayed history) is reported once, first in read order.
+- A malformed line, a non-object result, a missing/empty/non-string `agentId`: no dispatch, no
+  panic, no `ReadStats` counter. The subagent it would have linked stays unlinked, which attribution
+  counts as unattributed. Such unlinked records are never rows in the subagent breakdown; the
+  report states how many of them sit inside its total via the session claim.
+- `Source::dispatches` has no default body. A wrapper that did not forward it would leave every
+  subagent unlinked without any error, so each implementor must provide it.
+- `agent-<id>.meta.json` beside each file is not read.
+
+Fixtures: `subagent-*` scenarios; `malformed-and-keyless` holds the non-dispatch shapes.
+
 ## Related pages
 
 - [testing.md](testing.md#fixtures): turning these shapes into scrubbed fixtures

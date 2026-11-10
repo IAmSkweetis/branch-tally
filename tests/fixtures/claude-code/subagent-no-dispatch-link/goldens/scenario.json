@@ -1,0 +1,7 @@
+{
+  "repo_slug": "C--repo",
+  "worktrees": [],
+  "claim_branches": [
+    "feat/x"
+  ]
+}

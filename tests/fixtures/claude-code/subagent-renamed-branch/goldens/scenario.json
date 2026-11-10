@@ -1,0 +1,13 @@
+{
+  "repo_slug": "C--repo",
+  "worktrees": [
+    {
+      "name": "agent-e1",
+      "branch": "chore/x-part"
+    }
+  ],
+  "claim_branches": [
+    "feat/x",
+    "chore/x-part"
+  ]
+}

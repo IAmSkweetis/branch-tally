@@ -1,0 +1,1 @@
+{"type":"assistant","requestId":"req_g2a","uuid":"u_req_g2a","sessionId":"s1","timestamp":"2026-01-01T00:04:00.000Z","cwd":"C:\\repo\\.claude\\worktrees\\agent-g2","gitBranch":"worktree-agent-g2","isSidechain":true,"agentId":"g2","message":{"model":"claude-test-1","content":"PLACEHOLDER","usage":{"input_tokens":3,"output_tokens":103,"cache_read_input_tokens":1003}}}

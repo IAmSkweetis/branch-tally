@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::Record;
+use super::{Record, SubagentTags};
 
 /// How an [`AttributedRecord`]'s branch was decided. Governance II: a recovered branch is a
 /// heuristic and the report must be able to say so.
@@ -18,6 +18,13 @@ pub enum BranchBasis {
     WorktreeRecovered,
     /// A missing stamp was replaced by the branch the record's transcript-root worktree holds.
     OriginRecovered,
+    /// A dispatched subagent's record, assigned the branch its dispatcher was on at dispatch
+    /// time (the parent record's stamp), whatever the subagent's own stamp said.
+    DispatcherRolledUp,
+    /// A subagent record with no usable dispatch link (no link found, or the dispatcher's stamp
+    /// was missing or itself a `worktree-agent-<id>`). It keeps its raw stamp and is **counted
+    /// as unattributed**, never guessed.
+    SubagentUnlinked,
 }
 
 /// A record with the branch attribution assigned to it.
@@ -32,6 +39,12 @@ pub struct AttributedRecord {
     pub branch: String,
     /// How `branch` was decided.
     pub basis: BranchBasis,
+    /// Workspace and subagent tags. `Some` for every claim-mode record from a subagent file that
+    /// carries an agent id (rolled up or unlinked; a missing or outside-repo cwd is
+    /// [`super::Workspace::Unknown`]). `None` for other records, and in strict mode, which keeps
+    /// raw stamps. Absent in older serialized data.
+    #[serde(default)]
+    pub subagent: Option<SubagentTags>,
 }
 
 /// Why a record was kept for the requested branch (`select` in the reference).

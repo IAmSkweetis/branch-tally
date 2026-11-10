@@ -29,8 +29,12 @@ fn scenarios_with(golden: &str) -> Vec<String> {
 
 /// Runs `report <branch> --json [extra]` for every branch in the scenario's golden and compares
 /// the parsed payload, or the no-records exit, with what the Python reference produced.
-fn check_against_golden(golden: &str, extra: &[&str]) -> usize {
+///
+/// `strict` is whether the run is `--strict`. In claim mode the listed `CLAIM_DIVERGENCES` pairs
+/// must still differ from the reference and every other pair must equal it (#6).
+fn check_against_golden(golden: &str, extra: &[&str], strict: bool) -> usize {
     let mut compared = 0;
+    let mut divergences_hit = 0;
     for name in scenarios_with(golden) {
         let world = World::scenario(&name);
         let text =
@@ -55,6 +59,29 @@ fn check_against_golden(golden: &str, extra: &[&str]) -> usize {
                     "{name} {branch}"
                 );
             } else {
+                let divergence = if strict {
+                    None
+                } else {
+                    CLAIM_DIVERGENCES
+                        .iter()
+                        .find(|(s, b, _, _)| *s == name && *b == branch.as_str())
+                };
+                if divergence.is_some() && out.status.code() == Some(1) {
+                    // The rollup moved every record of this branch to its dispatcher, so claim
+                    // mode finds none: the no-records exit differs from the reference's payload.
+                    assert!(stdout(&out).is_empty(), "{name} {branch}");
+                    assert_eq!(
+                        stderr(&out),
+                        format!(
+                            "No transcript records found for branch {}{NO_RECORDS_TAIL}\n",
+                            py_repr(branch)
+                        ),
+                        "{name} {branch}"
+                    );
+                    divergences_hit += 1;
+                    compared += 1;
+                    continue;
+                }
                 assert_eq!(
                     out.status.code(),
                     Some(0),
@@ -64,12 +91,96 @@ fn check_against_golden(golden: &str, extra: &[&str]) -> usize {
                 let mut got: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
                 world.normalize(&mut got);
                 strip_price_divergences(&mut got);
-                assert_eq!(&got, want, "{name} {branch}");
+                strip_subagent_divergence(&mut got, strict);
+                match divergence {
+                    None => assert_eq!(&got, want, "{name} {branch}"),
+                    Some((_, _, issue, _)) => {
+                        assert_ne!(
+                            &got, want,
+                            "{name} {branch}: listed as a divergence ({issue}) but now matches; \
+                             remove it"
+                        );
+                        divergences_hit += 1;
+                    }
+                }
             }
             compared += 1;
         }
     }
+    if !strict {
+        assert_eq!(divergences_hit, CLAIM_DIVERGENCES.len());
+    }
     compared
+}
+
+/// Deliberate divergences of the claim-mode report from the reference (#6), as `(scenario,
+/// branch, issue, reason)`. Strict mode stays raw and never diverges. This is a copy of
+/// `CLAIM_DIVERGENCES` in `branch-tally-core/tests/parity_claude_code.rs` (that list is private to
+/// a test target); keep the two identical.
+const CLAIM_DIVERGENCES: &[(&str, &str, &str, &str)] = &[
+    (
+        "subagent",
+        "feat/x",
+        "#6",
+        "dispatched subagent calls the reference stamped elsewhere roll up to the dispatcher",
+    ),
+    (
+        "subagent-renamed-branch",
+        "feat/x",
+        "#6",
+        "the subagent's calls, including the one stamped after it renamed its branch, roll up \
+         to the dispatcher's feat/x",
+    ),
+    (
+        "subagent-renamed-branch",
+        "chore/x-part",
+        "#6",
+        "its only call belongs to a dispatched subagent, so it rolls up to feat/x and the \
+         renamed branch has no records of its own in claim mode",
+    ),
+    (
+        "subagent-switches-branch",
+        "feat/x",
+        "#6",
+        "all eight subagent calls roll up to the dispatcher, including those stamped with the \
+         subagents' own branches",
+    ),
+    (
+        "subagent-switches-branch",
+        "chore/d1-data",
+        "#6",
+        "the subagent's calls roll up to feat/x, so this branch has no records of its own in \
+         claim mode",
+    ),
+    (
+        "subagent-switches-branch",
+        "chore/d2-data",
+        "#6",
+        "the subagent's calls roll up to feat/x, so this branch has no records of its own in \
+         claim mode",
+    ),
+];
+
+/// Checks the #6 `subagents` object, when present, adds up on its own terms and is absent in
+/// strict mode, then removes it so the rest of the payload can be compared with the golden.
+fn strip_subagent_divergence(payload: &mut serde_json::Value, strict: bool) {
+    let Some(sub) = payload.as_object_mut().unwrap().remove("subagents") else {
+        return;
+    };
+    assert!(!strict, "strict mode must not carry a subagents breakdown");
+    let rows = sub["rows"].as_array().unwrap();
+    assert!(
+        !rows.is_empty() || sub["unattributedCalls"].as_u64().unwrap() > 0,
+        "an empty breakdown must be omitted"
+    );
+    for field in ["calls", "tokens"] {
+        let sum: u64 = rows.iter().map(|r| r[field].as_u64().unwrap()).sum();
+        assert_eq!(
+            sub[field].as_u64().unwrap(),
+            sum,
+            "subagents.{field} != sum of rows"
+        );
+    }
 }
 
 /// Top-level JSON keys the reference does not have (#5): the floor flag, the unpriced model names
@@ -91,12 +202,12 @@ fn py_repr(s: &str) -> String {
 
 #[test]
 fn json_claim_matches_the_reference_goldens() {
-    assert!(check_against_golden("claim.json", &[]) >= 27);
+    assert!(check_against_golden("claim.json", &[], false) >= 27);
 }
 
 #[test]
 fn json_strict_matches_the_reference_goldens() {
-    assert!(check_against_golden("strict.json", &["--strict"]) >= 27);
+    assert!(check_against_golden("strict.json", &["--strict"], true) >= 27);
 }
 
 #[test]
@@ -394,4 +505,87 @@ fn priced_models_markdown_shows_costs() {
     let text = stdout(&out);
     assert!(text.contains("Est. cost"));
     insta::assert_snapshot!("markdown_priced_models", text);
+}
+
+/// The `subagent-removed-worktree` scenario's subagents ran in worktrees that no longer exist, so
+/// only the dispatch links tie their calls to `feat/x`. Dropping the links in the binary's source
+/// wrapper (#6) loses every one of them.
+#[test]
+fn removed_worktree_subagents_roll_up_to_the_dispatcher_through_the_binary() {
+    let world = World::scenario("subagent-removed-worktree");
+    let out = world.run(&["report", "feat/x", "--json"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let json: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    assert_eq!(json["totalCalls"], 7);
+    let input: u64 = json["models"]
+        .as_object()
+        .unwrap()
+        .values()
+        .map(|m| m["input"].as_u64().unwrap())
+        .sum();
+    assert_eq!(input, 28);
+    let sub = &json["subagents"];
+    assert_eq!(sub["calls"], 5);
+    assert_eq!(sub["unattributedCalls"], 0);
+    assert_eq!(sub["unlinkedInTotalCalls"], 0);
+}
+
+/// Each subagent row's usage split must add up to its Tokens cell, and the rows must add up to
+/// the section (#6).
+#[test]
+fn subagent_rows_usage_split_sums_to_their_tokens_through_the_binary() {
+    for scenario in ["subagent", "subagent-removed-worktree"] {
+        let world = World::scenario(scenario);
+        let out = world.run(&["report", "feat/x", "--json"]);
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        let json: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+        let sub = &json["subagents"];
+        let rows = sub["rows"].as_array().unwrap();
+        assert!(!rows.is_empty(), "{scenario}: no subagent rows");
+        let (mut calls, mut tokens) = (0, 0);
+        let mut keys = std::collections::HashSet::new();
+        for row in rows {
+            let model = row["model"].as_str().unwrap_or("");
+            assert!(!model.is_empty(), "{scenario}: row without a model");
+            let key = (
+                row["workspace"].to_string(),
+                row["workspaceKind"].to_string(),
+                row["subagent"].to_string(),
+                model.to_string(),
+            );
+            assert!(keys.insert(key), "{scenario}: duplicate subagent/model row");
+            let split: u64 = [
+                "input",
+                "cacheWrite5m",
+                "cacheWrite1h",
+                "cacheRead",
+                "output",
+            ]
+            .iter()
+            .map(|k| row[*k].as_u64().expect("usage field is a number"))
+            .sum();
+            assert_eq!(split, row["tokens"].as_u64().unwrap(), "{scenario}");
+            assert!(row["thinking"].is_u64(), "{scenario}");
+            assert!(row["costIsFloor"].is_boolean(), "{scenario}");
+            calls += row["calls"].as_u64().unwrap();
+            tokens += row["tokens"].as_u64().unwrap();
+        }
+        assert_eq!(calls, sub["calls"].as_u64().unwrap(), "{scenario}");
+        assert_eq!(tokens, sub["tokens"].as_u64().unwrap(), "{scenario}");
+        assert!(sub["costIsFloor"].is_boolean(), "{scenario}");
+    }
+}
+
+#[test]
+fn strict_never_shows_the_subagent_usage_section() {
+    for scenario in ["subagent", "subagent-removed-worktree"] {
+        let world = World::scenario(scenario);
+        let claim = world.run(&["report", "feat/x"]);
+        assert!(stdout(&claim).contains("### Subagent usage"), "{scenario}");
+        let strict = world.run(&["report", "feat/x", "--strict"]);
+        assert_eq!(strict.status.code(), Some(0), "{}", stderr(&strict));
+        assert!(!stdout(&strict).contains("Subagent usage"), "{scenario}");
+        let json = world.run(&["report", "feat/x", "--strict", "--json"]);
+        assert!(!stdout(&json).contains("\"subagents\""), "{scenario}");
+    }
 }
