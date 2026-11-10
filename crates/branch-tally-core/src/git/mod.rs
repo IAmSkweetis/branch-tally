@@ -39,6 +39,12 @@ pub enum GitError {
         /// Exit status, if the process was not killed by a signal.
         code: Option<i32>,
     },
+    /// git succeeded but printed output that could not be read as the requested value.
+    #[error("`git {subcommand}` printed output that could not be interpreted")]
+    UnexpectedOutput {
+        /// The subcommand whose output was unusable.
+        subcommand: &'static str,
+    },
 }
 
 fn display_code(code: Option<i32>) -> String {
@@ -71,6 +77,31 @@ pub trait Git {
     ///
     /// [`GitError`] when the tool cannot run or `repo` is not in a repository.
     fn worktrees(&self, repo: &Path) -> Result<Vec<Worktree>, GitError>;
+
+    /// The repository's default branch, as `origin` names it (`refs/remotes/origin/HEAD`), with
+    /// the `origin/` prefix removed. Branch names containing `/` are kept whole.
+    ///
+    /// There is deliberately no guess: with no remote, or `origin/HEAD` unset, this is an `Err`
+    /// and the caller decides on a fallback and says it used one.
+    ///
+    /// # Errors
+    ///
+    /// [`GitError`] when the tool cannot run, `repo` is not in a repository, or `origin/HEAD` is
+    /// not resolvable ([`GitError::Failed`]), or git printed something unusable
+    /// ([`GitError::UnexpectedOutput`]).
+    fn default_branch(&self, repo: &Path) -> Result<String, GitError>;
+}
+
+/// Extract the default branch from `git symbolic-ref --short refs/remotes/origin/HEAD` output
+/// (`origin/main`). Pure. `None` when the output is empty or is not an `origin/` ref.
+#[must_use]
+pub fn parse_origin_head(output: &str) -> Option<String> {
+    let name = output.trim().strip_prefix("origin/")?;
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_owned())
+    }
 }
 
 /// Parse `git worktree list --porcelain` output. Pure.
@@ -182,6 +213,18 @@ impl Git for SystemGit {
         )?;
         Ok(parse_worktree_porcelain(&out))
     }
+
+    fn default_branch(&self, repo: &Path) -> Result<String, GitError> {
+        const SUBCOMMAND: &str = "symbolic-ref --short refs/remotes/origin/HEAD";
+        let out = Self::run(
+            repo,
+            SUBCOMMAND,
+            &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        )?;
+        parse_origin_head(&out).ok_or(GitError::UnexpectedOutput {
+            subcommand: SUBCOMMAND,
+        })
+    }
 }
 
 /// A scripted [`Git`] for tests, keyed by the directory passed in.
@@ -193,6 +236,7 @@ pub struct FakeGit {
     branches: BTreeMap<PathBuf, String>,
     mains: BTreeMap<PathBuf, PathBuf>,
     worktrees: BTreeMap<PathBuf, Vec<Worktree>>,
+    default_branches: BTreeMap<PathBuf, String>,
 }
 
 impl FakeGit {
@@ -222,6 +266,17 @@ impl FakeGit {
         self.worktrees.insert(repo.into(), list);
         self
     }
+
+    /// Script `default_branch(repo)`.
+    #[must_use]
+    pub fn with_default_branch(
+        mut self,
+        repo: impl Into<PathBuf>,
+        branch: impl Into<String>,
+    ) -> Self {
+        self.default_branches.insert(repo.into(), branch.into());
+        self
+    }
 }
 
 impl Git for FakeGit {
@@ -244,6 +299,49 @@ impl Git for FakeGit {
             subcommand: "worktree list --porcelain",
             code: Some(128),
         })
+    }
+
+    fn default_branch(&self, repo: &Path) -> Result<String, GitError> {
+        self.default_branches
+            .get(repo)
+            .cloned()
+            .ok_or(GitError::Failed {
+                subcommand: "symbolic-ref --short refs/remotes/origin/HEAD",
+                code: Some(128),
+            })
+    }
+}
+
+#[cfg(test)]
+mod default_branch_tests {
+    use super::*;
+
+    #[test]
+    fn origin_head_output_is_stripped_of_the_remote() {
+        assert_eq!(parse_origin_head("origin/main\n"), Some("main".to_owned()));
+        assert_eq!(
+            parse_origin_head("origin/main\r\n"),
+            Some("main".to_owned())
+        );
+        assert_eq!(
+            parse_origin_head("origin/release/1.x\n"),
+            Some("release/1.x".to_owned())
+        );
+    }
+
+    #[test]
+    fn unusable_origin_head_output_is_none() {
+        assert_eq!(parse_origin_head(""), None);
+        assert_eq!(parse_origin_head("origin/\n"), None);
+        assert_eq!(parse_origin_head("upstream/main\n"), None);
+        assert_eq!(parse_origin_head("main\n"), None);
+    }
+
+    #[test]
+    fn fake_default_branch_scripted_and_unscripted() {
+        let f = FakeGit::new().with_default_branch("/r", "trunk");
+        assert_eq!(f.default_branch(Path::new("/r")).unwrap(), "trunk");
+        assert!(f.default_branch(Path::new("/other")).is_err());
     }
 }
 
