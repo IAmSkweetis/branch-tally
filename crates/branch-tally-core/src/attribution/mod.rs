@@ -147,17 +147,19 @@ fn roll_up(
     links: &HashMap<(&SessionId, &AgentId), &Dispatch>,
     map: &WorktreeMap,
 ) -> (String, BranchBasis, Option<SubagentTags>) {
-    let tags = record.agent_id.as_ref().and_then(|id| {
-        Some(SubagentTags {
-            workspace: workspace_of(record.cwd.as_deref()?, map)?,
-            subagent: record
-                .attribution
-                .agent
-                .clone()
-                .filter(|a| !a.is_empty())
-                .unwrap_or_else(|| id.to_string()),
-            agent_id: id.clone(),
-        })
+    let tags = record.agent_id.as_ref().map(|id| SubagentTags {
+        workspace: record
+            .cwd
+            .as_deref()
+            .and_then(|cwd| workspace_of(cwd, map))
+            .unwrap_or(Workspace::Unknown),
+        subagent: record
+            .attribution
+            .agent
+            .clone()
+            .filter(|a| !a.is_empty())
+            .unwrap_or_else(|| id.to_string()),
+        agent_id: id.clone(),
     });
     let dispatcher_branch = record
         .agent_id
@@ -192,7 +194,7 @@ fn components(text: &str) -> Vec<String> {
 
 /// Where a subagent ran, from its raw cwd: a worktree named by the directory under
 /// `.claude/worktrees/`, or the main checkout. `None` when the cwd is outside both (never
-/// guessed as main).
+/// guessed as main; the caller tags it [`Workspace::Unknown`]).
 fn workspace_of(cwd: &str, map: &WorktreeMap) -> Option<Workspace> {
     let parts = components(&path_text(Path::new(cwd)));
     let worktree = parts.windows(3).find_map(|w| {

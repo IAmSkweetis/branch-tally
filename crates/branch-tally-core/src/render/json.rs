@@ -121,6 +121,11 @@ fn subagents(sub: &SubagentSummary, o: &mut String) {
                 "        \"workspace\": {},",
                 string(&r.workspace.label())
             );
+            let _ = writeln!(
+                o,
+                "        \"workspaceKind\": {},",
+                string(r.workspace.kind())
+            );
             let _ = writeln!(o, "        \"isWorktree\": {},", r.workspace.is_worktree());
             let _ = writeln!(o, "        \"subagent\": {},", string(&r.subagent));
             let _ = writeln!(o, "        \"calls\": {},", r.calls);

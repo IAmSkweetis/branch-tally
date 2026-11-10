@@ -106,6 +106,7 @@ fn subagent_section(summary: &Summary, o: &mut Vec<String>) {
             let ws = match &r.workspace {
                 Workspace::Main => "main checkout".to_owned(),
                 Workspace::Worktree(name) => format!("worktree `{}`", cell(name)),
+                Workspace::Unknown => "unknown workspace".to_owned(),
             };
             o.push(format!(
                 "| {ws} | {} | {} | {} |",
