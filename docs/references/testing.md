@@ -172,7 +172,12 @@ expected behaviour directly, next to the same issue number. `malformed-and-keyle
   `unattributedCalls`, `unattributedTokens`, `unlinkedInTotalCalls`, `unlinkedInTotalTokens`,
   `rows[]` of `workspace`, `workspaceKind` (`main`,
   `worktree` or `unknown`, the last for a missing or outside-repo cwd), `isWorktree`, `subagent`,
-  `calls`, `tokens`, `agents`) and the Markdown report has a `### Subagent usage` section between
+  `calls`, `tokens`, `agents`, the usage split `input`, `cacheWrite5m`, `cacheWrite1h`,
+  `cacheRead`, `output`, `thinking`, and `costUSD` with `costIsFloor`; the object itself has
+  `costUSD`/`costIsFloor` too. `costUSD` is `null` when nothing was priced, and the usage split is
+  `null` for a row with no per-model split) and the Markdown report has a `### Subagent usage`
+  section (usage columns like the per-model table, an `Est. cost` column that shows a dash,
+  "at least $X" or "$X", and `est. cost` on the totals line; `--no-cost` drops both) between
   the footnote and the attribution details. Both are omitted when empty, so `--strict` and
   reports without dispatched subagents are unchanged. The unattributed count spans all attributed
   records, not only the branch, and the Markdown line says so. `rows[]`, `calls`, `tokens`,

@@ -7,7 +7,7 @@
 use std::cmp::Reverse;
 use std::fmt::Write as _;
 
-use crate::model::{Costs, PriceTableSource, Summary, Workspace};
+use crate::model::{Costs, PriceTableSource, RowCost, Summary, Workspace};
 
 /// Opens the region of a PR body this tool owns.
 pub const START: &str = "<!-- token-report:start -->";
@@ -82,6 +82,17 @@ fn cell(s: &str) -> String {
     s.replace('|', "\\|")
 }
 
+/// A subagent cost as text: a dash when there is no price (or no entry), "at least $X" for a
+/// floor, else "$X". Money is `{:.2}` like the per-model cell.
+fn row_cost_text(cost: Option<&RowCost>) -> String {
+    match cost {
+        Some(c) if c.is_unpriced() => "\u{2014}".to_owned(),
+        Some(c) if c.is_floor() => format!("at least ${:.2}", c.known),
+        Some(c) => format!("${:.2}", c.known),
+        None => "\u{2014}".to_owned(),
+    }
+}
+
 /// The dispatched-subagent breakdown (#6), pushed as lines ending in a blank line.
 ///
 /// Not in the reference, so it is omitted entirely when [`SubagentSummary::is_empty`]: that keeps
@@ -89,7 +100,7 @@ fn cell(s: &str) -> String {
 /// All totals come from the summary's accessors and count rolled-up records only. The
 /// unattributed count spans every attributed record, not only this branch's, and the line says so
 /// rather than imply otherwise, then says how many of those are inside this report's total.
-fn subagent_section(summary: &Summary, o: &mut Vec<String>) {
+fn subagent_section(summary: &Summary, costs: &Costs, show_cost: bool, o: &mut Vec<String>) {
     let sub = &summary.subagents;
     if sub.is_empty() {
         return;
@@ -101,26 +112,59 @@ fn subagent_section(summary: &Summary, o: &mut Vec<String>) {
     o.push(String::new());
     let mut text = String::new();
     if !sub.rows.is_empty() {
-        o.push("| Workspace | Subagent | Calls | Tokens |".to_owned());
-        o.push("|---|---|--:|--:|".to_owned());
-        for r in &sub.rows {
+        let (cost_head, cost_rule) = if show_cost {
+            (" Est. cost |", "--:|")
+        } else {
+            ("", "")
+        };
+        o.push(format!(
+            "| Workspace | Subagent | Calls | Input | Cache write | Cache read | Output | \
+             (thinking) | Tokens |{cost_head}"
+        ));
+        o.push(format!("|---|---|--:|--:|--:|--:|--:|--:|--:|{cost_rule}"));
+        for (i, r) in sub.rows.iter().enumerate() {
             let ws = match &r.workspace {
                 Workspace::Main => "main checkout".to_owned(),
                 Workspace::Worktree(name) => format!("worktree `{}`", cell(name)),
                 Workspace::Unknown => "unknown workspace".to_owned(),
             };
+            // A row without a per-model split (older data) has no usage breakdown to show: a dash,
+            // never a zero that would read as "none used".
+            let usage = if r.by_model.is_empty() {
+                vec!["\u{2014}".to_owned(); 5]
+            } else {
+                let t = r.total();
+                vec![
+                    n(t.input),
+                    n(t.cache_write_5m + t.cache_write_1h),
+                    n(t.cache_read),
+                    n(t.output),
+                    n(t.thinking),
+                ]
+            };
+            let cost = if show_cost {
+                format!(" {} |", row_cost_text(costs.subagent_row(i)))
+            } else {
+                String::new()
+            };
             o.push(format!(
-                "| {ws} | {} | {} | {} |",
+                "| {ws} | {} | {} | {} | {} |{cost}",
                 cell(&r.subagent),
                 n(r.calls),
+                usage.join(" | "),
                 n(r.tokens),
             ));
         }
         o.push(String::new());
+        let est = if show_cost {
+            format!("; est. cost {}", row_cost_text(Some(&costs.subagent_total)))
+        } else {
+            String::new()
+        };
         let _ = writeln!(
             text,
             "{} tokens ({} calls) from {} dispatched subagent(s) across {} workspace(s) \
-             ({} worktree(s)).",
+             ({} worktree(s)){est}.",
             n(sub.tokens()),
             n(sub.calls()),
             n(sub.dispatched()),
@@ -248,7 +292,7 @@ pub fn markdown(summary: &Summary, costs: &Costs, show_cost: bool) -> String {
     o.push(note);
     o.push(String::new());
 
-    subagent_section(summary, &mut o);
+    subagent_section(summary, costs, show_cost, &mut o);
 
     attribution_details(summary, &mut o);
     o.join("\n")
