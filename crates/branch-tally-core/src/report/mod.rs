@@ -4,7 +4,7 @@
 //! and hands the result to `render`. [`build`] is pure; [`run`] adds the reference's resolution
 //! order (current branch, main checkout, worktree list) behind the [`Git`] and [`Source`] traits.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::git::{Git, GitError, Worktree};
 use crate::model::{Costs, DefaultBranchSource, Dispatch, Mode, Record, Summary, WorkBranchRule};
@@ -38,12 +38,43 @@ pub enum ReportError {
         /// What the read skipped, so a caller can explain an empty result.
         read_stats: ReadStats,
     },
+    /// Discovery found no transcript directory for the repository (#40). The message is the
+    /// reference's sentence, naming every slug that was tried.
+    #[error("No transcript directory for {} ({})", .repo.display(), expected_slugs(.slugs))]
+    NoTranscriptDirectory {
+        /// The main checkout transcripts were looked for.
+        repo: PathBuf,
+        /// Every slug that was tried, lowercased.
+        slugs: Vec<String>,
+    },
     /// The current branch could not be determined.
     #[error(transparent)]
     Git(#[from] GitError),
     /// Transcripts could not be discovered or read.
     #[error(transparent)]
     Source(#[from] SourceError),
+}
+
+/// The error for a repository with no transcript directory: every candidate slug, lowercased
+/// (slugs are compared case-insensitively) and deduplicated.
+fn no_transcript_directory(repo: PathBuf) -> ReportError {
+    let mut slugs: Vec<String> = Vec::new();
+    for slug in crate::paths::slug_candidates(&repo) {
+        let slug = slug.to_lowercase();
+        if !slugs.contains(&slug) {
+            slugs.push(slug);
+        }
+    }
+    ReportError::NoTranscriptDirectory { repo, slugs }
+}
+
+/// `expected slug a` for one slug (the reference's wording), `expected one of the slugs a, b`
+/// for several.
+fn expected_slugs(slugs: &[String]) -> String {
+    match slugs {
+        [one] => format!("expected slug {one}"),
+        many => format!("expected one of the slugs {}", many.join(", ")),
+    }
 }
 
 /// The default branch timeline mode excludes from the work branches, and where it came from.
@@ -257,7 +288,8 @@ pub fn build(
 ///
 /// # Errors
 ///
-/// [`ReportError`]: git cannot name the current branch, the source fails, or nothing is selected.
+/// [`ReportError`]: git cannot name the current branch, the source fails, discovery finds no
+/// transcript directory for the repository, or nothing is selected.
 pub fn run(
     git: &dyn Git,
     source: &dyn Source,
@@ -273,6 +305,9 @@ pub fn run(
     };
     let main_checkout = git.main_checkout(repo_dir);
     let roots = source.discover(projects_root, &RepoIdentity::new(&main_checkout))?;
+    if roots.is_empty() {
+        return Err(no_transcript_directory(main_checkout));
+    }
     let mut records = Vec::new();
     let stats = source.read(&roots, &mut |r| records.push(r))?;
     let dispatches = source.dispatches(&roots)?;

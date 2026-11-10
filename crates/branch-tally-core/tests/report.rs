@@ -11,7 +11,9 @@ use branch_tally_core::model::{
 };
 use branch_tally_core::pricing::PriceTable;
 use branch_tally_core::report::{Options, ReportError, build, run};
-use branch_tally_core::sources::{ReadStats, RepoIdentity, Source, SourceError, TranscriptRoot};
+use branch_tally_core::sources::{
+    ReadStats, RepoIdentity, RootKind, Source, SourceError, TranscriptRoot,
+};
 
 fn rec(session: &str, request: &str, branch: Option<&str>) -> Record {
     let mut r = Record::new(
@@ -33,6 +35,8 @@ fn rec(session: &str, request: &str, branch: Option<&str>) -> Record {
 struct FakeSource {
     records: Vec<Record>,
     stats: ReadStats,
+    /// Whether discovery finds a transcript directory. A source with records has one.
+    has_root: bool,
     repo_seen: RefCell<Option<PathBuf>>,
 }
 
@@ -41,7 +45,16 @@ impl FakeSource {
         Self {
             records,
             stats,
+            has_root: true,
             repo_seen: RefCell::new(None),
+        }
+    }
+
+    /// A source whose discovery finds no transcript directory for the repository.
+    fn without_roots() -> Self {
+        Self {
+            has_root: false,
+            ..Self::new(Vec::new(), ReadStats::default())
         }
     }
 }
@@ -56,7 +69,11 @@ impl Source for FakeSource {
         repo: &RepoIdentity,
     ) -> Result<Vec<TranscriptRoot>, SourceError> {
         *self.repo_seen.borrow_mut() = Some(repo.root().to_path_buf());
-        Ok(Vec::new())
+        Ok(if self.has_root {
+            vec![TranscriptRoot::new("/projects/-repo", RootKind::Repository)]
+        } else {
+            Vec::new()
+        })
     }
     fn read(
         &self,
@@ -214,6 +231,47 @@ fn run_without_a_branch_and_without_git_is_a_git_error() {
     )
     .unwrap_err();
     assert!(matches!(err, ReportError::Git(_)), "{err}");
+}
+
+#[test]
+fn run_with_no_transcript_directory_names_the_repository_and_every_slug_tried() {
+    // #40: empty discovery is its own outcome, not "no records on this branch". `D:\x` has two
+    // candidate slugs (drive form and Git Bash form); the error lists both, lowercased.
+    let git = FakeGit::new().with_main_checkout(r"D:\x\wt", r"D:\x");
+    let source = FakeSource::without_roots();
+    let err = run(
+        &git,
+        &source,
+        Path::new("/projects"),
+        Path::new(r"D:\x\wt"),
+        Some("feat/x"),
+        &Options::default(),
+        bundled(),
+    )
+    .unwrap_err();
+    match &err {
+        ReportError::NoTranscriptDirectory { repo, slugs } => {
+            assert_eq!(repo, Path::new(r"D:\x"));
+            assert_eq!(slugs, &["d--x".to_owned(), "-d-x".to_owned()]);
+        }
+        other => panic!("expected NoTranscriptDirectory, got {other}"),
+    }
+    assert_eq!(
+        err.to_string(),
+        r"No transcript directory for D:\x (expected one of the slugs d--x, -d-x)"
+    );
+}
+
+#[test]
+fn no_transcript_directory_with_one_slug_keeps_the_reference_message() {
+    let err = ReportError::NoTranscriptDirectory {
+        repo: PathBuf::from("/home/u/x"),
+        slugs: vec!["-home-u-x".to_owned()],
+    };
+    assert_eq!(
+        err.to_string(),
+        "No transcript directory for /home/u/x (expected slug -home-u-x)"
+    );
 }
 
 const CUSTOM: &str =

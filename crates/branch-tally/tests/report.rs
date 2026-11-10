@@ -424,12 +424,13 @@ fn no_transcript_directory_for_the_repository_exits_1() {
     let out = world.run(&["report", "main"]);
     assert_eq!(out.status.code(), Some(1));
     let err = stderr(&out);
-    let slug = common::slug_for(&common::canon(&world.repo)).to_lowercase();
     assert!(err.starts_with("No transcript directory for "), "{err}");
-    assert!(
-        err.ends_with(&format!(" (expected slug {slug})\n")),
-        "{err}"
-    );
+    assert!(err.ends_with(")\n"), "{err}");
+    // #40: every candidate slug is named, not just the first.
+    for slug in branch_tally_core::paths::slug_candidates(&common::canon(&world.repo)) {
+        let slug = slug.to_lowercase();
+        assert!(err.contains(&slug), "{slug} missing from {err}");
+    }
 }
 
 #[test]
