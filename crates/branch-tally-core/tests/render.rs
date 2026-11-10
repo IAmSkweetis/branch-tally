@@ -622,8 +622,8 @@ fn markdown_reports_unattributed_subagent_calls_without_claiming_a_branch() {
     let md = markdown(&s, &c, false);
     assert!(
         md.contains(
-            "3 subagent call(s) (1,500 tokens) had no dispatch link, so they are not in any \
-             branch's total; counted across all attributed records, not only this branch.\n"
+            "3 subagent call(s) (1,500 tokens) across this repository's transcripts had no \
+             dispatch link, so their branch is unverified (raw stamp kept).\n"
         ),
         "{md}"
     );
@@ -644,7 +644,7 @@ fn markdown_with_only_unattributed_calls_still_says_so() {
     );
     assert!(!md.contains("| Workspace |"), "{md}");
     assert!(
-        md.contains("2 subagent call(s) (40 tokens) had no dispatch link"),
+        md.contains("2 subagent call(s) (40 tokens) across this repository's transcripts had no"),
         "{md}"
     );
 }
