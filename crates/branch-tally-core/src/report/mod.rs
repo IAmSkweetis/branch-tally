@@ -71,7 +71,7 @@ pub fn build(
             .iter()
             .map(|w| (w.path.as_path(), w.branch.as_str())),
     );
-    let attributed = crate::attribution::attribute(records, &map, strict);
+    let attributed = crate::attribution::attribute(records, &[], &map, strict);
     let unattributed = crate::model::SubagentSummary::count_unattributed(&attributed);
     let selected = crate::attribution::select(attributed, branch, strict);
     if selected.is_empty() {
