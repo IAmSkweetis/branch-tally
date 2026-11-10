@@ -208,6 +208,7 @@ fn priced(unpriced: u64, as_of: &str, source: PriceTableSource) -> Costs {
             as_of: as_of.to_owned(),
             source,
         },
+        ..Costs::default()
     }
 }
 
@@ -556,6 +557,7 @@ fn sub_row(ws: Workspace, name: &str, calls: u64, tokens: u64, ids: &[&str]) -> 
         calls,
         tokens,
         agent_ids: ids.iter().map(|i| AgentId::new(*i)).collect(),
+        by_model: Vec::new(),
     }
 }
 

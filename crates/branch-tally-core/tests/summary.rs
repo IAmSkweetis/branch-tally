@@ -314,6 +314,65 @@ fn subagent_rows_merge_by_workspace_and_name_in_first_seen_order() {
 }
 
 #[test]
+fn subagent_row_keeps_usage_split_by_model_and_by_model_totals_are_unchanged() {
+    let wt = || Workspace::worktree("wt-a");
+    let recs = vec![
+        sub(
+            rec("s", "feat/x")
+                .model(Some("m1"))
+                .usage([10, 1, 2, 3, 4], Some(2)),
+            wt(),
+            "writer",
+            "a1",
+        ),
+        sub(
+            rec("s", "feat/x")
+                .model(Some("m2"))
+                .usage([20, 0, 0, 5, 6], None),
+            wt(),
+            "writer",
+            "a1",
+        ),
+        sub(
+            rec("s", "feat/x")
+                .model(Some("m1"))
+                .usage([1, 0, 0, 0, 1], Some(1)),
+            wt(),
+            "writer",
+            "a2",
+        ),
+        rec("s", "feat/x")
+            .model(Some("m1"))
+            .usage([100, 0, 0, 0, 0], None),
+    ];
+    let s = run_with(recs, Mode::Claim, (0, 0));
+    let row = &s.subagents.rows[0];
+    let names: Vec<&str> = row.by_model.iter().map(|(m, _)| m.as_str()).collect();
+    assert_eq!(names, ["m1", "m2"]);
+    let m1 = &row.by_model[0].1;
+    assert_eq!(
+        (
+            m1.input,
+            m1.cache_write_5m,
+            m1.cache_write_1h,
+            m1.cache_read
+        ),
+        (11, 1, 2, 3)
+    );
+    assert_eq!((m1.output, m1.thinking, m1.calls), (5, 3, 2));
+    assert_eq!(row.by_model[1].1.calls, 1);
+    // The row sum equals the per-model sum and agrees with calls/tokens.
+    let t = row.total();
+    assert_eq!((t.calls, t.tokens()), (row.calls, row.tokens));
+    assert_eq!((t.input, t.output, t.thinking), (31, 11, 3));
+    // by_model totals are untouched by the breakdown.
+    let m = |k: &str| s.by_model.iter().find(|(n, _)| n == k).unwrap().1;
+    assert_eq!((m("m1").input, m("m1").calls), (111, 3));
+    assert_eq!((m("m2").input, m("m2").calls), (20, 1));
+    assert_eq!(s.total.calls, 4);
+}
+
+#[test]
 fn strict_mode_leaves_subagents_empty() {
     let recs = vec![sub(rec("s", "feat/x"), Workspace::Main, "a", "a")];
     let s = run_with(recs, Mode::Strict, (3, 9));

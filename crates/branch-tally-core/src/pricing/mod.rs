@@ -86,5 +86,7 @@ pub fn price(summary: &Summary, table: &PriceTable) -> Costs {
         total,
         unpriced_models,
         price_table: table.info(),
+        subagent_rows: Vec::new(),
+        subagent_total: crate::model::RowCost::default(),
     }
 }

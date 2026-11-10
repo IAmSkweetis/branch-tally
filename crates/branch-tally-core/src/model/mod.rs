@@ -16,7 +16,7 @@ mod subagent;
 mod summary;
 
 pub use attributed::{AttributedRecord, BranchBasis, SelectedRecord, Selection};
-pub use costs::{Costs, PriceTableInfo, PriceTableSource};
+pub use costs::{Costs, PriceTableInfo, PriceTableSource, RowCost};
 pub use subagent::{Dispatch, SubagentRow, SubagentSummary, SubagentTags, Workspace};
 pub use summary::{Bucket, Footnote, Mode, SessionRow, Summary};
 
