@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use branch_tally_core::attribution::{WorktreeMap, attribute, select, slug_for};
+use branch_tally_core::attribution::{WorktreeMap, attribute, select};
 use branch_tally_core::model::{
     AttributedRecord, BranchBasis, Harness, Origin, Record, RequestId, Selection, SessionId, Usage,
 };
@@ -41,11 +41,71 @@ fn one(r: Record, strict: bool) -> (String, BranchBasis) {
     (a.branch, a.basis)
 }
 
+fn origin_of(map: &WorktreeMap, slug: &str) -> (String, BranchBasis) {
+    let a = attribute(
+        [rec("s", None, Some(Origin::Worktree(slug.to_owned())))],
+        &[],
+        map,
+        false,
+    )
+    .remove(0);
+    (a.branch, a.basis)
+}
+
 #[test]
-fn slug_replaces_every_non_alphanumeric() {
-    assert_eq!(slug_for(Path::new(r"D:\work\Repo")), "D--work-Repo");
-    assert_eq!(slug_for(Path::new("/home/me/my.repo")), "-home-me-my-repo");
-    assert_eq!(slug_for(Path::new("D:/work/Repo")), "D--work-Repo");
+fn git_bash_main_checkout_recovers_worktree_origin_in_either_slug_form() {
+    // Main checkout arrives as /d/x; git reports the worktree as D:\x\...
+    let m = WorktreeMap::new(
+        Path::new("/d/x"),
+        [(Path::new(r"D:\x\.claude\worktrees\agent-a"), "feat/a")],
+    );
+    for slug in [
+        "D--x--claude-worktrees-agent-a",
+        "-d-x--claude-worktrees-agent-a",
+    ] {
+        assert_eq!(
+            origin_of(&m, slug),
+            ("feat/a".to_owned(), BranchBasis::OriginRecovered),
+            "{slug}"
+        );
+    }
+}
+
+#[test]
+fn git_bash_worktree_path_recovers_drive_form_origin() {
+    let m = WorktreeMap::new(
+        Path::new(r"D:\x"),
+        [(Path::new("/d/x/.claude/worktrees/agent-a"), "feat/a")],
+    );
+    assert_eq!(
+        origin_of(&m, "D--x--claude-worktrees-agent-a"),
+        ("feat/a".to_owned(), BranchBasis::OriginRecovered)
+    );
+}
+
+#[test]
+fn verbatim_unc_worktree_keys_as_plain_unc_slug() {
+    let m = WorktreeMap::new(
+        Path::new(r"\\?\UNC\srv\share\r"),
+        [(
+            Path::new(r"\\?\UNC\srv\share\r\.claude\worktrees\agent-u"),
+            "feat/u",
+        )],
+    );
+    assert_eq!(
+        m.get("--srv-share-r--claude-worktrees-agent-u"),
+        Some("feat/u")
+    );
+    assert_eq!(m.get("unc-srv-share-r--claude-worktrees-agent-u"), None);
+}
+
+#[test]
+fn main_checkout_stays_unrecovered_for_git_bash_main() {
+    let m = WorktreeMap::new(Path::new("/d/x"), [(Path::new(r"D:\x"), "main")]);
+    assert_eq!(
+        origin_of(&m, "main"),
+        ("(none)".to_owned(), BranchBasis::Stamped)
+    );
 }
 
 #[test]
