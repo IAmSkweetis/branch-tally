@@ -13,3 +13,9 @@ A correct read reports `files_read` 2 and `records_emitted` 4, every skip counte
 stamps and the worktree `cwd` reported untouched. A correct report puts all four calls (10 input)
 on `feat/x` and none on `chore/b1-data`, and says 7 of those input tokens (3 + 4) came from a
 worktree subagent.
+
+Dispatch lines (added 2026-11-09, Claude Code 2.1.x): the parent session file also holds one
+`type: "user"` line per subagent with `toolUseResult.agentId` set, the parent's branch stamp
+`feat/x` and the parent `sessionId`. They carry no usage, so read counts are unchanged. A correct
+dispatch pass reports one `(s1, <agent>, feat/x)` link per subagent, and the rollup puts every
+subagent call on `feat/x`.

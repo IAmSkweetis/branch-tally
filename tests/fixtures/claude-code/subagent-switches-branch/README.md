@@ -13,3 +13,9 @@ stamp reported as written (a file's stamp changes mid-file). In strict mode `cho
 `chore/d2-data` show their own calls only. A correct claim-mode report for `feat/x` includes all
 eight calls (36 input) as dispatcher work. A report for either `chore/` branch must not take
 calls the orchestrator owns without saying so.
+
+Dispatch lines (added 2026-11-09, Claude Code 2.1.x): the parent session file also holds one
+`type: "user"` line per subagent with `toolUseResult.agentId` set, the parent's branch stamp
+`feat/x` and the parent `sessionId`. They carry no usage, so read counts are unchanged. A correct
+dispatch pass reports one `(s1, <agent>, feat/x)` link per subagent, and the rollup puts every
+subagent call on `feat/x`.

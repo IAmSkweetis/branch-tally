@@ -14,3 +14,7 @@ in order:
 
 A correct read reports `files_read` 1, `records_emitted` 2, `malformed_lines` 2, `no_dedupe_key` 1,
 `duplicates_removed` 1, `synthetic` 0. The emitted `u7` record has its `request_id` set to `u7`.
+
+Dispatch-shaped lines (added 2026-11-09): user lines after line 5 whose `toolUseResult` is a
+string, an object without `agentId`, an empty `agentId` or a numeric `agentId` yield no dispatch;
+two identical lines for agent `m1` yield one `(s1, m1, main)`. None changes the read counters.

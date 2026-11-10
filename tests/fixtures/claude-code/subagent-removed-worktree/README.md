@@ -13,3 +13,9 @@ A correct read reports `files_read` 4 and `records_emitted` 7, every skip counte
 input totals are `c1` 7, `c2` 5, `c3` 13 (25 in all), under the raw `worktree-agent-<id>` stamps. A
 correct report attributes all seven calls to `feat/x` (28 input) via the dispatching session, not
 by guessing, and says 25 of that came from worktree subagents. Dropping the five is the bug.
+
+Dispatch lines (added 2026-11-09, Claude Code 2.1.x): the parent session file also holds one
+`type: "user"` line per subagent with `toolUseResult.agentId` set, the parent's branch stamp
+`feat/x` and the parent `sessionId`. They carry no usage, so read counts are unchanged. A correct
+dispatch pass reports one `(s1, <agent>, feat/x)` link per subagent, and the rollup puts every
+subagent call on `feat/x`.

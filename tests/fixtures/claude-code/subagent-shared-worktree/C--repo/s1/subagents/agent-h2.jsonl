@@ -1,0 +1,1 @@
+{"type":"assistant","requestId":"req_h2a","uuid":"u_req_h2a","sessionId":"s1","timestamp":"2026-01-01T00:04:00.000Z","cwd":"C:\\repo\\.claude\\worktrees\\wt-shared","gitBranch":"feat/x","isSidechain":true,"agentId":"h2","message":{"model":"claude-test-1","content":"PLACEHOLDER","usage":{"input_tokens":4,"output_tokens":104,"cache_read_input_tokens":1004}}}

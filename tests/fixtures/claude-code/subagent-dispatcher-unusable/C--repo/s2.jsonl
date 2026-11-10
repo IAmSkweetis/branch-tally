@@ -1,0 +1,2 @@
+{"type":"assistant","requestId":"req_4","uuid":"u_req_4","sessionId":"s2","timestamp":"2026-01-01T00:05:00.000Z","cwd":"C:\\repo","gitBranch":"feat/x","isSidechain":false,"message":{"model":"claude-test-1","content":"PLACEHOLDER","usage":{"input_tokens":4,"output_tokens":104,"cache_read_input_tokens":1004}}}
+{"type":"user","uuid":"u_disp_g3","sessionId":"s2","timestamp":"2026-01-01T00:06:00.000Z","cwd":"C:\\repo","isSidechain":false,"sourceToolAssistantUUID":"u_tool_g3","toolUseResult":{"agentId":"g3","isAsync":true}}

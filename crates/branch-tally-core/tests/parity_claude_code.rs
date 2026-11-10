@@ -36,9 +36,9 @@ const DIVERGENCES: &[(&str, &str, &str, &str)] = &[];
 
 /// Scenarios and branch keys compared. Pinned so the test cannot green by comparing nothing.
 /// Claim pairs the report test compares.
-const EXPECTED_CLAIM_PAIRS: usize = 27;
-const EXPECTED_SCENARIOS: usize = 14;
-const EXPECTED_BRANCH_KEYS: usize = 35;
+const EXPECTED_CLAIM_PAIRS: usize = 33;
+const EXPECTED_SCENARIOS: usize = 19;
+const EXPECTED_BRANCH_KEYS: usize = 47;
 
 fn fixtures_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
