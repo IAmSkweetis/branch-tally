@@ -277,6 +277,15 @@ moment (a third mode, exclusive with `--strict`); `--work-branch <REGEX>` (timel
 which branches count as work branches, matched unanchored as written, so `^(feat|fix)/` works.
 The default is every branch except the repository's default branch and `worktree-agent-*`.
 
+The same choices are `--mode claim|strict|timeline` and `--format md|json`; `--strict`,
+`--timeline`, `--md` and `--json` stay as shorthands, and a shorthand cannot be combined with its
+long form, even when they agree (exit 2). `--cost` pairs with `--no-cost`. `--work-branch` is a
+usage error unless the *effective* mode is timeline, whether that came from `--mode timeline`,
+`--timeline` or a config `mode = "timeline"`; a work-branch set only in the config file is ignored
+outside timeline mode. Defaults live in a user config file (flag > file > default); the README's
+"Config file" section has its location and keys, and `branch-tally config show` prints what
+applies.
+
 It must run on the machine that did the work, and **while every agent worktree still exists**
 until issue #6 removes that dependency. Report the number as a floor ("at least $X").
 `reference/token_report.py` is no longer run for this. Only the golden generator (`just goldens`)
