@@ -25,7 +25,11 @@ fn main() -> ExitCode {
             let _ = out.write_all(text.as_bytes());
             let _ = out.flush();
         }),
-        cli::Command::Config(cli::ConfigCommand::Show(args)) => config::show(&args).map(|text| {
+        cli::Command::Config(command) => match command {
+            cli::ConfigCommand::Show(args) => config::show(&args),
+            cli::ConfigCommand::Init(args) => config::init(&args),
+        }
+        .map(|text| {
             let mut out = std::io::stdout().lock();
             let _ = out.write_all(text.as_bytes());
             let _ = out.flush();

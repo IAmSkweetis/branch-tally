@@ -337,3 +337,68 @@ fn config_show_fails_on_a_bad_file() {
     assert_eq!(out.status.code(), Some(1));
     assert!(stderr(&out).contains("`bogus`"), "{}", stderr(&out));
 }
+
+// ---- config init -----------------------------------------------------------------------------
+
+#[test]
+fn config_init_writes_the_defaults_to_the_user_config_path() {
+    let w = world();
+    let out = w.run(&["config", "init"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let path = w.config_root().join("branch-tally").join("config.toml");
+    assert!(path.is_file(), "{} not written", path.display());
+    assert!(stdout(&out).contains("config.toml"), "{}", stdout(&out));
+    let show = stdout(&w.run(&["config", "show"]));
+    assert!(show.contains("found: yes"), "{show}");
+    assert!(show.contains("mode = claim (config file)"), "{show}");
+    assert!(show.contains("format = md (config file)"), "{show}");
+    assert!(show.contains("cost = true (config file)"), "{show}");
+    assert!(show.contains("work-branch = (not set) (default)"), "{show}");
+    // The generated file changes nothing about a report.
+    let before = World::scenario("main-then-branch");
+    assert_eq!(
+        w.run(&["report", BRANCH, "--json"]).stdout,
+        before.run(&["report", BRANCH, "--json"]).stdout
+    );
+}
+
+#[test]
+fn config_init_path_writes_there_creating_parent_directories() {
+    let w = world();
+    let path = w
+        .config_root()
+        .join("nested")
+        .join("deeper")
+        .join("mine.toml");
+    let p = path.to_str().expect("utf-8 path");
+    let out = w.run(&["config", "init", "--path", p]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(path.is_file(), "{} not written", path.display());
+    assert!(
+        !w.config_root()
+            .join("branch-tally")
+            .join("config.toml")
+            .exists(),
+        "the default location is untouched"
+    );
+    let show = w.run(&["config", "show", "--config", p]);
+    assert!(
+        stdout(&show).contains("mode = claim (config file)"),
+        "{}",
+        stdout(&show)
+    );
+}
+
+#[test]
+fn config_init_never_overwrites_an_existing_file() {
+    let w = world();
+    let path = w.write_default_config("mode = \"strict\"\n");
+    let out = w.run(&["config", "init"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    assert!(stderr(&out).contains("config.toml"), "{}", stderr(&out));
+    assert!(stderr(&out).contains("already exists"), "{}", stderr(&out));
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("still there"),
+        "mode = \"strict\"\n"
+    );
+}

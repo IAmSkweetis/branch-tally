@@ -254,3 +254,29 @@ fn default_path_follows_platform_rules() {
         assert_eq!(default_config_path(&Fake::with_vars(&[])), None);
     }
 }
+
+#[test]
+fn default_config_text_parses_to_the_built_in_defaults() {
+    let (env, path) = Fake::with_file(DEFAULT_CONFIG);
+    let from_file = load(&env, Some(&path), &Flags::default()).expect("template loads");
+    let built_in = load(&Fake::default(), None, &Flags::default()).expect("defaults load");
+    assert!(from_file.file_found);
+    assert_eq!(from_file.mode.value, built_in.mode.value);
+    assert_eq!(from_file.format.value, built_in.format.value);
+    assert_eq!(from_file.cost.value, built_in.cost.value);
+    assert_eq!(from_file.work_branch.value, built_in.work_branch.value);
+    // Every key with a default is written out, not left implicit.
+    for r in [
+        from_file.mode.source,
+        from_file.format.source,
+        from_file.cost.source,
+    ] {
+        assert_eq!(r, Source::ConfigFile);
+    }
+    // work-branch has no default: it is documented in a comment, never set.
+    assert!(
+        DEFAULT_CONFIG.contains("# work-branch = "),
+        "{DEFAULT_CONFIG}"
+    );
+    assert!(!DEFAULT_CONFIG.contains('\r'), "LF only");
+}

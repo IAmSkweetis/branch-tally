@@ -65,8 +65,15 @@ shorthand and its long form cannot be combined, even when they agree (exit 2), a
 `--no-cost` conflict.
 
 ```bash
+branch-tally config init [--path <path>]
 branch-tally config show [--config <path>]
 ```
+
+`config init` writes a starter file holding the built-in defaults (`mode = "claim"`,
+`format = "md"`, `cost = true`, and `work-branch` as a commented-out example) to `--path`, or to the
+location above when `--path` is omitted. It creates missing directories, prints the path it wrote,
+and never overwrites an existing file (exit 1). The written values are pinned: if a later release
+changes a built-in default, a file made by `config init` keeps the old value until you edit it.
 
 `config show` prints the file path, `found: yes|no`, and one `key = value (source)` line each for
 `mode`, `work-branch`, `format` and `cost`, where the source is `flag`, `config file` or `default`

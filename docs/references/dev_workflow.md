@@ -283,8 +283,8 @@ long form, even when they agree (exit 2). `--cost` pairs with `--no-cost`. `--wo
 usage error unless the *effective* mode is timeline, whether that came from `--mode timeline`,
 `--timeline` or a config `mode = "timeline"`; a work-branch set only in the config file is ignored
 outside timeline mode. Defaults live in a user config file (flag > file > default); the README's
-"Config file" section has its location and keys, and `branch-tally config show` prints what
-applies.
+"Config file" section has its location and keys, `branch-tally config init` writes a starter file,
+and `branch-tally config show` prints what applies.
 
 It must run on the machine that did the work, and **while every agent worktree still exists**
 until issue #6 removes that dependency. Report the number as a floor ("at least $X").

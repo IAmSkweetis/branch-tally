@@ -35,7 +35,7 @@ pub(crate) enum Command {
     #[command(subcommand)]
     Prices(PricesCommand),
 
-    /// Inspect the user config file.
+    /// Inspect or create the user config file.
     #[command(subcommand)]
     Config(ConfigCommand),
 }
@@ -44,6 +44,16 @@ pub(crate) enum Command {
 pub(crate) enum ConfigCommand {
     /// Show the config file path, whether it was found, and each effective value and its source.
     Show(ConfigShowArgs),
+
+    /// Write a config file holding the built-in defaults. Never overwrites an existing file.
+    Init(ConfigInitArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ConfigInitArgs {
+    /// Where to write it (default: the user config path that `config show` prints).
+    #[arg(long, value_name = "PATH")]
+    pub(crate) path: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

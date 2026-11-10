@@ -227,6 +227,25 @@ pub struct Settings {
     pub cost: Resolved<bool>,
 }
 
+/// The text `config init` writes: every key that has a built-in default, set to that default,
+/// with each key's choices in a comment. `work-branch` has no default and stays commented out.
+pub const DEFAULT_CONFIG: &str = "# branch-tally user config: standing defaults for `report`.
+# Precedence: command-line flag, then this file, then the built-in default.
+
+# Attribution mode: \"claim\", \"strict\" or \"timeline\".
+mode = \"claim\"
+
+# With mode = \"timeline\", a regex naming the work branches (default: every branch except the
+# repository's default branch and worktree-agent-*). Ignored in the other modes.
+# work-branch = \"^(feat|fix)/\"
+
+# Output format: \"md\" or \"json\".
+format = \"md\"
+
+# Show the estimated-cost column: true or false.
+cost = true
+";
+
 /// The default config path: Windows `%APPDATA%\branch-tally\config.toml`; elsewhere
 /// `$XDG_CONFIG_HOME/branch-tally/config.toml` when set, absolute and non-empty, else
 /// `$HOME/.config/branch-tally/config.toml`. `None` when the needed variables are unset.
