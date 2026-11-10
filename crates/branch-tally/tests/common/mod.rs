@@ -171,6 +171,28 @@ impl World {
         }
     }
 
+    /// The config root the binary sees: `APPDATA` and `XDG_CONFIG_HOME` both point here, so a
+    /// developer's real config never leaks into a test.
+    pub(crate) fn config_root(&self) -> PathBuf {
+        self.home.join("config-root")
+    }
+
+    /// Writes `text` to the default config location the binary will look at.
+    pub(crate) fn write_default_config(&self, text: &str) -> PathBuf {
+        let dir = self.config_root().join("branch-tally");
+        fs::create_dir_all(&dir).expect("config dir");
+        let path = dir.join("config.toml");
+        fs::write(&path, text).expect("write config");
+        path
+    }
+
+    /// Writes `text` to a named file outside the default location, for `--config`.
+    pub(crate) fn write_config_file(&self, name: &str, text: &str) -> PathBuf {
+        let path = self.home.join(name);
+        fs::write(&path, text).expect("write config");
+        path
+    }
+
     /// Runs the binary in the repository with this world's home.
     pub(crate) fn run(&self, args: &[&str]) -> Output {
         self.run_in(&self.repo, args)
@@ -189,6 +211,8 @@ impl World {
             .env("USERPROFILE", &self.home)
             .env("LOCALAPPDATA", self.cache_root())
             .env("XDG_CACHE_HOME", self.cache_root())
+            .env("APPDATA", self.config_root())
+            .env("XDG_CONFIG_HOME", self.config_root())
             .env_remove("BRANCH_TALLY_PRICES_URL")
             .env("GIT_CONFIG_GLOBAL", null_device())
             .env("GIT_CONFIG_NOSYSTEM", "1");

@@ -38,6 +38,41 @@ putting off, too. We'll see where we get.
   content never leaves your machine, and a redaction toggle hides identifiers on request.
 - **Ships as** a CLI, a Claude Code plugin and skill, and a GitHub Action.
 
+## Config file
+
+Default values for `report`'s flags can live in a TOML file. Precedence is flag, then config file,
+then built-in default. A missing file at the default location is normal.
+
+Location: `%APPDATA%\branch-tally\config.toml` on Windows; elsewhere
+`$XDG_CONFIG_HOME/branch-tally/config.toml` (when set, absolute and non-empty), else
+`$HOME/.config/branch-tally/config.toml`. `--config <path>` (on `report` and `config show`) reads
+that file instead, and it must exist (exit 1 if not).
+
+```toml
+mode = "timeline"              # "claim" (default), "strict" or "timeline"
+work-branch = "^(feat|fix)/"   # regex; used only when the effective mode is timeline
+format = "json"                # "md" (default) or "json"
+cost = false                   # true (default) or false; `--cost` undoes it for one run
+```
+
+All four keys are optional. An unknown key, a bad value, invalid TOML or a `work-branch` that is
+not a valid regex stops the run with exit 1 and a message naming the file and the key; the message
+never quotes the file's content.
+
+The command line has matching options: `--mode claim|strict|timeline`, `--format md|json`,
+`--cost` and `--no-cost`. `--strict`, `--timeline`, `--md` and `--json` remain as shorthands. A
+shorthand and its long form cannot be combined, even when they agree (exit 2), and `--cost` and
+`--no-cost` conflict.
+
+```bash
+branch-tally config show [--config <path>]
+```
+
+`config show` prints the file path, `found: yes|no`, and one `key = value (source)` line each for
+`mode`, `work-branch`, `format` and `cost`, where the source is `flag`, `config file` or `default`
+(`config show` takes no report flags, so only the last two appear). A work-branch that is set while
+the mode is not timeline carries `[inactive: mode is not timeline]`.
+
 ## Price table
 
 Estimated costs come from a price table, never from numbers in the code. Every report states the

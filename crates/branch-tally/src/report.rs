@@ -1,4 +1,4 @@
-//! The `report` subcommand: resolve, run core's pipeline, print, optionally update the PR.
+//! The `relet matches = |branch: &str| pattern.as_ref().is_some_and(|p| p.matches(branch));ort` subcommand: resolve, run core's pipeline, print, optionally update the PR.
 //!
 //! Errors are returned as the message to print; `main` writes it to stderr and exits 1.
 
@@ -6,6 +6,7 @@ use std::cell::RefCell;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use branch_tally_core::config::{self, Flags, Format};
 use branch_tally_core::git::{Git, SystemGit, normalize_path};
 use branch_tally_core::model::{Harness, Mode};
 use branch_tally_core::pr::{PrError, PrOutcome, SystemGh, update_pr};
@@ -14,7 +15,11 @@ use branch_tally_core::report::{Options, Report, ReportError, WorkBranch};
 use branch_tally_core::sources::claude_code::{ClaudeCode, slug_candidates};
 use branch_tally_core::sources::{ReadStats, RepoIdentity, Source, SourceError, TranscriptRoot};
 
-use crate::cli::ReportArgs;
+use clap::CommandFactory;
+use clap::error::ErrorKind;
+
+use crate::cli::{Cli, ReportArgs, WorkBranchPattern, parse_work_branch};
+use crate::config::SystemEnv;
 use crate::prices;
 use crate::pyrepr::repr;
 
@@ -24,6 +29,29 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), String> {
     let home = std::env::home_dir().ok_or("Could not determine the home directory")?;
     let projects = home.join(".claude").join("projects");
     let cwd = normalize_path(&args.repo);
+
+    let settings = config::load(
+        &SystemEnv,
+        args.config.as_deref(),
+        &Flags {
+            mode: args.mode_flag(),
+            work_branch: args.work_branch.as_ref().map(|p| p.text.clone()),
+            format: args.format_flag(),
+            cost: args.cost_flag(),
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    let mode = settings.mode.value;
+    if args.work_branch.is_some() && mode != Mode::Timeline {
+        // A flag that cannot apply is a usage error; a configured one is just ignored.
+        Cli::command()
+            .error(
+                ErrorKind::ArgumentConflict,
+                "--work-branch needs timeline mode: pass --timeline or --mode timeline, or set `mode = \"timeline\"` in the config file",
+            )
+            .exit();
+    }
+    let pattern = work_branch_pattern(&settings)?;
 
     let table = prices::resolve_table(&prices::Locations::for_repo(&cwd))?;
 
@@ -35,7 +63,7 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), String> {
         &projects,
         &cwd,
         args.branch.as_deref(),
-        &options(args, &matches),
+        &options(mode, pattern.as_ref(), &matches),
         &table,
     )
     .map_err(|e| {
@@ -63,14 +91,14 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), String> {
         stderr("note: git worktree list was unavailable, so worktree recovery was skipped");
     }
 
-    if args.json {
+    if settings.format.value == Format::Json {
         stdout(&format!(
             "{}\n",
             render::json(&report.summary, &report.costs)
         ));
         return Ok(());
     }
-    let markdown = render::markdown(&report.summary, &report.costs, !args.no_cost);
+    let markdown = render::markdown(&report.summary, &report.costs, settings.cost.value);
     match &args.pr {
         None => stdout(&format!("{}\n", render::wrap(&markdown))),
         Some(number) => update(&cwd, &report, &markdown, number, args.dry_run)?,
@@ -78,23 +106,36 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), String> {
     Ok(())
 }
 
-/// The core options for the flags given: strict, timeline (with an optional custom work-branch
-/// rule) or the default claim mode.
-fn options<'a>(args: &'a ReportArgs, matches: &'a dyn Fn(&str) -> bool) -> Options<'a> {
-    if args.timeline {
-        let options = Options::new(Mode::Timeline);
-        match &args.work_branch {
-            Some(p) => options.with_work_branch(WorkBranch::Custom {
-                pattern: &p.text,
-                matches,
-            }),
-            None => options,
-        }
-    } else if args.strict {
-        Options::new(Mode::Strict)
-    } else {
-        Options::new(Mode::Claim)
+/// The core options for the effective mode, with the work-branch rule in timeline mode.
+fn options<'a>(
+    mode: Mode,
+    pattern: Option<&'a WorkBranchPattern>,
+    matches: &'a dyn Fn(&str) -> bool,
+) -> Options<'a> {
+    let options = Options::new(mode);
+    match (mode, pattern) {
+        (Mode::Timeline, Some(p)) => options.with_work_branch(WorkBranch::Custom {
+            pattern: &p.text,
+            matches,
+        }),
+        _ => options,
     }
+}
+
+/// The active work-branch rule. One from a flag is already compiled; one from the config file is
+/// compiled here, and a bad one names the file and the key (never the pattern).
+fn work_branch_pattern(settings: &config::Settings) -> Result<Option<WorkBranchPattern>, String> {
+    let (true, Some(text)) = (settings.work_branch_active, &settings.work_branch.value) else {
+        return Ok(None);
+    };
+    parse_work_branch(text).map(Some).map_err(|_| {
+        let file = settings
+            .path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        format!("config file {file}: key `work-branch` is not a valid regular expression")
+    })
 }
 
 fn update(
