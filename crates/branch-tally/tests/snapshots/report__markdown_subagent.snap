@@ -16,9 +16,9 @@ expression: text
 
 ### Subagent usage (rolled up to `feat/x`)
 
-| Workspace | Subagent | Calls | Input | Cache write | Cache read | Output | (thinking) | Tokens | Est. cost |
-|---|---|--:|--:|--:|--:|--:|--:|--:|--:|
-| unknown workspace | a1 | 2 | 20 | 0 | 60 | 40 | 0 | 120 | — |
+| Workspace | Subagent | Model | Calls | Input | Cache write | Cache read | Output | (thinking) | Tokens | Est. cost |
+|---|---|---|--:|--:|--:|--:|--:|--:|--:|--:|
+| unknown workspace | a1 | `claude-test-1` | 2 | 20 | 0 | 60 | 40 | 0 | 120 | — |
 
 120 tokens (2 calls) from 1 dispatched subagent(s) across 1 workspace(s) (0 worktree(s)); est. cost —.
 0 subagent call(s) had no dispatch link.

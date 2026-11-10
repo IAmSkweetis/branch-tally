@@ -543,7 +543,17 @@ fn subagent_rows_usage_split_sums_to_their_tokens_through_the_binary() {
         let rows = sub["rows"].as_array().unwrap();
         assert!(!rows.is_empty(), "{scenario}: no subagent rows");
         let (mut calls, mut tokens) = (0, 0);
+        let mut keys = std::collections::HashSet::new();
         for row in rows {
+            let model = row["model"].as_str().unwrap_or("");
+            assert!(!model.is_empty(), "{scenario}: row without a model");
+            let key = (
+                row["workspace"].to_string(),
+                row["workspaceKind"].to_string(),
+                row["subagent"].to_string(),
+                model.to_string(),
+            );
+            assert!(keys.insert(key), "{scenario}: duplicate subagent/model row");
             let split: u64 = [
                 "input",
                 "cacheWrite5m",
