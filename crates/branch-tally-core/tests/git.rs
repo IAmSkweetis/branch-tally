@@ -102,6 +102,47 @@ fn detached_worktree_is_omitted() {
 }
 
 #[test]
+fn default_branch_is_not_guessed_without_origin_head() {
+    // `trunk` has no remote at all: no `main` guess, and no local-branch guess either.
+    let f = fixture();
+    assert!(matches!(
+        SystemGit.default_branch(&f.main),
+        Err(GitError::Failed { .. })
+    ));
+}
+
+#[test]
+fn default_branch_reads_origin_head_and_strips_the_remote() {
+    let f = fixture();
+    let origin = f.main.to_str().expect("utf8");
+    git(&f.wt, &["remote", "add", "origin", origin]);
+    git(&f.wt, &["fetch", "-q", "origin"]);
+    git(&f.wt, &["remote", "set-head", "origin", "trunk"]);
+    assert_eq!(SystemGit.default_branch(&f.wt).expect("default"), "trunk");
+    // Shared config: the main checkout sees the same remote.
+    assert_eq!(SystemGit.default_branch(&f.main).expect("default"), "trunk");
+}
+
+#[test]
+fn default_branch_keeps_slashes_inside_the_branch_name() {
+    let f = fixture();
+    let origin = f.main.to_str().expect("utf8");
+    git(&f.main, &["remote", "add", "origin", origin]);
+    git(&f.main, &["fetch", "-q", "origin"]);
+    git(&f.main, &["remote", "set-head", "origin", "feat/wt"]);
+    assert_eq!(
+        SystemGit.default_branch(&f.main).expect("default"),
+        "feat/wt"
+    );
+}
+
+#[test]
+fn default_branch_outside_a_repo_is_an_error() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    assert!(SystemGit.default_branch(tmp.path()).is_err());
+}
+
+#[test]
 fn failure_outside_a_repo_is_observable() {
     let tmp = tempfile::tempdir().expect("tempdir");
     assert!(matches!(
