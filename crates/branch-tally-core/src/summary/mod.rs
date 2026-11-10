@@ -96,7 +96,7 @@ pub fn summarize(
         // the session claim but is reported separately as unverified.
         match (&attributed.subagent, attributed.basis) {
             (Some(tags), BranchBasis::DispatcherRolledUp) => {
-                add_subagent(&mut sub_rows, tags, u.tokens());
+                add_subagent(&mut sub_rows, tags, r, model);
             }
             (_, BranchBasis::SubagentUnlinked) => {
                 unlinked_calls += 1;
@@ -151,7 +151,12 @@ pub fn summarize(
 }
 
 /// Adds one call to the (workspace, subagent) row, appending it in first-seen order when new.
-fn add_subagent(rows: &mut Vec<SubagentRow>, tags: &SubagentTags, tokens: u64) {
+fn add_subagent(
+    rows: &mut Vec<SubagentRow>,
+    tags: &SubagentTags,
+    r: &crate::model::Record,
+    model: &str,
+) {
     // Linear scan: distinct (workspace, subagent) pairs are few.
     let i = rows
         .iter()
@@ -163,12 +168,23 @@ fn add_subagent(rows: &mut Vec<SubagentRow>, tags: &SubagentTags, tokens: u64) {
                 calls: 0,
                 tokens: 0,
                 agent_ids: BTreeSet::new(),
+                by_model: Vec::new(),
             });
             rows.len() - 1
         });
     rows[i].calls += 1;
-    rows[i].tokens += tokens;
+    rows[i].tokens += r.usage.tokens();
     rows[i].agent_ids.insert(tags.agent_id.clone());
+    // Same accumulation as the by-model table, per row, so the two cannot drift apart.
+    let by_model = &mut rows[i].by_model;
+    let m = by_model
+        .iter()
+        .position(|(n, _)| n == model)
+        .unwrap_or_else(|| {
+            by_model.push((model.to_owned(), Bucket::default()));
+            by_model.len() - 1
+        });
+    add(&mut by_model[m].1, r);
 }
 
 /// `attributionSkill`, else `agent:<name>` for a sidechain, else `main`. Empty strings are falsy.

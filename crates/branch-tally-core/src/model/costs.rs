@@ -21,6 +21,44 @@ pub struct Costs {
     pub unpriced_models: u64,
     /// Which price table produced these numbers, so a report can state its date.
     pub price_table: PriceTableInfo,
+    /// Estimated cost of each subagent breakdown row, index-aligned with
+    /// `Summary::subagents.rows`. Empty when pricing has not filled it (or on old data), in which
+    /// case a row has no cost to show; use [`Costs::subagent_row`].
+    #[serde(default)]
+    pub subagent_rows: Vec<RowCost>,
+    /// The subagent section's total: the sum of the rows' known costs and model counts.
+    #[serde(default)]
+    pub subagent_total: RowCost,
+}
+
+/// A cost that may be only a floor: the sum of the priced parts and how many parts had no price.
+///
+/// Used per subagent row (parts are the row's models) and for the subagent section's total (the
+/// rows' counts summed). Render shows an em dash when nothing was priced, and "at least $X" when
+/// some models were priced and some not (Governance II).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct RowCost {
+    /// Sum of the known costs in USD, unpriced models counting as 0.
+    pub known: f64,
+    /// How many contributing models have a price.
+    pub priced_models: u64,
+    /// How many contributing models have no price.
+    pub unpriced_models: u64,
+}
+
+impl RowCost {
+    /// Whether `known` is only a lower bound because some model had no price.
+    #[must_use]
+    pub fn is_floor(&self) -> bool {
+        self.unpriced_models > 0
+    }
+
+    /// Whether no model contributed a price, so there is no number to show. A row with no models
+    /// at all counts as unpriced.
+    #[must_use]
+    pub fn is_unpriced(&self) -> bool {
+        self.priced_models == 0
+    }
 }
 
 /// Provenance of the price table behind a [`Costs`].
@@ -55,6 +93,13 @@ impl Costs {
             .and_then(|(_, c)| *c)
     }
 
+    /// The cost of subagent breakdown row `index` (aligned with `Summary::subagents.rows`), or
+    /// `None` when pricing recorded nothing for it.
+    #[must_use]
+    pub fn subagent_row(&self, index: usize) -> Option<&RowCost> {
+        self.subagent_rows.get(index)
+    }
+
     /// Whether `total` is only a lower bound because some model had no price.
     #[must_use]
     pub fn is_floor(&self) -> bool {
@@ -72,7 +117,25 @@ mod tests {
             total: 1.5,
             unpriced_models: 1,
             price_table: PriceTableInfo::default(),
+            subagent_rows: vec![RowCost {
+                known: 0.5,
+                priced_models: 1,
+                unpriced_models: 1,
+            }],
+            subagent_total: RowCost::default(),
         }
+    }
+
+    #[test]
+    fn row_cost_floor_unpriced_alignment_and_old_data() {
+        let c = sample();
+        let r = c.subagent_row(0).unwrap();
+        assert!(r.is_floor() && !r.is_unpriced());
+        assert!(c.subagent_row(1).is_none());
+        assert!(RowCost::default().is_unpriced() && !RowCost::default().is_floor());
+        let old = r#"{"by_model":[],"total":0.0,"unpriced_models":0,"price_table":{"as_of":"","source":"bundled"}}"#;
+        let back: Costs = serde_json::from_str(old).unwrap();
+        assert_eq!(back.subagent_rows.len(), 0);
     }
 
     #[test]

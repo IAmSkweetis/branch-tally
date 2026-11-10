@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use super::{AgentId, AttributedRecord, BranchBasis, SessionId};
+use super::{AgentId, AttributedRecord, BranchBasis, Bucket, SessionId};
 
 /// One dispatch link a source found: a parent session launched the subagent `agent_id`.
 ///
@@ -133,6 +133,32 @@ pub struct SubagentRow {
     pub tokens: u64,
     /// Distinct agent ids behind the row.
     pub agent_ids: BTreeSet<AgentId>,
+    /// The row's usage split by model id, in first-seen order, so pricing can cost each model at
+    /// its own rate. Summary fills it; `calls` and `tokens` equal [`SubagentRow::total`]'s
+    /// `calls` and `tokens` whenever this is non-empty. Empty on a summary serialized before
+    /// this field existed, in which case `calls`/`tokens` are all there is (and no cost can be
+    /// derived for the row).
+    #[serde(default)]
+    pub by_model: Vec<(String, Bucket)>,
+}
+
+impl SubagentRow {
+    /// The row's usage summed over its models. Empty `by_model` gives an all-zero bucket.
+    #[must_use]
+    pub fn total(&self) -> Bucket {
+        self.by_model
+            .iter()
+            .fold(Bucket::default(), |mut t, (_, b)| {
+                t.input += b.input;
+                t.cache_write_5m += b.cache_write_5m;
+                t.cache_write_1h += b.cache_write_1h;
+                t.cache_read += b.cache_read;
+                t.output += b.output;
+                t.thinking += b.thinking;
+                t.calls += b.calls;
+                t
+            })
+    }
 }
 
 /// The subagent breakdown, precomputed by the summary stage so render never re-derives it.
@@ -230,6 +256,7 @@ mod tests {
             calls,
             tokens,
             agent_ids: ids.iter().map(|i| AgentId::new(*i)).collect(),
+            by_model: Vec::new(),
         }
     }
 
@@ -345,6 +372,30 @@ mod tests {
         let old = r#"{"rows":[],"unattributed_calls":2,"unattributed_tokens":9}"#;
         let s: SubagentSummary = serde_json::from_str(old).unwrap();
         assert_eq!((s.unattributed_calls, s.unlinked_in_total_calls), (2, 0));
+    }
+
+    #[test]
+    fn row_total_sums_models_and_old_rows_without_models_load() {
+        let b = |input, output, calls| Bucket {
+            input,
+            output,
+            calls,
+            ..Bucket::default()
+        };
+        let mut r = row(Workspace::Main, "x", 3, 30, &["x"]);
+        r.by_model = vec![
+            ("m1".to_owned(), b(10, 5, 1)),
+            ("m2".to_owned(), b(1, 14, 2)),
+        ];
+        let t = r.total();
+        assert_eq!((t.input, t.output, t.calls, t.tokens()), (11, 19, 3, 30));
+        assert_eq!(
+            row(Workspace::Main, "y", 1, 1, &[]).total(),
+            Bucket::default()
+        );
+        let old = r#"{"workspace":"main","subagent":"x","calls":1,"tokens":2,"agent_ids":[]}"#;
+        let back: SubagentRow = serde_json::from_str(old).unwrap();
+        assert_eq!(back.by_model.len(), 0);
     }
 
     #[test]
