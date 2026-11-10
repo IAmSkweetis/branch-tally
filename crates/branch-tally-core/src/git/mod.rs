@@ -141,21 +141,13 @@ pub fn parse_worktree_porcelain(output: &str) -> Vec<Worktree> {
     out
 }
 
-/// Remove a Windows verbatim prefix: `\\?\C:\x` becomes `C:\x` and `\\?\UNC\h\s` becomes
-/// `\\h\s`. Any other path is returned unchanged. String based, so it behaves the same on every
-/// platform and can be tested everywhere.
-#[must_use]
-pub fn strip_verbatim_prefix(path: &Path) -> PathBuf {
-    let Some(s) = path.to_str() else {
+/// Drop a Windows verbatim prefix via [`crate::paths::normalize`]. A non-UTF-8 path is returned
+/// untouched, because normalising goes through lossy text and git must be handed the real bytes.
+fn without_verbatim_prefix(path: &Path) -> PathBuf {
+    if path.to_str().is_none() {
         return path.to_path_buf();
-    };
-    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
-        PathBuf::from(format!(r"\\{rest}"))
-    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
-        PathBuf::from(rest)
-    } else {
-        path.to_path_buf()
     }
+    PathBuf::from(crate::paths::normalize(path))
 }
 
 /// Equivalent of Python's `Path.resolve()` as the reference uses it: canonicalize when the path
@@ -163,8 +155,8 @@ pub fn strip_verbatim_prefix(path: &Path) -> PathBuf {
 #[must_use]
 pub fn normalize_path(path: &Path) -> PathBuf {
     match std::fs::canonicalize(path) {
-        Ok(p) => strip_verbatim_prefix(&p),
-        Err(_) => strip_verbatim_prefix(path),
+        Ok(p) => without_verbatim_prefix(&p),
+        Err(_) => without_verbatim_prefix(path),
     }
 }
 
@@ -440,17 +432,25 @@ mod tests {
     #[test]
     fn verbatim_prefix_is_stripped() {
         assert_eq!(
-            strip_verbatim_prefix(Path::new(r"\\?\D:\x\y")),
+            without_verbatim_prefix(Path::new(r"\\?\D:\x\y")),
             PathBuf::from(r"D:\x\y")
         );
         assert_eq!(
-            strip_verbatim_prefix(Path::new(r"\\?\UNC\srv\share\x")),
+            without_verbatim_prefix(Path::new(r"\\?\UNC\srv\share\x")),
             PathBuf::from(r"\\srv\share\x")
         );
         assert_eq!(
-            strip_verbatim_prefix(Path::new("/plain/path")),
+            without_verbatim_prefix(Path::new("/plain/path")),
             PathBuf::from("/plain/path")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_path_is_passed_through_untouched() {
+        use std::os::unix::ffi::OsStrExt;
+        let p = Path::new(std::ffi::OsStr::from_bytes(b"/tmp/\xff\xfe/x"));
+        assert_eq!(without_verbatim_prefix(p), p);
     }
 
     #[test]
