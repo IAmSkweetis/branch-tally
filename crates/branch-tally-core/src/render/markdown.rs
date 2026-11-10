@@ -93,6 +93,16 @@ fn row_cost_text(cost: Option<&RowCost>) -> String {
     }
 }
 
+/// The model cell shared by the per-model and subagent tables: the id in backticks. An empty id
+/// (a subagent row serialized before rows carried a model) is a dash, not a made-up label.
+fn model_text(model: &str) -> String {
+    if model.is_empty() {
+        "\u{2014}".to_owned()
+    } else {
+        format!("`{model}`")
+    }
+}
+
 /// The dispatched-subagent breakdown (#6), pushed as lines ending in a blank line.
 ///
 /// Not in the reference, so it is omitted entirely when [`SubagentSummary::is_empty`]: that keeps
@@ -118,10 +128,12 @@ fn subagent_section(summary: &Summary, costs: &Costs, show_cost: bool, o: &mut V
             ("", "")
         };
         o.push(format!(
-            "| Workspace | Subagent | Calls | Input | Cache write | Cache read | Output | \
+            "| Workspace | Subagent | Model | Calls | Input | Cache write | Cache read | Output | \
              (thinking) | Tokens |{cost_head}"
         ));
-        o.push(format!("|---|---|--:|--:|--:|--:|--:|--:|--:|{cost_rule}"));
+        o.push(format!(
+            "|---|---|---|--:|--:|--:|--:|--:|--:|--:|{cost_rule}"
+        ));
         for (i, r) in sub.rows.iter().enumerate() {
             let ws = match &r.workspace {
                 Workspace::Main => "main checkout".to_owned(),
@@ -148,8 +160,9 @@ fn subagent_section(summary: &Summary, costs: &Costs, show_cost: bool, o: &mut V
                 String::new()
             };
             o.push(format!(
-                "| {ws} | {} | {} | {} | {} |{cost}",
+                "| {ws} | {} | {} | {} | {} | {} |{cost}",
                 cell(&r.subagent),
+                model_text(&r.model),
                 n(r.calls),
                 usage.join(" | "),
                 n(r.tokens),
@@ -228,7 +241,8 @@ pub fn markdown(summary: &Summary, costs: &Costs, show_cost: bool) -> String {
             String::new()
         };
         o.push(format!(
-            "| `{model}` | {} | {} | {} | {} | {} | {} |{cell}",
+            "| {} | {} | {} | {} | {} | {} | {} |{cell}",
+            model_text(model),
             n(b.calls),
             n(b.input),
             n(b.cache_write_5m + b.cache_write_1h),

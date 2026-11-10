@@ -555,6 +555,7 @@ fn sub_row_m(ws: Workspace, name: &str, id: &str, b: Bucket) -> SubagentRow {
     SubagentRow {
         workspace: ws,
         subagent: name.to_owned(),
+        model: "claude-a".to_owned(),
         calls: b.calls,
         tokens: b.tokens(),
         agent_ids: [AgentId::new(id)].into_iter().collect(),
@@ -574,6 +575,7 @@ fn sub_row(ws: Workspace, name: &str, calls: u64, tokens: u64, ids: &[&str]) -> 
     SubagentRow {
         workspace: ws,
         subagent: name.to_owned(),
+        model: String::new(),
         calls,
         tokens,
         agent_ids: ids.iter().map(|i| AgentId::new(*i)).collect(),
@@ -638,14 +640,14 @@ fn markdown_lists_each_workspace_and_subagent_row_with_totals() {
     // Priced, floor, unpriced, and no cost entry at all (last row).
     let want = "### Subagent usage (rolled up to `feat/x`)\n\
         \n\
-        | Workspace | Subagent | Calls | Input | Cache write | Cache read | Output | (thinking) \
+        | Workspace | Subagent | Model | Calls | Input | Cache write | Cache read | Output | (thinking) \
         | Tokens | Est. cost |\n\
-        |---|---|--:|--:|--:|--:|--:|--:|--:|--:|\n\
-        | main checkout | Explore | 4 | 1,000 | 300 | 9,000 | 1,700 | 500 | 12,000 | $0.50 |\n\
-        | worktree `agent-a1` | Core Implementer | 20 | 4,000 | 100,000 | 300,000 | 6,000 \
+        |---|---|---|--:|--:|--:|--:|--:|--:|--:|--:|\n\
+        | main checkout | Explore | `claude-a` | 4 | 1,000 | 300 | 9,000 | 1,700 | 500 | 12,000 | $0.50 |\n\
+        | worktree `agent-a1` | Core Implementer | `claude-a` | 20 | 4,000 | 100,000 | 300,000 | 6,000 \
         | 2,000 | 410,000 | at least $12.25 |\n\
-        | worktree `agent-a1` | Reviewer | 2 | 500 | 0 | 4,000 | 500 | 0 | 5,000 | \u{2014} |\n\
-        | worktree `agent-b2` | Harness Source Author | 18 | 80,000 | 0 | 200,000 | 100,000 \
+        | worktree `agent-a1` | Reviewer | `claude-a` | 2 | 500 | 0 | 4,000 | 500 | 0 | 5,000 | \u{2014} |\n\
+        | worktree `agent-b2` | Harness Source Author | `claude-a` | 18 | 80,000 | 0 | 200,000 | 100,000 \
         | 10,000 | 380,000 | \u{2014} |\n\
         \n\
         807,000 tokens (44 calls) from 4 dispatched subagent(s) across 3 workspace(s) \
@@ -725,7 +727,7 @@ fn markdown_escapes_pipes_in_subagent_cells() {
     let md = markdown(&s, &c, false);
     assert!(
         md.contains(
-            "| main checkout | a\\|b | 1 | \u{2014} | \u{2014} | \u{2014} | \u{2014} | \u{2014} | 1 |"
+            "| main checkout | a\\|b | \u{2014} | 1 | \u{2014} | \u{2014} | \u{2014} | \u{2014} | \u{2014} | 1 |"
         ),
         "{md}"
     );
@@ -788,13 +790,13 @@ fn unknown_workspace_row_is_labelled_in_markdown_and_unambiguous_in_json() {
     let md = markdown(&s, &c, false);
     assert!(
         md.contains(
-            "| unknown workspace | Explore | 2 | \u{2014} | \u{2014} | \u{2014} | \u{2014} | \u{2014} | 10 |"
+            "| unknown workspace | Explore | \u{2014} | 2 | \u{2014} | \u{2014} | \u{2014} | \u{2014} | \u{2014} | 10 |"
         ),
         "{md}"
     );
     assert!(
         md.contains(
-            "| worktree `unknown` | Explore | 1 | \u{2014} | \u{2014} | \u{2014} | \u{2014} | \u{2014} | 5 |"
+            "| worktree `unknown` | Explore | \u{2014} | 1 | \u{2014} | \u{2014} | \u{2014} | \u{2014} | \u{2014} | 5 |"
         ),
         "{md}"
     );
@@ -815,10 +817,10 @@ fn unknown_workspace_row_is_labelled_in_markdown_and_unambiguous_in_json() {
 fn markdown_drops_the_subagent_cost_column_and_total_under_no_cost() {
     let (s, c) = with_subagents((0, 0));
     let md = markdown(&s, &c, false);
-    let want = "| Workspace | Subagent | Calls | Input | Cache write | Cache read | Output | \
-        (thinking) | Tokens |\n\
-        |---|---|--:|--:|--:|--:|--:|--:|--:|\n\
-        | main checkout | Explore | 4 | 1,000 | 300 | 9,000 | 1,700 | 500 | 12,000 |\n";
+    let want = "| Workspace | Subagent | Model | Calls | Input | Cache write | Cache read | Output \
+        | (thinking) | Tokens |\n\
+        |---|---|---|--:|--:|--:|--:|--:|--:|--:|\n\
+        | main checkout | Explore | `claude-a` | 4 | 1,000 | 300 | 9,000 | 1,700 | 500 | 12,000 |\n";
     assert!(md.contains(want), "{md}");
     let section = &md[md.find("### Subagent usage").unwrap()..md.find("<details>").unwrap()];
     assert!(!section.to_lowercase().contains("est. cost"), "{section}");
@@ -852,7 +854,7 @@ fn markdown_without_a_model_split_shows_dashes_not_zero_usage() {
     let md = markdown(&s, &c, true);
     assert!(
         md.contains(
-            "| main checkout | Old | 3 | \u{2014} | \u{2014} | \u{2014} | \u{2014} | \u{2014} \
+            "| main checkout | Old | \u{2014} | 3 | \u{2014} | \u{2014} | \u{2014} | \u{2014} | \u{2014} \
              | 99 | \u{2014} |\n"
         ),
         "{md}"
@@ -903,4 +905,71 @@ fn json_subagent_section_cost_is_null_when_unpriced_and_split_null_without_model
     assert!(r["thinking"].is_null());
     assert!(r["costUSD"].is_null());
     assert_eq!(r["tokens"], 99);
+}
+
+#[test]
+fn markdown_subagent_model_column_follows_subagent_and_survives_no_cost() {
+    let (s, c) = with_subagents((0, 0));
+    let md = markdown(&s, &c, false);
+    assert!(
+        md.contains(
+            "| Workspace | Subagent | Model | Calls | Input | Cache write | Cache read | Output \
+             | (thinking) | Tokens |\n|---|---|---|--:|--:|--:|--:|--:|--:|--:|\n"
+        ),
+        "{md}"
+    );
+    assert!(
+        md.contains("| main checkout | Explore | `claude-a` | 4 | 1,000 |"),
+        "{md}"
+    );
+}
+
+#[test]
+fn a_subagent_with_two_models_is_two_rows_each_with_its_own_model_and_cost() {
+    let (mut s, mut c) = sample();
+    let mut first = sub_row_m(
+        Workspace::Main,
+        "Explore",
+        "e1",
+        bucket(1, 0, 0, 0, 1, 0, 1),
+    );
+    let mut second = sub_row_m(
+        Workspace::Main,
+        "Explore",
+        "e1",
+        bucket(2, 0, 0, 0, 2, 0, 2),
+    );
+    first.model = "claude-a".to_owned();
+    second.model = "claude-b".to_owned();
+    second.by_model = vec![("claude-b".to_owned(), bucket(2, 0, 0, 0, 2, 0, 2))];
+    s.subagents = SubagentSummary {
+        rows: vec![first, second],
+        ..SubagentSummary::default()
+    };
+    c.subagent_rows = vec![row_cost(1.0, 1, 0), row_cost(2.0, 1, 0)];
+    c.subagent_total = row_cost(3.0, 2, 0);
+    let md = markdown(&s, &c, true);
+    assert!(
+        md.contains("| main checkout | Explore | `claude-a` | 1 |"),
+        "{md}"
+    );
+    assert!(
+        md.contains("| main checkout | Explore | `claude-b` | 2 |"),
+        "{md}"
+    );
+    assert!(md.contains("from 1 dispatched subagent(s)"), "{md}");
+    let v: serde_json::Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    let rows = v["subagents"]["rows"].as_array().unwrap();
+    assert_eq!(rows[0]["model"], "claude-a");
+    assert_eq!(rows[1]["model"], "claude-b");
+    assert_eq!(v["subagents"]["dispatched"], 1);
+}
+
+#[test]
+fn a_row_from_before_the_model_field_shows_a_dash_and_null_in_json() {
+    let (mut s, c) = sample();
+    s.subagents.rows = vec![sub_row(Workspace::Main, "old", 1, 1, &["x"])];
+    assert!(markdown(&s, &c, false).contains("| main checkout | old | \u{2014} | 1 |"));
+    let v: serde_json::Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    assert!(v["subagents"]["rows"][0]["model"].is_null());
 }

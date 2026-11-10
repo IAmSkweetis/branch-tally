@@ -495,6 +495,7 @@ mod subagent_rows {
         let mut r = SubagentRow {
             workspace: Workspace::Main,
             subagent: name.to_owned(),
+            model: String::new(),
             calls: 0,
             tokens: 0,
             agent_ids: BTreeSet::new(),
