@@ -9,9 +9,12 @@
 //! Python truthiness is mirrored on purpose: an empty skill, agent or model string is treated
 //! like an absent one, as the reference's `or` chains do.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
-use crate::model::{Bucket, Mode, Origin, SelectedRecord, SessionId, SessionRow, Summary};
+use crate::model::{
+    Bucket, Mode, Origin, SelectedRecord, SessionId, SessionRow, SubagentRow, SubagentSummary,
+    SubagentTags, Summary,
+};
 
 /// The `origin` text used when a record has no origin. The reference always has one, so this can
 /// only come from a source that could not tell; it is never counted as a worktree session.
@@ -21,8 +24,20 @@ const UNKNOWN_ORIGIN: &str = "unknown";
 ///
 /// `mode` is carried through unchanged. Each record's assigned branch is compared with `branch`
 /// to count off-branch tokens.
+///
+/// `unattributed` is `(calls, tokens)` from [`SubagentSummary::count_unattributed`] over the
+/// **full attributed set before selection**, so it is repository-wide: every subagent record the
+/// read saw that had no usable dispatch link, not only those in the selected sessions. Render
+/// must label it that way. Subagent rows cover only the selected records. In
+/// [`Mode::Strict`] the subagent breakdown (rows and unattributed) is left empty.
 #[must_use]
-pub fn summarize(branch: &str, mode: Mode, selected: &[SelectedRecord]) -> Summary {
+pub fn summarize(
+    branch: &str,
+    mode: Mode,
+    selected: &[SelectedRecord],
+    unattributed: (u64, u64),
+) -> Summary {
+    let mut sub_rows: Vec<SubagentRow> = Vec::new();
     let mut by_model: Vec<(String, Bucket)> = Vec::new();
     let mut model_ix: HashMap<String, usize> = HashMap::new();
     let mut by_attribution: Vec<(String, Bucket)> = Vec::new();
@@ -74,6 +89,10 @@ pub fn summarize(branch: &str, mode: Mode, selected: &[SelectedRecord]) -> Summa
             row.agents.insert(agent.to_owned());
         }
 
+        if let Some(tags) = &attributed.subagent {
+            add_subagent(&mut sub_rows, tags, u.tokens());
+        }
+
         if r.is_sidechain {
             footnote.subagent_calls += 1;
         }
@@ -94,6 +113,17 @@ pub fn summarize(branch: &str, mode: Mode, selected: &[SelectedRecord]) -> Summa
         total.calls += b.calls;
     }
 
+    // Strict mode is the raw view: no roll-up, so no breakdown and nothing to call unattributed.
+    let subagents = if mode == Mode::Strict {
+        SubagentSummary::default()
+    } else {
+        SubagentSummary {
+            rows: sub_rows,
+            unattributed_calls: unattributed.0,
+            unattributed_tokens: unattributed.1,
+        }
+    };
+
     Summary {
         branch: branch.to_owned(),
         mode,
@@ -102,8 +132,29 @@ pub fn summarize(branch: &str, mode: Mode, selected: &[SelectedRecord]) -> Summa
         by_model,
         by_attribution,
         sessions,
-        subagents: crate::model::SubagentSummary::default(),
+        subagents,
     }
+}
+
+/// Adds one call to the (workspace, subagent) row, appending it in first-seen order when new.
+fn add_subagent(rows: &mut Vec<SubagentRow>, tags: &SubagentTags, tokens: u64) {
+    // Linear scan: distinct (workspace, subagent) pairs are few.
+    let i = rows
+        .iter()
+        .position(|s| s.workspace == tags.workspace && s.subagent == tags.subagent)
+        .unwrap_or_else(|| {
+            rows.push(SubagentRow {
+                workspace: tags.workspace.clone(),
+                subagent: tags.subagent.clone(),
+                calls: 0,
+                tokens: 0,
+                agent_ids: BTreeSet::new(),
+            });
+            rows.len() - 1
+        });
+    rows[i].calls += 1;
+    rows[i].tokens += tokens;
+    rows[i].agent_ids.insert(tags.agent_id.clone());
 }
 
 /// `attributionSkill`, else `agent:<name>` for a sidechain, else `main`. Empty strings are falsy.
