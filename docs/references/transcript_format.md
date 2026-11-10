@@ -62,7 +62,10 @@ Choices the parser makes where the format is silent. Fixtures for each are in
   reference's `transcript_roots`; no trailing `-` or suffix needed), both compared
   case-insensitively. Anything else is excluded, including a sibling repo
   that shares a prefix. A repo path shaped like `/d/x` yields two candidate slugs, the literal one
-  and the `D:` drive one, so both cwd forms find the same directory. A leading `\\?\` is stripped.
+  and the `D:` drive one, so both cwd forms find the same directory. A leading `\\?\` is stripped,
+  and `\\?\UNC\srv\share\x` is read as `\\srv\share\x`, slugging to `--srv-share-x` (changed
+  2026-11-10; it was `UNC-srv-share-x`). The slug logic lives in core's shared `paths` module
+  (`paths::slug_candidates`), not in the Claude Code source, which keeps only the matching rule.
 - **Reading.** `<root>/<session>/subagents/agent-*.jsonl` are subagent files, and the directory
   name becomes `parent_session`. Every other `.jsonl` is read like a main session (see Read
   order). `agent_id` and `is_sidechain`

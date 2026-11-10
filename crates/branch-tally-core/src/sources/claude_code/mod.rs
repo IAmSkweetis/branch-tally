@@ -53,8 +53,6 @@ use crate::sources::{ReadStats, RepoIdentity, RootKind, Source, SourceError, Tra
 mod parse;
 mod slug;
 
-pub use slug::slug_candidates;
-
 use parse::{FileContext, read_dispatches, read_file};
 use slug::{Match, classify};
 
@@ -144,7 +142,7 @@ impl Source for ClaudeCode {
                 path: projects_root.to_path_buf(),
             });
         }
-        let slugs = slug_candidates(repo.root());
+        let slugs = crate::paths::slug_candidates(repo.root());
         let mut roots = Vec::new();
         for dir in sorted_entries(projects_root, true)? {
             let name = file_name(&dir);
