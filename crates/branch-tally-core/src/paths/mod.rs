@@ -35,6 +35,22 @@ pub fn windows_drive_form(text: &str) -> Option<String> {
         .then(|| format!("{}:{tail}", drive.to_ascii_uppercase()))
 }
 
+/// The Git Bash form of a Windows drive path: `D:\x` or `D:/x` becomes `/d/x` (lowercase drive,
+/// forward slashes); a bare drive root (`C:` or `C:\`) becomes `/c`. `None` unless the text starts
+/// with `<letter>:` followed by nothing or a separator.
+#[must_use]
+pub fn git_bash_form(text: &str) -> Option<String> {
+    let mut chars = text.chars();
+    let drive = chars.next().filter(char::is_ascii_alphabetic)?;
+    let rest = chars.as_str().strip_prefix(':')?;
+    let tail = rest.replace('\\', "/");
+    if !(tail.is_empty() || tail.starts_with('/')) {
+        return None;
+    }
+    let tail = if tail == "/" { "" } else { tail.as_str() };
+    Some(format!("/{}{tail}", drive.to_ascii_lowercase()))
+}
+
 /// Every character outside `[A-Za-z0-9]` replaced with `-`. Apply to normalised text.
 #[must_use]
 pub fn slugify(text: &str) -> String {
@@ -51,16 +67,22 @@ pub fn slug(path: &Path) -> String {
 }
 
 /// The slugs a path's transcript directory may carry, deduplicated, literal first. A `/d/...` path
-/// yields the literal slug (it may be a real Unix path) and the `D:` drive slug. Callers compare
-/// slugs case-insensitively.
+/// yields the literal slug (it may be a real Unix path) and the `D:` drive slug; a `D:\...` path
+/// yields the literal slug and the Git Bash slug (`/d/...`, lowercase drive). Both directions are
+/// candidates because transcripts record the same cwd in either form. Callers compare slugs
+/// case-insensitively and by exact match, never by prefix.
 #[must_use]
 pub fn slug_candidates(path: &Path) -> Vec<String> {
     let text = normalize(path);
     let mut out = vec![slugify(&text)];
-    if let Some(drive) = windows_drive_form(&text).map(|w| slugify(&w))
-        && !out.contains(&drive)
+    for other in [windows_drive_form(&text), git_bash_form(&text)]
+        .into_iter()
+        .flatten()
+        .map(|t| slugify(&t))
     {
-        out.push(drive);
+        if !out.contains(&other) {
+            out.push(other);
+        }
     }
     out
 }
@@ -126,13 +148,59 @@ mod tests {
             slug_candidates(Path::new("/repo")),
             vec!["-repo".to_owned()]
         );
+        // Drive paths also gain the Git Bash slug (wave 3 decision).
         assert_eq!(
             slug_candidates(Path::new("c:/repo")),
-            vec!["c--repo".to_owned()]
+            vec!["c--repo".to_owned(), "-c-repo".to_owned()]
         );
         assert_eq!(
             slug_candidates(Path::new(r"D:\work spaces\my.repo_x")),
-            vec!["D--work-spaces-my-repo-x".to_owned()]
+            vec![
+                "D--work-spaces-my-repo-x".to_owned(),
+                "-d-work-spaces-my-repo-x".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn git_bash_form_of_drive_paths() {
+        assert_eq!(git_bash_form(r"D:\x").as_deref(), Some("/d/x"));
+        assert_eq!(git_bash_form("D:/x").as_deref(), Some("/d/x"));
+        assert_eq!(git_bash_form("C:").as_deref(), Some("/c"));
+        assert_eq!(git_bash_form(r"C:\").as_deref(), Some("/c"));
+        assert_eq!(git_bash_form("/d/x"), None);
+        assert_eq!(git_bash_form("/repo"), None);
+        assert_eq!(git_bash_form(r"\\srv\share"), None);
+        assert_eq!(git_bash_form("C:x"), None);
+    }
+
+    #[test]
+    fn drive_paths_also_yield_git_bash_slug() {
+        for p in [r"D:\x", "D:/x", r"d:\x", r"\\?\D:\x"] {
+            let c = slug_candidates(Path::new(p));
+            assert_eq!(c.len(), 2, "{p}: {c:?}");
+            assert!(c[0].eq_ignore_ascii_case("D--x"), "{p}: {c:?}");
+            assert_eq!(c[1], "-d-x", "{p}");
+        }
+        assert_eq!(
+            slug_candidates(Path::new(r"C:\")),
+            vec!["C--".to_owned(), "-c".to_owned()]
+        );
+    }
+
+    #[test]
+    fn unc_and_unix_candidates_unchanged() {
+        assert_eq!(
+            slug_candidates(Path::new(r"\\srv\share")),
+            vec!["--srv-share".to_owned()]
+        );
+        assert_eq!(
+            slug_candidates(Path::new("/repo")),
+            vec!["-repo".to_owned()]
+        );
+        assert_eq!(
+            slug_candidates(Path::new("/d/x")),
+            vec!["-d-x".to_owned(), "D--x".to_owned()]
         );
     }
 
