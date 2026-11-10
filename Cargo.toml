@@ -25,6 +25,13 @@ toml = { version = "1.2.1", default-features = false, features = ["std", "parse"
 # bundled webpki roots: no OpenSSL, no system trust store, same behaviour on all six targets.
 # gzip, cookies, json, charset and the proxy extras stay off (we deserialize with serde_json).
 ureq = { version = "3.5.1", default-features = false, features = ["rustls"] }
+# issue #7: the `--work-branch <regex>` flag (binary crate only; core takes a predicate). regex-lite
+# is rust-lang's zero-dependency regex engine by the `regex` maintainers, MIT OR Apache-2.0, built
+# for small binaries (no Unicode tables, no aho-corasick/memchr/regex-automata). Branch names are
+# short and mostly ASCII, so `regex`'s speed and Unicode data buy nothing. Both features stay on:
+# `string` is the `&str` API we call, and `std` only adds the `std::error::Error` impl, which clap's
+# value parser needs to carry a bad `--work-branch` pattern. Neither adds a dependency.
+regex-lite = { version = "0.1.9", default-features = false, features = ["std", "string"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
