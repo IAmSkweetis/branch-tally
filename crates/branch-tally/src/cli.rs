@@ -2,7 +2,9 @@
 
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand};
+use branch_tally_core::config::Format;
+use branch_tally_core::model::Mode;
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 /// Version reported by `--version`: the release tag's version, injected at compile time as
 /// `BRANCH_TALLY_VERSION` (no leading `v`), or `0.0.0-dev` for any other build.
@@ -32,6 +34,48 @@ pub(crate) enum Command {
     /// Manage the model price table.
     #[command(subcommand)]
     Prices(PricesCommand),
+
+    /// Inspect or create the user config file.
+    #[command(subcommand)]
+    Config(ConfigCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum ConfigCommand {
+    /// Show the config file path, whether it was found, and each effective value and its source.
+    Show(ConfigShowArgs),
+
+    /// Write a config file holding the built-in defaults. Never overwrites an existing file.
+    Init(ConfigInitArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ConfigInitArgs {
+    /// Where to write it (default: the user config path that `config show` prints).
+    #[arg(long, value_name = "PATH")]
+    pub(crate) path: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ConfigShowArgs {
+    /// Read this config file instead of the default location (it must exist).
+    #[arg(long, value_name = "PATH")]
+    pub(crate) config: Option<PathBuf>,
+}
+
+/// `--mode` choices.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub(crate) enum ModeArg {
+    Claim,
+    Strict,
+    Timeline,
+}
+
+/// `--format` choices.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub(crate) enum FormatArg {
+    Md,
+    Json,
 }
 
 #[derive(Debug, Subcommand)]
@@ -64,7 +108,7 @@ impl WorkBranchPattern {
     }
 }
 
-fn parse_work_branch(text: &str) -> Result<WorkBranchPattern, String> {
+pub(crate) fn parse_work_branch(text: &str) -> Result<WorkBranchPattern, String> {
     regex_lite::Regex::new(text)
         .map(|regex| WorkBranchPattern {
             text: text.to_owned(),
@@ -84,25 +128,36 @@ pub(crate) struct ReportArgs {
     #[arg(long, default_value = ".", value_name = "PATH")]
     pub(crate) repo: PathBuf,
 
-    /// Naive gitBranch filter: no session claim, no worktree recovery.
+    /// Attribution mode: claim (default), strict or timeline. `--strict` and `--timeline` are
+    /// shorthands; they cannot be combined with `--mode`.
+    #[arg(long, value_enum, conflicts_with_all = ["strict", "timeline"])]
+    pub(crate) mode: Option<ModeArg>,
+
+    /// Naive gitBranch filter: no session claim, no worktree recovery (same as --mode strict).
     #[arg(long)]
     pub(crate) strict: bool,
 
-    /// Attribute by each session's branch timeline instead of its single claimed branch.
+    /// Attribute by each session's branch timeline instead of its single claimed branch (same
+    /// as --mode timeline).
     #[arg(long, conflicts_with = "strict")]
     pub(crate) timeline: bool,
 
-    /// With --timeline, a regex naming the work branches (default: every branch except the
+    /// With timeline mode, a regex naming the work branches (default: every branch except the
     /// repository's default branch and worktree-agent-*). Matched anywhere in the branch name,
     /// as written; anchor it with ^ and $ to match the whole name.
-    #[arg(long, requires = "timeline", value_name = "REGEX", value_parser = parse_work_branch)]
+    #[arg(long, value_name = "REGEX", value_parser = parse_work_branch)]
     pub(crate) work_branch: Option<WorkBranchPattern>,
 
-    /// Emit Markdown (the default).
+    /// Output format: md (default) or json. `--md` and `--json` are shorthands; they cannot be
+    /// combined with `--format`.
+    #[arg(long, value_enum, conflicts_with_all = ["md", "json"])]
+    pub(crate) format: Option<FormatArg>,
+
+    /// Emit Markdown (the default; same as --format md).
     #[arg(long, conflicts_with = "json")]
     pub(crate) md: bool,
 
-    /// Emit JSON instead of Markdown.
+    /// Emit JSON instead of Markdown (same as --format json).
     #[arg(long)]
     pub(crate) json: bool,
 
@@ -115,8 +170,50 @@ pub(crate) struct ReportArgs {
     pub(crate) dry_run: bool,
 
     /// Omit the estimated-cost column.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "cost")]
     pub(crate) no_cost: bool,
+
+    /// Show the estimated-cost column (the default); undoes `cost = false` in the config file.
+    #[arg(long)]
+    pub(crate) cost: bool,
+
+    /// Read this config file instead of the default location (it must exist).
+    #[arg(long, value_name = "PATH")]
+    pub(crate) config: Option<PathBuf>,
+}
+
+impl ReportArgs {
+    /// The mode a flag chose (`--mode`, `--strict` or `--timeline`), or `None` when none did.
+    pub(crate) fn mode_flag(&self) -> Option<Mode> {
+        match self.mode {
+            Some(ModeArg::Claim) => Some(Mode::Claim),
+            Some(ModeArg::Strict) => Some(Mode::Strict),
+            Some(ModeArg::Timeline) => Some(Mode::Timeline),
+            None if self.strict => Some(Mode::Strict),
+            None if self.timeline => Some(Mode::Timeline),
+            None => None,
+        }
+    }
+
+    /// The format a flag chose (`--format`, `--md` or `--json`), or `None` when none did.
+    pub(crate) fn format_flag(&self) -> Option<Format> {
+        match self.format {
+            Some(FormatArg::Md) => Some(Format::Md),
+            Some(FormatArg::Json) => Some(Format::Json),
+            None if self.json => Some(Format::Json),
+            None if self.md => Some(Format::Md),
+            None => None,
+        }
+    }
+
+    /// `--cost` or `--no-cost`, or `None` when neither was given.
+    pub(crate) fn cost_flag(&self) -> Option<bool> {
+        match (self.cost, self.no_cost) {
+            (true, _) => Some(true),
+            (_, true) => Some(false),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]

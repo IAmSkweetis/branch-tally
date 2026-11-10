@@ -7,6 +7,10 @@
     reason = "test helpers outside #[test] fns fail loudly on setup errors"
 )]
 
+#[expect(
+    dead_code,
+    reason = "helpers shared with the other end-to-end test crates"
+)]
 mod common;
 
 use common::{World, stderr, stdout};
