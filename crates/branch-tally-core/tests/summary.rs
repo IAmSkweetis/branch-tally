@@ -314,7 +314,7 @@ fn subagent_rows_merge_by_workspace_and_name_in_first_seen_order() {
 }
 
 #[test]
-fn subagent_row_keeps_usage_split_by_model_and_by_model_totals_are_unchanged() {
+fn subagent_rows_split_by_model_keep_exact_usage_and_by_model_totals_are_unchanged() {
     let wt = || Workspace::worktree("wt-a");
     let recs = vec![
         sub(
@@ -346,9 +346,11 @@ fn subagent_row_keeps_usage_split_by_model_and_by_model_totals_are_unchanged() {
             .usage([100, 0, 0, 0, 0], None),
     ];
     let s = run_with(recs, Mode::Claim, (0, 0));
-    let row = &s.subagents.rows[0];
-    let names: Vec<&str> = row.by_model.iter().map(|(m, _)| m.as_str()).collect();
-    assert_eq!(names, ["m1", "m2"]);
+    let rows = &s.subagents.rows;
+    let models: Vec<&str> = rows.iter().map(|r| r.model.as_str()).collect();
+    assert_eq!(models, ["m1", "m2"]);
+    let row = &rows[0];
+    assert_eq!(row.by_model.len(), 1);
     let m1 = &row.by_model[0].1;
     assert_eq!(
         (
@@ -360,11 +362,13 @@ fn subagent_row_keeps_usage_split_by_model_and_by_model_totals_are_unchanged() {
         (11, 1, 2, 3)
     );
     assert_eq!((m1.output, m1.thinking, m1.calls), (5, 3, 2));
-    assert_eq!(row.by_model[1].1.calls, 1);
-    // The row sum equals the per-model sum and agrees with calls/tokens.
+    assert_eq!(rows[1].by_model[0].1.calls, 1);
+    // Each row's bucket agrees with its calls/tokens, and the rows sum to the old merged row.
     let t = row.total();
     assert_eq!((t.calls, t.tokens()), (row.calls, row.tokens));
-    assert_eq!((t.input, t.output, t.thinking), (31, 11, 3));
+    assert_eq!((t.input, t.output, t.thinking), (11, 5, 3));
+    assert_eq!(rows.iter().map(|r| r.total().input).sum::<u64>(), 31);
+    assert_eq!(s.subagents.dispatched(), 2);
     // by_model totals are untouched by the breakdown.
     let m = |k: &str| s.by_model.iter().find(|(n, _)| n == k).unwrap().1;
     assert_eq!((m("m1").input, m("m1").calls), (111, 3));
@@ -443,5 +447,79 @@ fn unattributed_is_reported_even_without_selected_subagents() {
             s.subagents.unattributed_tokens
         ),
         (4, 40)
+    );
+}
+
+#[test]
+fn a_subagent_with_two_models_is_separate_rows_but_one_dispatched_agent_and_same_totals() {
+    let wt = || Workspace::worktree("wt-a");
+    let recs = vec![
+        sub(
+            rec("s", "feat/x")
+                .model(Some("m1"))
+                .usage([10, 0, 0, 0, 1], None),
+            wt(),
+            "writer",
+            "a1",
+        ),
+        sub(
+            rec("s", "feat/x")
+                .model(Some("m2"))
+                .usage([20, 0, 0, 0, 2], None),
+            wt(),
+            "writer",
+            "a1",
+        ),
+        sub(
+            rec("s", "feat/x")
+                .model(Some("m1"))
+                .usage([5, 0, 0, 0, 1], None),
+            wt(),
+            "writer",
+            "a1",
+        ),
+        sub(
+            rec("s", "feat/x").model(None).usage([7, 0, 0, 0, 0], None),
+            wt(),
+            "writer",
+            "a1",
+        ),
+        sub(
+            rec("s", "feat/x")
+                .model(Some("m1"))
+                .usage([1, 0, 0, 0, 0], None),
+            Workspace::Main,
+            "writer",
+            "a2",
+        ),
+    ];
+    let s = run_with(recs, Mode::Claim, (0, 0));
+    let sub = &s.subagents;
+    let keys: Vec<(String, &str, u64)> = sub
+        .rows
+        .iter()
+        .map(|r| (r.workspace.label(), r.model.as_str(), r.calls))
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            ("wt-a".to_owned(), "m1", 2),
+            ("wt-a".to_owned(), "m2", 1),
+            ("wt-a".to_owned(), "unknown", 1),
+            ("main".to_owned(), "m1", 1),
+        ]
+    );
+    for r in &sub.rows {
+        assert_eq!(r.by_model.len(), 1);
+        assert_eq!(r.by_model[0].0, r.model);
+        assert_eq!((r.total().calls, r.total().tokens()), (r.calls, r.tokens));
+    }
+    assert_eq!(
+        (sub.calls(), sub.tokens()),
+        (5, 10 + 1 + 20 + 2 + 5 + 1 + 7 + 1)
+    );
+    assert_eq!(
+        (sub.dispatched(), sub.workspaces(), sub.worktrees()),
+        (2, 2, 1)
     );
 }

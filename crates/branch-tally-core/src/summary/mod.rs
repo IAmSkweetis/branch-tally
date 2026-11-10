@@ -150,21 +150,25 @@ pub fn summarize(
     }
 }
 
-/// Adds one call to the (workspace, subagent) row, appending it in first-seen order when new.
+/// Adds one call to the (workspace, subagent, model) row, appending it in first-seen order when
+/// new.
 fn add_subagent(
     rows: &mut Vec<SubagentRow>,
     tags: &SubagentTags,
     r: &crate::model::Record,
     model: &str,
 ) {
-    // Linear scan: distinct (workspace, subagent) pairs are few.
+    // Linear scan: distinct (workspace, subagent, model) keys are few.
     let i = rows
         .iter()
-        .position(|s| s.workspace == tags.workspace && s.subagent == tags.subagent)
+        .position(|s| {
+            s.workspace == tags.workspace && s.subagent == tags.subagent && s.model == model
+        })
         .unwrap_or_else(|| {
             rows.push(SubagentRow {
                 workspace: tags.workspace.clone(),
                 subagent: tags.subagent.clone(),
+                model: model.to_owned(),
                 calls: 0,
                 tokens: 0,
                 agent_ids: BTreeSet::new(),

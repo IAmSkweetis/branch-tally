@@ -127,6 +127,13 @@ pub struct SubagentRow {
     pub workspace: Workspace,
     /// The subagent tag.
     pub subagent: String,
+    /// The model id this row is for (`"unknown"` when the record carried none, as in the
+    /// per-model table). Rows are keyed by (workspace, subagent, model), so a subagent that
+    /// called several models has one row each. Empty on a row serialized before this field
+    /// existed: it loads as "model not recorded" (an old multi-model row stays one row whose
+    /// `by_model` still holds the split), and render shows a dash.
+    #[serde(default)]
+    pub model: String,
     /// Calls summed into this row.
     pub calls: u64,
     /// Tokens summed into this row (same definition as [`super::Bucket::tokens`]).
@@ -253,6 +260,7 @@ mod tests {
         SubagentRow {
             workspace: ws,
             subagent: name.to_owned(),
+            model: String::new(),
             calls,
             tokens,
             agent_ids: ids.iter().map(|i| AgentId::new(*i)).collect(),

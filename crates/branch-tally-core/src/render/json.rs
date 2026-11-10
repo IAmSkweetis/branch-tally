@@ -151,6 +151,13 @@ fn subagents(sub: &SubagentSummary, costs: &Costs, o: &mut String) {
             );
             let _ = writeln!(o, "        \"isWorktree\": {},", r.workspace.is_worktree());
             let _ = writeln!(o, "        \"subagent\": {},", string(&r.subagent));
+            // Empty only on a row from before rows carried a model: unknown, so null.
+            let model = if r.model.is_empty() {
+                "null".to_owned()
+            } else {
+                string(&r.model)
+            };
+            let _ = writeln!(o, "        \"model\": {model},");
             let _ = writeln!(o, "        \"calls\": {},", r.calls);
             let _ = writeln!(o, "        \"tokens\": {},", r.tokens);
             let _ = writeln!(o, "        \"agents\": {},", r.agent_ids.len());
