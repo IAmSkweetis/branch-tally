@@ -178,6 +178,7 @@ pub fn summarize(
         by_attribution,
         sessions,
         subagents,
+        work_branch: None,
     }
 }
 

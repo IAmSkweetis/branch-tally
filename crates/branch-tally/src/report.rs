@@ -7,10 +7,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use branch_tally_core::git::{Git, SystemGit, normalize_path};
-use branch_tally_core::model::Harness;
+use branch_tally_core::model::{Harness, Mode};
 use branch_tally_core::pr::{PrError, PrOutcome, SystemGh, update_pr};
 use branch_tally_core::render;
-use branch_tally_core::report::{Report, ReportError};
+use branch_tally_core::report::{Options, Report, ReportError};
 use branch_tally_core::sources::claude_code::{ClaudeCode, slug_candidates};
 use branch_tally_core::sources::{ReadStats, RepoIdentity, Source, SourceError, TranscriptRoot};
 
@@ -34,7 +34,12 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), String> {
         &projects,
         &cwd,
         args.branch.as_deref(),
-        args.strict,
+        // The CLI Builder adds --timeline / --work-branch against `Options` next.
+        &Options::new(if args.strict {
+            Mode::Strict
+        } else {
+            Mode::Claim
+        }),
         &table,
     )
     .map_err(|e| {

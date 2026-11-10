@@ -92,6 +92,7 @@ fn sample() -> (Summary, Costs) {
             ),
         ],
         subagents: branch_tally_core::model::SubagentSummary::default(),
+        work_branch: None,
     };
     // 0.125 and 2.675 are ties for two decimals: 0.125 is exact (half-even gives 0.12), 2.675 is
     // 2.67499999... in binary (gives 2.67).
@@ -1063,4 +1064,84 @@ fn json_carries_heuristics_and_floor_only_when_used() {
     assert_eq!(v["heuristics"]["ambiguous"]["tokens"], 9);
     assert_eq!(v["heuristics"]["isFloor"], true);
     assert_eq!(v["totalCostIsFloor"], true);
+}
+
+fn timeline_summary(rule: Option<branch_tally_core::model::WorkBranchRule>) -> (Summary, Costs) {
+    let (mut s, c) = sample();
+    s.mode = Mode::Timeline;
+    s.work_branch = rule;
+    (s, c)
+}
+
+#[test]
+fn the_default_branch_is_named_when_it_did_not_come_from_origin_head() {
+    use branch_tally_core::model::{DefaultBranchSource as Src, WorkBranchRule as Rule};
+    let rule = |source| {
+        Some(Rule::ExcludesDefault {
+            branch: "develop".to_owned(),
+            source,
+        })
+    };
+
+    let (s, c) = timeline_summary(rule(Src::InitDefaultBranch));
+    let md = markdown(&s, &c, false);
+    assert!(
+        footnote_line(&md).contains(
+            " \u{b7} work branches: all except default branch `develop` (from \
+             init.defaultBranch; origin/HEAD was not available)"
+        ),
+        "{md}"
+    );
+
+    let (s, c) = timeline_summary(rule(Src::AssumedMain));
+    let md = markdown(&s, &c, false);
+    assert!(
+        footnote_line(&md).contains(
+            " \u{b7} work branches: all except default branch `develop` (assumed; neither \
+             origin/HEAD nor init.defaultBranch was available)"
+        ),
+        "{md}"
+    );
+
+    // From origin/HEAD it is the ordinary case: nothing extra to say in the footnote.
+    let (s, c) = timeline_summary(rule(Src::OriginHead));
+    assert!(!markdown(&s, &c, false).contains("work branches:"));
+}
+
+#[test]
+fn a_custom_work_branch_pattern_is_stated() {
+    use branch_tally_core::model::WorkBranchRule as Rule;
+    let (s, c) = timeline_summary(Some(Rule::Custom {
+        pattern: "^feat/".to_owned(),
+    }));
+    let md = markdown(&s, &c, false);
+    assert!(
+        footnote_line(&md).contains(" \u{b7} work branches: custom pattern `^feat/`"),
+        "{md}"
+    );
+}
+
+#[test]
+fn json_states_the_work_branch_rule_only_when_there_is_one() {
+    use branch_tally_core::model::{DefaultBranchSource as Src, WorkBranchRule as Rule};
+    use serde_json::Value;
+    let (s, c) = sample();
+    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    assert!(v.get("workBranch").is_none());
+
+    let (s, c) = timeline_summary(Some(Rule::ExcludesDefault {
+        branch: "develop".to_owned(),
+        source: Src::AssumedMain,
+    }));
+    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    assert_eq!(v["workBranch"]["kind"], "excludesDefault");
+    assert_eq!(v["workBranch"]["defaultBranch"], "develop");
+    assert_eq!(v["workBranch"]["source"], "assumed");
+
+    let (s, c) = timeline_summary(Some(Rule::Custom {
+        pattern: "^f\"x".to_owned(),
+    }));
+    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    assert_eq!(v["workBranch"]["kind"], "custom");
+    assert_eq!(v["workBranch"]["pattern"], "^f\"x");
 }

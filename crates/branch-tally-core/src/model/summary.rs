@@ -166,6 +166,50 @@ impl HeuristicBreakdown {
     }
 }
 
+/// Where the default branch a timeline report excluded came from. Anything but
+/// [`Self::OriginHead`] is a fallback, and the report says so (Governance II).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DefaultBranchSource {
+    /// `refs/remotes/origin/HEAD`: what the remote says.
+    OriginHead,
+    /// `git config init.defaultBranch`, used because `origin/HEAD` was unresolvable.
+    InitDefaultBranch,
+    /// Neither was available: `main` was assumed.
+    AssumedMain,
+}
+
+impl DefaultBranchSource {
+    /// Text for the report: `origin/HEAD`, `init.defaultBranch` or `assumed`.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OriginHead => "origin/HEAD",
+            Self::InitDefaultBranch => "init.defaultBranch",
+            Self::AssumedMain => "assumed",
+        }
+    }
+}
+
+/// Which branches timeline mode treated as work branches. Recorded on the summary so the report
+/// can state it. Not transcript content: a branch name and a user-supplied pattern.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WorkBranchRule {
+    /// Every branch except the default branch and `worktree-agent-*`.
+    ExcludesDefault {
+        /// The default branch that was excluded.
+        branch: String,
+        /// Where `branch` came from.
+        source: DefaultBranchSource,
+    },
+    /// A custom `--work-branch` pattern was used (its text).
+    Custom {
+        /// The pattern as the user gave it.
+        pattern: String,
+    },
+}
+
 /// The counts `render`'s footnote prints, precomputed by the summary stage.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Footnote {
@@ -202,6 +246,10 @@ pub struct Summary {
     /// Absent in older serialized data.
     #[serde(default)]
     pub subagents: SubagentSummary,
+    /// Which branches timeline mode treated as work branches. `None` outside timeline mode.
+    /// Absent in older serialized data.
+    #[serde(default)]
+    pub work_branch: Option<WorkBranchRule>,
 }
 
 #[cfg(test)]

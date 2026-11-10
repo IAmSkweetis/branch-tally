@@ -8,7 +8,8 @@ use std::cmp::Reverse;
 use std::fmt::Write as _;
 
 use crate::model::{
-    Costs, HeuristicBreakdown, Mode, PriceTableSource, RowCost, Summary, Workspace,
+    Costs, DefaultBranchSource, HeuristicBreakdown, Mode, PriceTableSource, RowCost, Summary,
+    WorkBranchRule, Workspace,
 };
 
 /// Opens the region of a PR body this tool owns.
@@ -102,6 +103,32 @@ fn heuristic_note(h: &HeuristicBreakdown) -> String {
         String::new()
     } else {
         format!(" \u{b7} attributed by heuristic: {}", parts.join("; "))
+    }
+}
+
+/// The footnote segment stating which branches timeline mode treated as work branches, whenever
+/// that is not the ordinary case (Governance II: a fallback or a custom rule is a heuristic the
+/// report must declare). Empty for the default rule resolved from `origin/HEAD`, and outside
+/// timeline mode.
+fn work_branch_note(rule: Option<&WorkBranchRule>) -> String {
+    match rule {
+        None
+        | Some(WorkBranchRule::ExcludesDefault {
+            source: DefaultBranchSource::OriginHead,
+            ..
+        }) => String::new(),
+        Some(WorkBranchRule::ExcludesDefault { branch, source }) => {
+            let why = match source {
+                DefaultBranchSource::InitDefaultBranch => {
+                    "from init.defaultBranch; origin/HEAD was not available"
+                }
+                _ => "assumed; neither origin/HEAD nor init.defaultBranch was available",
+            };
+            format!(" \u{b7} work branches: all except default branch `{branch}` ({why})")
+        }
+        Some(WorkBranchRule::Custom { pattern }) => {
+            format!(" \u{b7} work branches: custom pattern `{pattern}`")
+        }
     }
 }
 
@@ -341,13 +368,14 @@ pub fn markdown(summary: &Summary, costs: &Costs, show_cost: bool) -> String {
     };
     let mut note = format!(
         "<sub>Branch `{}`{mode} \u{b7} {} session(s), {} in a worktree \u{b7} {} of {} calls \
-         from subagents{}",
+         from subagents{}{}",
         summary.branch,
         ordered.len(),
         summary.footnote.worktree_sessions,
         n(summary.footnote.subagent_calls),
         n(total.calls),
         heuristic_note(heur),
+        work_branch_note(summary.work_branch.as_ref()),
     );
     if show_cost {
         note.push_str(&price_note(costs));

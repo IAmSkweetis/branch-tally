@@ -10,7 +10,7 @@ use std::cmp::Reverse;
 use std::fmt::Write as _;
 
 use crate::model::{
-    Costs, HeuristicBreakdown, PriceTableSource, RowCost, SubagentSummary, Summary,
+    Costs, HeuristicBreakdown, PriceTableSource, RowCost, SubagentSummary, Summary, WorkBranchRule,
 };
 
 /// Python `json.dumps` string escaping with `ensure_ascii=True`.
@@ -149,6 +149,27 @@ fn heuristics(h: &HeuristicBreakdown, o: &mut String) {
     o.push_str("  },\n");
 }
 
+/// The `workBranch` object (#7): which branches timeline mode treated as work branches. Present
+/// only when the summary records a rule, i.e. in timeline mode.
+fn work_branch(rule: Option<&WorkBranchRule>, o: &mut String) {
+    match rule {
+        None => {}
+        Some(WorkBranchRule::ExcludesDefault { branch, source }) => {
+            o.push_str("  \"workBranch\": {\n");
+            o.push_str("    \"kind\": \"excludesDefault\",\n");
+            let _ = writeln!(o, "    \"defaultBranch\": {},", string(branch));
+            let _ = writeln!(o, "    \"source\": {}", string(source.as_str()));
+            o.push_str("  },\n");
+        }
+        Some(WorkBranchRule::Custom { pattern }) => {
+            o.push_str("  \"workBranch\": {\n");
+            o.push_str("    \"kind\": \"custom\",\n");
+            let _ = writeln!(o, "    \"pattern\": {}", string(pattern));
+            o.push_str("  },\n");
+        }
+    }
+}
+
 /// The `subagents` object (#6). Not in the reference: omitted when empty, so strict mode and
 /// reports without dispatched subagents keep the reference's shape. Totals come from the
 /// accessors and count rolled-up records only; `unattributed*` span every attributed record, not
@@ -281,6 +302,7 @@ pub fn json(summary: &Summary, costs: &Costs) -> String {
     price_table(costs, &mut o);
 
     heuristics(heur, &mut o);
+    work_branch(summary.work_branch.as_ref(), &mut o);
     subagents(&summary.subagents, costs, &mut o);
 
     if sessions.is_empty() {

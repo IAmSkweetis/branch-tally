@@ -19,7 +19,8 @@ pub use attributed::{AttributedRecord, BranchBasis, SelectedRecord, Selection};
 pub use costs::{Costs, PriceTableInfo, PriceTableSource, RowCost};
 pub use subagent::{Dispatch, SubagentRow, SubagentSummary, SubagentTags, Workspace};
 pub use summary::{
-    Bucket, Footnote, HeuristicBreakdown, HeuristicCount, Mode, SessionRow, Summary,
+    Bucket, DefaultBranchSource, Footnote, HeuristicBreakdown, HeuristicCount, Mode, SessionRow,
+    Summary, WorkBranchRule,
 };
 
 /// The transcript root a record was read from (`origin` in `load_records` of
