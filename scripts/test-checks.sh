@@ -63,7 +63,7 @@ expect reject "$package" v0.1.0 "" "$scratch/branch-tally"
 expect reject "$package" v0.1.0 "$linux" "$scratch/missing"
 total=$((total + 1))
 name="branch-tally-v0.1.0-$linux"
-listing=$(tar -tzf "$scratch/out/$name.tar.gz" 2>/dev/null | sort | tr '\n' ' ')
+listing=$(tar -tzf "$scratch/out/$name.tar.gz" 2>/dev/null | LC_ALL=C sort | tr '\n' ' ')
 want="$name/ $name/LICENSE $name/README.md $name/branch-tally "
 if [ "$listing" != "$want" ]; then
   wrong=$((wrong + 1))
