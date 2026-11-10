@@ -7,10 +7,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use branch_tally_core::git::{Git, SystemGit, normalize_path};
-use branch_tally_core::model::Harness;
+use branch_tally_core::model::{Harness, Mode};
 use branch_tally_core::pr::{PrError, PrOutcome, SystemGh, update_pr};
 use branch_tally_core::render;
-use branch_tally_core::report::{Report, ReportError};
+use branch_tally_core::report::{Options, Report, ReportError, WorkBranch};
 use branch_tally_core::sources::claude_code::{ClaudeCode, slug_candidates};
 use branch_tally_core::sources::{ReadStats, RepoIdentity, Source, SourceError, TranscriptRoot};
 
@@ -28,13 +28,14 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), String> {
     let table = prices::resolve_table(&prices::Locations::for_repo(&cwd))?;
 
     let source = CheckedSource::default();
+    let matches = |branch: &str| args.work_branch.as_ref().is_some_and(|p| p.matches(branch));
     let report = branch_tally_core::report::run(
         &SystemGit,
         &source,
         &projects,
         &cwd,
         args.branch.as_deref(),
-        args.strict,
+        &options(args, &matches),
         &table,
     )
     .map_err(|e| {
@@ -75,6 +76,25 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), String> {
         Some(number) => update(&cwd, &report, &markdown, number, args.dry_run)?,
     }
     Ok(())
+}
+
+/// The core options for the flags given: strict, timeline (with an optional custom work-branch
+/// rule) or the default claim mode.
+fn options<'a>(args: &'a ReportArgs, matches: &'a dyn Fn(&str) -> bool) -> Options<'a> {
+    if args.timeline {
+        let options = Options::new(Mode::Timeline);
+        match &args.work_branch {
+            Some(p) => options.with_work_branch(WorkBranch::Custom {
+                pattern: &p.text,
+                matches,
+            }),
+            None => options,
+        }
+    } else if args.strict {
+        Options::new(Mode::Strict)
+    } else {
+        Options::new(Mode::Claim)
+    }
 }
 
 fn update(

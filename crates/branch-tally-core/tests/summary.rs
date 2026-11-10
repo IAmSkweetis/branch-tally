@@ -68,12 +68,18 @@ impl Rec {
 
 fn run(recs: Vec<Rec>) -> Summary {
     let v: Vec<SelectedRecord> = recs.into_iter().map(|r| r.0).collect();
-    summarize("feat/x", Mode::Claim, &v, (0, 0))
+    summarize("feat/x", Mode::Claim, &v, (0, 0), HeuristicCount::default())
 }
 
 #[test]
 fn carries_branch_and_mode() {
-    let s = summarize("feat/x", Mode::Strict, &[], (0, 0));
+    let s = summarize(
+        "feat/x",
+        Mode::Strict,
+        &[],
+        (0, 0),
+        HeuristicCount::default(),
+    );
     assert_eq!(s.branch, "feat/x");
     assert_eq!(s.mode, Mode::Strict);
     assert!(s.by_model.is_empty() && s.sessions.is_empty());
@@ -265,7 +271,7 @@ fn sub(mut r: Rec, ws: Workspace, name: &str, id: &str) -> Rec {
 
 fn run_with(recs: Vec<Rec>, mode: Mode, un: (u64, u64)) -> Summary {
     let v: Vec<SelectedRecord> = recs.into_iter().map(|r| r.0).collect();
-    summarize("feat/x", mode, &v, un)
+    summarize("feat/x", mode, &v, un, HeuristicCount::default())
 }
 
 #[test]
@@ -522,4 +528,112 @@ fn a_subagent_with_two_models_is_separate_rows_but_one_dispatched_agent_and_same
         (sub.dispatched(), sub.workspaces(), sub.worktrees()),
         (2, 2, 1)
     );
+}
+
+// ---- heuristic breakdown (#7) ----
+
+use branch_tally_core::model::{HeuristicBreakdown, HeuristicCount};
+use branch_tally_core::summary::count_ambiguous;
+
+fn based(mut r: Rec, basis: BranchBasis, kept: Selection) -> Rec {
+    r.0.attributed.basis = basis;
+    r.0.kept_by = kept;
+    r
+}
+
+fn hc(calls: u64, tokens: u64) -> HeuristicCount {
+    HeuristicCount { calls, tokens }
+}
+
+fn run_h(recs: Vec<Rec>, mode: Mode, amb: HeuristicCount) -> Summary {
+    let v: Vec<SelectedRecord> = recs.into_iter().map(|r| r.0).collect();
+    summarize("feat/x", mode, &v, (0, 0), amb)
+}
+
+fn tok(n: u64) -> [u64; 5] {
+    [n, 0, 0, 0, 0]
+}
+
+#[test]
+fn heuristics_count_each_selected_record_under_exactly_one_field() {
+    let b = |n, basis, kept| based(rec("s", "feat/x").usage(tok(n), None), basis, kept);
+    let recs = vec![
+        rec("s", "feat/x").usage(tok(1), None),
+        b(2, BranchBasis::Stamped, Selection::SessionClaim),
+        b(4, BranchBasis::WorktreeRecovered, Selection::Exact),
+        b(8, BranchBasis::OriginRecovered, Selection::Exact),
+        b(16, BranchBasis::DispatcherRolledUp, Selection::Exact),
+        b(32, BranchBasis::TimelineForward, Selection::Exact),
+        b(64, BranchBasis::TimelineCarried, Selection::Exact),
+        b(64, BranchBasis::TimelineCarried, Selection::Exact),
+    ];
+    let h = run_h(recs, Mode::Timeline, hc(0, 0)).footnote.heuristics;
+    assert_eq!(h.session_claim, hc(1, 2));
+    assert_eq!(h.worktree_recovery, hc(1, 4));
+    assert_eq!(h.origin_recovery, hc(1, 8));
+    assert_eq!(h.dispatcher_roll_up, hc(1, 16));
+    assert_eq!(h.timeline_forward, hc(1, 32));
+    assert_eq!(h.timeline_carried, hc(2, 128));
+    assert_eq!(h.ambiguous, hc(0, 0));
+}
+
+#[test]
+fn ambiguous_comes_from_the_argument_and_is_not_double_counted() {
+    let recs = vec![based(
+        rec("s", "feat/x").usage(tok(5), None),
+        BranchBasis::TimelineAmbiguous,
+        Selection::Exact,
+    )];
+    let h = run_h(recs, Mode::Timeline, hc(3, 99)).footnote.heuristics;
+    assert_eq!(h.ambiguous, hc(3, 99));
+    assert_eq!(h.session_claim, hc(0, 0));
+    assert!(h.any_ambiguous());
+}
+
+#[test]
+fn strict_mode_leaves_heuristics_at_default() {
+    let recs = vec![based(
+        rec("s", "feat/x"),
+        BranchBasis::WorktreeRecovered,
+        Selection::Exact,
+    )];
+    let s = run_h(recs, Mode::Strict, hc(2, 2));
+    assert_eq!(s.footnote.heuristics, HeuristicBreakdown::default());
+}
+
+#[test]
+fn claim_mode_fills_heuristics_too() {
+    let recs = vec![based(
+        rec("s", "feat/y"),
+        BranchBasis::Stamped,
+        Selection::SessionClaim,
+    )];
+    let h = run_h(recs, Mode::Claim, hc(0, 0)).footnote.heuristics;
+    assert_eq!(h.session_claim.calls, 1);
+}
+
+#[test]
+fn count_ambiguous_covers_selected_sessions_selected_or_not() {
+    let r = |s, br, n, basis| based(rec(s, br).usage(tok(n), None), basis, Selection::Exact);
+    let amb = BranchBasis::TimelineAmbiguous;
+    let selected_rec = r("s1", "feat/x", 1, BranchBasis::Stamped);
+    let amb_sel = r("s1", "feat/x", 10, amb);
+    let amb_unsel = r("s1", "other", 20, amb);
+    let unlinked = r("s1", "other", 40, BranchBasis::SubagentUnlinked);
+    let other_session = r("s2", "other", 80, amb);
+    let plain_unsel = r("s1", "other", 160, BranchBasis::Stamped);
+
+    let all: Vec<AttributedRecord> = [
+        &selected_rec,
+        &amb_sel,
+        &amb_unsel,
+        &unlinked,
+        &other_session,
+        &plain_unsel,
+    ]
+    .iter()
+    .map(|x| x.0.attributed.clone())
+    .collect();
+    let selected = vec![selected_rec.0.clone(), amb_sel.0.clone()];
+    assert_eq!(count_ambiguous(&all, &selected), hc(3, 70));
 }

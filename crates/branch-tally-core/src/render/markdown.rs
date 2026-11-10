@@ -7,7 +7,10 @@
 use std::cmp::Reverse;
 use std::fmt::Write as _;
 
-use crate::model::{Costs, PriceTableSource, RowCost, Summary, Workspace};
+use crate::model::{
+    Costs, DefaultBranchSource, HeuristicBreakdown, Mode, PriceTableSource, RowCost, Summary,
+    WorkBranchRule, Workspace,
+};
 
 /// Opens the region of a PR body this tool owns.
 pub const START: &str = "<!-- token-report:start -->";
@@ -48,8 +51,12 @@ fn millions(tokens: u64) -> String {
 }
 
 /// The total cost cell. A partial total is a floor (Governance II), so the cell says so itself.
-fn total_cost_cell(costs: &Costs) -> String {
-    let floor = if costs.is_floor() { "at least " } else { "" };
+fn total_cost_cell(costs: &Costs, ambiguous: bool) -> String {
+    let floor = if costs.is_floor() || ambiguous {
+        "at least "
+    } else {
+        ""
+    };
     format!(" **{floor}${:.2}** |", costs.total)
 }
 
@@ -75,6 +82,70 @@ fn price_note(costs: &Costs) -> String {
         );
     }
     note
+}
+
+/// The footnote segment naming each heuristic that assigned at least one call, with its calls and
+/// tokens. Zero entries are omitted, and so is the whole segment when none was used.
+fn heuristic_note(h: &HeuristicBreakdown) -> String {
+    let parts: Vec<String> = [
+        ("session claim", h.session_claim),
+        ("worktree recovery", h.worktree_recovery),
+        ("origin recovery", h.origin_recovery),
+        ("dispatcher roll-up", h.dispatcher_roll_up),
+        ("timeline forward", h.timeline_forward),
+        ("timeline carried", h.timeline_carried),
+    ]
+    .into_iter()
+    .filter(|(_, c)| c.calls > 0)
+    .map(|(name, c)| format!("{name} {} call(s) / {} tokens", n(c.calls), n(c.tokens)))
+    .collect();
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" \u{b7} attributed by heuristic: {}", parts.join("; "))
+    }
+}
+
+/// The footnote segment stating which branches timeline mode treated as work branches, whenever
+/// that is not the ordinary case (Governance II: a fallback or a custom rule is a heuristic the
+/// report must declare). Empty for the default rule resolved from `origin/HEAD`, and outside
+/// timeline mode.
+fn work_branch_note(rule: Option<&WorkBranchRule>) -> String {
+    match rule {
+        None
+        | Some(WorkBranchRule::ExcludesDefault {
+            source: DefaultBranchSource::OriginHead,
+            ..
+        }) => String::new(),
+        Some(WorkBranchRule::ExcludesDefault { branch, source }) => {
+            let why = match source {
+                DefaultBranchSource::InitDefaultBranch => {
+                    "from init.defaultBranch; origin/HEAD was not available"
+                }
+                _ => "assumed; neither origin/HEAD nor init.defaultBranch was available",
+            };
+            format!(" \u{b7} work branches: all except default branch `{branch}` ({why})")
+        }
+        Some(WorkBranchRule::Custom { pattern }) => {
+            format!(" \u{b7} work branches: custom pattern `{pattern}`")
+        }
+    }
+}
+
+/// When some calls could not be attributed with certainty, the token total is only a floor
+/// (Governance II): say so, and how much was ambiguous. Pushes nothing otherwise.
+fn floor_statement(h: &HeuristicBreakdown, total_tokens: u64, o: &mut Vec<String>) {
+    if !h.any_ambiguous() {
+        return;
+    }
+    o.push(format!(
+        "**Token total is at least {}**: {} token(s) in {} call(s) could not be attributed to a \
+         branch with certainty.",
+        n(total_tokens),
+        n(h.ambiguous.tokens),
+        n(h.ambiguous.calls),
+    ));
+    o.push(String::new());
 }
 
 /// A table cell from recorded text: a pipe would end the cell early.
@@ -216,6 +287,7 @@ fn subagent_section(summary: &Summary, costs: &Costs, show_cost: bool, o: &mut V
 #[must_use]
 pub fn markdown(summary: &Summary, costs: &Costs, show_cost: bool) -> String {
     let total = &summary.total;
+    let heur = &summary.footnote.heuristics;
     let mut rows: Vec<_> = summary.by_model.iter().collect();
     rows.sort_by_key(|(_, b)| Reverse(b.output));
     let mut ordered: Vec<_> = summary.sessions.iter().collect();
@@ -252,7 +324,7 @@ pub fn markdown(summary: &Summary, costs: &Costs, show_cost: bool) -> String {
         ));
     }
     let total_cell = if show_cost {
-        total_cost_cell(costs)
+        total_cost_cell(costs, summary.footnote.heuristics.any_ambiguous())
     } else {
         String::new()
     };
@@ -287,15 +359,23 @@ pub fn markdown(summary: &Summary, costs: &Costs, show_cost: bool) -> String {
     }
     o.push(String::new());
 
+    floor_statement(heur, total.tokens(), &mut o);
+
+    let mode = if summary.mode == Mode::Timeline {
+        " \u{b7} timeline mode"
+    } else {
+        ""
+    };
     let mut note = format!(
-        "<sub>Branch `{}` \u{b7} {} session(s), {} in a worktree \u{b7} {} of {} calls from \
-         subagents \u{b7} {} tokens recovered from pre-branch/worktree checkouts",
+        "<sub>Branch `{}`{mode} \u{b7} {} session(s), {} in a worktree \u{b7} {} of {} calls \
+         from subagents{}{}",
         summary.branch,
         ordered.len(),
         summary.footnote.worktree_sessions,
         n(summary.footnote.subagent_calls),
         n(total.calls),
-        millions(summary.footnote.off_branch_tokens),
+        heuristic_note(heur),
+        work_branch_note(summary.work_branch.as_ref()),
     );
     if show_cost {
         note.push_str(&price_note(costs));

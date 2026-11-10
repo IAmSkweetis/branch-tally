@@ -5,7 +5,8 @@
 use std::collections::BTreeSet;
 
 use branch_tally_core::model::{
-    Bucket, Costs, Footnote, Mode, PriceTableInfo, PriceTableSource, SessionId, SessionRow, Summary,
+    Bucket, Costs, Footnote, HeuristicBreakdown, HeuristicCount, Mode, PriceTableInfo,
+    PriceTableSource, SessionId, SessionRow, Summary,
 };
 use branch_tally_core::render::{END, HEADING, START, json, markdown, splice, wrap};
 
@@ -52,6 +53,7 @@ fn sample() -> (Summary, Costs) {
             subagent_calls: 1234,
             off_branch_tokens: 2_500_000,
             worktree_sessions: 1,
+            ..Footnote::default()
         },
         by_model: vec![
             (
@@ -90,6 +92,7 @@ fn sample() -> (Summary, Costs) {
             ),
         ],
         subagents: branch_tally_core::model::SubagentSummary::default(),
+        work_branch: None,
     };
     // 0.125 and 2.675 are ties for two decimals: 0.125 is exact (half-even gives 0.12), 2.675 is
     // 2.67499999... in binary (gives 2.67).
@@ -116,7 +119,7 @@ fn tail(note_end: &str) -> String {
          | `abcdefgh` | main checkout | \u{2014} | 01-02 03:04 \u{2192} 01-02 05:06 | 2 | 1.2M |\n\
          \n\
          <sub>Branch `feat/x` \u{b7} 2 session(s), 1 in a worktree \u{b7} 1,234 of 3 calls from \
-         subagents \u{b7} 2.5M tokens recovered from pre-branch/worktree checkouts{note_end}\n\
+         subagents{note_end}\n\
          \n\
          <details><summary>Breakdown by skill / agent</summary>\n\
          \n\
@@ -972,4 +975,173 @@ fn a_row_from_before_the_model_field_shows_a_dash_and_null_in_json() {
     assert!(markdown(&s, &c, false).contains("| main checkout | old | \u{2014} | 1 |"));
     let v: serde_json::Value = serde_json::from_str(&json(&s, &c)).unwrap();
     assert!(v["subagents"]["rows"][0]["model"].is_null());
+}
+
+fn hc(calls: u64, tokens: u64) -> HeuristicCount {
+    HeuristicCount { calls, tokens }
+}
+
+fn footnote_line(md: &str) -> &str {
+    md.lines().find(|l| l.starts_with("<sub>")).unwrap_or("")
+}
+
+#[test]
+fn footnote_reports_calls_and_tokens_per_heuristic_used_and_omits_zero_ones() {
+    let (mut s, c) = sample();
+    s.footnote.heuristics = HeuristicBreakdown {
+        session_claim: hc(2, 1_500),
+        worktree_recovery: hc(1, 40),
+        ..HeuristicBreakdown::default()
+    };
+    let md = markdown(&s, &c, false);
+    assert_eq!(
+        footnote_line(&md),
+        "<sub>Branch `feat/x` \u{b7} 2 session(s), 1 in a worktree \u{b7} 1,234 of 3 calls from \
+         subagents \u{b7} attributed by heuristic: session claim 2 call(s) / 1,500 tokens; \
+         worktree recovery 1 call(s) / 40 tokens</sub>"
+    );
+    assert!(!md.contains("recovered from pre-branch"));
+    assert!(!md.contains("origin recovery"));
+    assert!(
+        !md.contains("at least"),
+        "no ambiguity, so no floor wording"
+    );
+}
+
+#[test]
+fn timeline_mode_is_named_and_ambiguity_makes_tokens_and_cost_a_floor() {
+    let (mut s, mut c) = sample();
+    s.mode = Mode::Timeline;
+    s.footnote.heuristics = HeuristicBreakdown {
+        timeline_forward: hc(1, 100),
+        timeline_carried: hc(1, 200),
+        dispatcher_roll_up: hc(3, 300),
+        origin_recovery: hc(1, 5),
+        ambiguous: hc(2, 7_000),
+        ..HeuristicBreakdown::default()
+    };
+    c.unpriced_models = 0; // the only floor left is the ambiguity
+    let md = markdown(&s, &c, true);
+    let note = footnote_line(&md);
+    assert!(
+        note.starts_with("<sub>Branch `feat/x` \u{b7} timeline mode \u{b7} "),
+        "{note}"
+    );
+    assert!(
+        note.contains(
+            "attributed by heuristic: origin recovery 1 call(s) / 5 tokens; dispatcher roll-up \
+             3 call(s) / 300 tokens; timeline forward 1 call(s) / 100 tokens; timeline \
+             carried 1 call(s) / 200 tokens"
+        ),
+        "{note}"
+    );
+    assert!(
+        md.contains(
+            "**Token total is at least 4,655**: 7,000 token(s) in 2 call(s) could not be \
+             attributed to a branch with certainty."
+        ),
+        "{md}"
+    );
+    assert!(md.contains("**at least $2.67**"), "{md}");
+    assert!(markdown(&s, &c, false).contains("Token total is at least"));
+}
+
+#[test]
+fn json_carries_heuristics_and_floor_only_when_used() {
+    use serde_json::Value;
+    let (mut s, c) = sample();
+    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    assert!(v.get("heuristics").is_none());
+    s.footnote.heuristics = HeuristicBreakdown {
+        session_claim: hc(2, 1_500),
+        ambiguous: hc(1, 9),
+        ..HeuristicBreakdown::default()
+    };
+    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    assert_eq!(v["heuristics"]["sessionClaim"]["calls"], 2);
+    assert_eq!(v["heuristics"]["sessionClaim"]["tokens"], 1_500);
+    assert_eq!(v["heuristics"]["timelineCarried"]["calls"], 0);
+    assert_eq!(v["heuristics"]["ambiguous"]["tokens"], 9);
+    assert_eq!(v["heuristics"]["isFloor"], true);
+    assert_eq!(v["totalCostIsFloor"], true);
+}
+
+fn timeline_summary(rule: Option<branch_tally_core::model::WorkBranchRule>) -> (Summary, Costs) {
+    let (mut s, c) = sample();
+    s.mode = Mode::Timeline;
+    s.work_branch = rule;
+    (s, c)
+}
+
+#[test]
+fn the_default_branch_is_named_when_it_did_not_come_from_origin_head() {
+    use branch_tally_core::model::{DefaultBranchSource as Src, WorkBranchRule as Rule};
+    let rule = |source| {
+        Some(Rule::ExcludesDefault {
+            branch: "develop".to_owned(),
+            source,
+        })
+    };
+
+    let (s, c) = timeline_summary(rule(Src::InitDefaultBranch));
+    let md = markdown(&s, &c, false);
+    assert!(
+        footnote_line(&md).contains(
+            " \u{b7} work branches: all except default branch `develop` (from \
+             init.defaultBranch; origin/HEAD was not available)"
+        ),
+        "{md}"
+    );
+
+    let (s, c) = timeline_summary(rule(Src::AssumedMain));
+    let md = markdown(&s, &c, false);
+    assert!(
+        footnote_line(&md).contains(
+            " \u{b7} work branches: all except default branch `develop` (assumed; neither \
+             origin/HEAD nor init.defaultBranch was available)"
+        ),
+        "{md}"
+    );
+
+    // From origin/HEAD it is the ordinary case: nothing extra to say in the footnote.
+    let (s, c) = timeline_summary(rule(Src::OriginHead));
+    assert!(!markdown(&s, &c, false).contains("work branches:"));
+}
+
+#[test]
+fn a_custom_work_branch_pattern_is_stated() {
+    use branch_tally_core::model::WorkBranchRule as Rule;
+    let (s, c) = timeline_summary(Some(Rule::Custom {
+        pattern: "^feat/".to_owned(),
+    }));
+    let md = markdown(&s, &c, false);
+    assert!(
+        footnote_line(&md).contains(" \u{b7} work branches: custom pattern `^feat/`"),
+        "{md}"
+    );
+}
+
+#[test]
+fn json_states_the_work_branch_rule_only_when_there_is_one() {
+    use branch_tally_core::model::{DefaultBranchSource as Src, WorkBranchRule as Rule};
+    use serde_json::Value;
+    let (s, c) = sample();
+    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    assert!(v.get("workBranch").is_none());
+
+    let (s, c) = timeline_summary(Some(Rule::ExcludesDefault {
+        branch: "develop".to_owned(),
+        source: Src::AssumedMain,
+    }));
+    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    assert_eq!(v["workBranch"]["kind"], "excludesDefault");
+    assert_eq!(v["workBranch"]["defaultBranch"], "develop");
+    assert_eq!(v["workBranch"]["source"], "assumed");
+
+    let (s, c) = timeline_summary(Some(Rule::Custom {
+        pattern: "^f\"x".to_owned(),
+    }));
+    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    assert_eq!(v["workBranch"]["kind"], "custom");
+    assert_eq!(v["workBranch"]["pattern"], "^f\"x");
 }

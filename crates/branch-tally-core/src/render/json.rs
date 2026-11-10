@@ -9,7 +9,9 @@
 use std::cmp::Reverse;
 use std::fmt::Write as _;
 
-use crate::model::{Costs, PriceTableSource, RowCost, SubagentSummary, Summary};
+use crate::model::{
+    Costs, HeuristicBreakdown, PriceTableSource, RowCost, SubagentSummary, Summary, WorkBranchRule,
+};
 
 /// Python `json.dumps` string escaping with `ensure_ascii=True`.
 fn string(s: &str) -> String {
@@ -97,6 +99,74 @@ fn row_cost(cost: Option<&RowCost>) -> (String, bool) {
     match cost {
         Some(c) if !c.is_unpriced() => (float(c.known), c.is_floor()),
         _ => ("null".to_owned(), false),
+    }
+}
+
+/// The `priceTable` object: the table date (null when unknown) and where it came from.
+fn price_table(costs: &Costs, o: &mut String) {
+    let table = &costs.price_table;
+    let as_of = if table.as_of.is_empty() {
+        "null".to_owned()
+    } else {
+        string(&table.as_of)
+    };
+    let source = match table.source {
+        PriceTableSource::Bundled => "bundled",
+        PriceTableSource::Cache => "cache",
+        PriceTableSource::Override => "override",
+    };
+    o.push_str("  \"priceTable\": {\n");
+    let _ = writeln!(o, "    \"asOf\": {as_of},");
+    let _ = writeln!(o, "    \"source\": \"{source}\"");
+    o.push_str("  },\n");
+}
+
+/// The `heuristics` object (#7): calls and tokens per attribution heuristic, and whether the
+/// total is only a floor because some calls were ambiguous. Omitted when no call was counted, so
+/// reports that predate it keep their shape.
+fn heuristics(h: &HeuristicBreakdown, o: &mut String) {
+    let entries = [
+        ("sessionClaim", h.session_claim),
+        ("worktreeRecovery", h.worktree_recovery),
+        ("originRecovery", h.origin_recovery),
+        ("dispatcherRollUp", h.dispatcher_roll_up),
+        ("timelineForward", h.timeline_forward),
+        ("timelineCarried", h.timeline_carried),
+        ("ambiguous", h.ambiguous),
+    ];
+    if entries.iter().all(|(_, c)| c.calls == 0) {
+        return;
+    }
+    o.push_str("  \"heuristics\": {\n");
+    for (key, c) in entries {
+        let _ = writeln!(
+            o,
+            "    \"{key}\": {{ \"calls\": {}, \"tokens\": {} }},",
+            c.calls, c.tokens
+        );
+    }
+    let _ = writeln!(o, "    \"isFloor\": {}", h.any_ambiguous());
+    o.push_str("  },\n");
+}
+
+/// The `workBranch` object (#7): which branches timeline mode treated as work branches. Present
+/// only when the summary records a rule, i.e. in timeline mode.
+fn work_branch(rule: Option<&WorkBranchRule>, o: &mut String) {
+    match rule {
+        None => {}
+        Some(WorkBranchRule::ExcludesDefault { branch, source }) => {
+            o.push_str("  \"workBranch\": {\n");
+            o.push_str("    \"kind\": \"excludesDefault\",\n");
+            let _ = writeln!(o, "    \"defaultBranch\": {},", string(branch));
+            let _ = writeln!(o, "    \"source\": {}", string(source.as_str()));
+            o.push_str("  },\n");
+        }
+        Some(WorkBranchRule::Custom { pattern }) => {
+            o.push_str("  \"workBranch\": {\n");
+            o.push_str("    \"kind\": \"custom\",\n");
+            let _ = writeln!(o, "    \"pattern\": {}", string(pattern));
+            o.push_str("  },\n");
+        }
     }
 }
 
@@ -211,7 +281,12 @@ pub fn json(summary: &Summary, costs: &Costs) -> String {
     let _ = writeln!(o, "  \"totalCalls\": {},", summary.total.calls);
     let _ = writeln!(o, "  \"totalCostUSD\": {},", float(costs.total));
     // Not in the reference (#5): a partial total is flagged, and the table that priced it named.
-    let _ = writeln!(o, "  \"totalCostIsFloor\": {},", costs.is_floor());
+    let heur = &summary.footnote.heuristics;
+    let _ = writeln!(
+        o,
+        "  \"totalCostIsFloor\": {},",
+        costs.is_floor() || heur.any_ambiguous()
+    );
     let unpriced: Vec<_> = costs.by_model.iter().filter(|(_, c)| c.is_none()).collect();
     if unpriced.is_empty() {
         o.push_str("  \"unpricedModels\": [],\n");
@@ -224,22 +299,10 @@ pub fn json(summary: &Summary, costs: &Costs) -> String {
         }
         o.push_str("  ],\n");
     }
-    let table = &costs.price_table;
-    let as_of = if table.as_of.is_empty() {
-        "null".to_owned()
-    } else {
-        string(&table.as_of)
-    };
-    let source = match table.source {
-        PriceTableSource::Bundled => "bundled",
-        PriceTableSource::Cache => "cache",
-        PriceTableSource::Override => "override",
-    };
-    o.push_str("  \"priceTable\": {\n");
-    let _ = writeln!(o, "    \"asOf\": {as_of},");
-    let _ = writeln!(o, "    \"source\": \"{source}\"");
-    o.push_str("  },\n");
+    price_table(costs, &mut o);
 
+    heuristics(heur, &mut o);
+    work_branch(summary.work_branch.as_ref(), &mut o);
     subagents(&summary.subagents, costs, &mut o);
 
     if sessions.is_empty() {

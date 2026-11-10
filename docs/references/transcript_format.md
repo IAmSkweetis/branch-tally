@@ -121,6 +121,29 @@ What follows for attribution:
 - An orchestrator session commonly touches several work branches (session `ae8c842c` touched four),
   so "one session, one branch" doesn't hold (#7).
 
+### Timeline mode (#7)
+
+`attribute_timeline` is a third mode beside strict and claim; claim attribution is unchanged.
+
+- Per session, from the records' own `(timestamp, gitBranch)` pairs. A stamp is a *work branch*
+  when the caller's predicate says so (`default_work_branch(default)`: not the repository default
+  branch, not `HEAD`, not empty, not `worktree-agent-*`). A `worktree-agent-*` stamp is never work,
+  whatever predicate is passed; it is "not a work branch", like `main`.
+- A non-work record goes **back** to the last active work branch (`TimelineCarried`); one before the
+  session's first work record goes **forward** to it (`TimelineForward`). Work records keep their
+  stamp (`Stamped`). A session with no work branch is not attributed: records keep their stamps.
+- Undecidable records are `TimelineAmbiguous` and keep the raw stamp: missing or unparseable
+  timestamp (RFC 3339 with an explicit offset is required), or the same instant on different work
+  branches (the conflict does not move the active branch).
+- **No worktree lookup**: no `git worktree list` recovery and no origin-slug recovery. The map is
+  used only for the subagent's `Workspace` tag.
+- A subagent record gets the dispatcher session's timeline branch **at the dispatch line's
+  timestamp** (`DispatcherRolledUp`), not the dispatch line's raw stamp. No link, no usable
+  dispatch timestamp, no work branch on the dispatcher, or a conflict at that instant:
+  `SubagentUnlinked`, raw stamp kept. Subagent records never move the dispatcher's timeline.
+- `select_timeline` keeps a record iff its assigned branch equals the request (`Exact`); there is
+  no session claim. An ambiguous record is kept only when its raw stamp equals the request.
+
 ## The dispatch link
 
 Observed 2026-11-09, Claude Code 2.1.3xx, by probing real transcripts for ids and key names only:

@@ -503,3 +503,393 @@ fn claim_counts_each_record_once_with_rolled_up_and_unlinked_in_one_session() {
         1
     );
 }
+
+// ---- timeline mode (#7) ----
+
+use branch_tally_core::attribution::{attribute_timeline, default_work_branch, select_timeline};
+
+fn trec(session: &str, n: usize, ts: Option<&str>, stamp: Option<&str>) -> Record {
+    let mut r = Record::new(
+        Harness::ClaudeCode,
+        SessionId::new(session),
+        RequestId::new(format!("req-{session}-{n}")),
+        Usage::default(),
+    );
+    r.git_branch = stamp.map(str::to_owned);
+    r.ts = ts.map(str::to_owned);
+    r
+}
+
+fn t(min: usize) -> &'static str {
+    // Fixed table so each test reads as a sequence of minutes.
+    const T: [&str; 8] = [
+        "2026-11-01T10:00:00.000Z",
+        "2026-11-01T10:01:00.000Z",
+        "2026-11-01T10:02:00.000Z",
+        "2026-11-01T10:03:00.000Z",
+        "2026-11-01T10:04:00.000Z",
+        "2026-11-01T10:05:00.000Z",
+        "2026-11-01T10:06:00.000Z",
+        "2026-11-01T10:07:00.000Z",
+    ];
+    T[min]
+}
+
+fn tl(rs: Vec<Record>, ds: &[Dispatch]) -> Vec<(String, BranchBasis)> {
+    let work = default_work_branch("main");
+    attribute_timeline(rs, ds, &map(), &work)
+        .into_iter()
+        .map(|a| (a.branch, a.basis))
+        .collect()
+}
+
+fn pair(b: &str, basis: BranchBasis) -> (String, BranchBasis) {
+    (b.to_owned(), basis)
+}
+
+#[test]
+fn default_predicate_classifies_branches() {
+    let w = default_work_branch("main");
+    for yes in [
+        "feat/a",
+        "fix/b",
+        "refactor/c",
+        "docs/d",
+        "release",
+        "trunk",
+    ] {
+        assert!(w(yes), "{yes} should be work");
+    }
+    for no in ["main", "HEAD", "", "worktree-agent-abc"] {
+        assert!(!w(no), "{no:?} should not be work");
+    }
+    assert!(default_work_branch("trunk")("main"));
+    assert!(!default_work_branch("trunk")("trunk"));
+}
+
+#[test]
+fn timeline_single_branch_session_is_all_stamped() {
+    let rs = (0..3)
+        .map(|i| trec("s", i, Some(t(i)), Some("feat/a")))
+        .collect();
+    let out = tl(rs, &[]);
+    assert!(
+        out.iter()
+            .all(|p| *p == pair("feat/a", BranchBasis::Stamped))
+    );
+}
+
+#[test]
+fn timeline_forward_carried_and_switch() {
+    let rs = vec![
+        trec("s", 0, Some(t(0)), Some("main")),
+        trec("s", 1, Some(t(1)), Some("feat/a")),
+        trec("s", 2, Some(t(2)), Some("main")),
+        trec("s", 3, Some(t(3)), Some("fix/b")),
+        trec("s", 4, Some(t(4)), Some("main")),
+    ];
+    assert_eq!(
+        tl(rs, &[]),
+        vec![
+            pair("feat/a", BranchBasis::TimelineForward),
+            pair("feat/a", BranchBasis::Stamped),
+            pair("feat/a", BranchBasis::TimelineCarried),
+            pair("fix/b", BranchBasis::Stamped),
+            pair("fix/b", BranchBasis::TimelineCarried),
+        ]
+    );
+}
+
+#[test]
+fn timeline_input_order_does_not_matter_but_output_order_is_kept() {
+    let rs = vec![
+        trec("s", 0, Some(t(2)), Some("main")),
+        trec("s", 1, Some(t(1)), Some("feat/a")),
+    ];
+    assert_eq!(
+        tl(rs, &[]),
+        vec![
+            pair("feat/a", BranchBasis::TimelineCarried),
+            pair("feat/a", BranchBasis::Stamped)
+        ]
+    );
+}
+
+#[test]
+fn timeline_refactor_and_docs_are_work_branches() {
+    let rs = vec![
+        trec("s", 0, Some(t(0)), Some("refactor/x")),
+        trec("s", 1, Some(t(1)), Some("main")),
+        trec("s", 2, Some(t(2)), Some("docs/y")),
+    ];
+    let out = tl(rs, &[]);
+    assert_eq!(out[1], pair("refactor/x", BranchBasis::TimelineCarried));
+    assert_eq!(out[2], pair("docs/y", BranchBasis::Stamped));
+}
+
+#[test]
+fn timeline_worktree_agent_stamp_is_carried_and_never_looked_up() {
+    // `map()` knows worktree-agent-abc as feat/real; timeline must ignore that.
+    let rs = vec![
+        trec("s", 0, Some(t(0)), Some("feat/a")),
+        trec("s", 1, Some(t(1)), Some("worktree-agent-abc")),
+    ];
+    assert_eq!(tl(rs, &[])[1], pair("feat/a", BranchBasis::TimelineCarried));
+    // Even a permissive predicate cannot make a worktree-agent stamp a work branch.
+    let all = |_: &str| true;
+    let rs = vec![
+        trec("s", 0, Some(t(0)), Some("feat/a")),
+        trec("s", 1, Some(t(1)), Some("worktree-agent-abc")),
+    ];
+    let out = attribute_timeline(rs, &[], &map(), &all);
+    assert_eq!(out[1].branch, "feat/a");
+}
+
+#[test]
+fn timeline_missing_stamp_is_non_work_and_origin_is_not_recovered() {
+    let mut r = trec("s", 1, Some(t(1)), None);
+    r.origin = Some(Origin::Main);
+    let rs = vec![trec("s", 0, Some(t(0)), Some("feat/a")), r];
+    assert_eq!(tl(rs, &[])[1], pair("feat/a", BranchBasis::TimelineCarried));
+}
+
+#[test]
+fn timeline_session_with_only_main_is_not_attributed() {
+    let rs = vec![
+        trec("s", 0, Some(t(0)), Some("main")),
+        trec("s", 1, Some(t(1)), None),
+        trec("s", 2, None, Some("main")),
+    ];
+    assert_eq!(
+        tl(rs, &[]),
+        vec![
+            pair("main", BranchBasis::Stamped),
+            pair("(none)", BranchBasis::Stamped),
+            pair("main", BranchBasis::Stamped),
+        ]
+    );
+}
+
+#[test]
+fn timeline_sessions_are_independent() {
+    let rs = vec![
+        trec("a", 0, Some(t(0)), Some("feat/a")),
+        trec("b", 0, Some(t(1)), Some("main")),
+        trec("b", 1, Some(t(2)), Some("fix/b")),
+    ];
+    let out = tl(rs, &[]);
+    assert_eq!(out[1], pair("fix/b", BranchBasis::TimelineForward));
+}
+
+#[test]
+fn timeline_missing_or_unparseable_ts_is_ambiguous_and_keeps_its_stamp() {
+    let rs = vec![
+        trec("s", 0, Some(t(0)), Some("feat/a")),
+        trec("s", 1, None, Some("main")),
+        trec("s", 2, Some("not-a-time"), Some("fix/b")),
+    ];
+    let out = tl(rs, &[]);
+    assert_eq!(out[1], pair("main", BranchBasis::TimelineAmbiguous));
+    assert_eq!(out[2], pair("fix/b", BranchBasis::TimelineAmbiguous));
+    assert_eq!(out[0], pair("feat/a", BranchBasis::Stamped));
+}
+
+#[test]
+fn timeline_same_ts_on_different_work_branches_is_ambiguous() {
+    let rs = vec![
+        trec("s", 0, Some(t(0)), Some("feat/a")),
+        trec("s", 1, Some(t(1)), Some("feat/a")),
+        trec("s", 2, Some(t(1)), Some("fix/b")),
+        trec("s", 3, Some(t(2)), Some("main")),
+    ];
+    let out = tl(rs, &[]);
+    assert_eq!(out[1], pair("feat/a", BranchBasis::TimelineAmbiguous));
+    assert_eq!(out[2], pair("fix/b", BranchBasis::TimelineAmbiguous));
+    // The conflict does not move the active branch: the later record is carried from feat/a.
+    assert_eq!(out[3], pair("feat/a", BranchBasis::TimelineCarried));
+}
+
+#[test]
+fn timeline_same_ts_same_branch_is_fine() {
+    let rs = vec![
+        trec("s", 0, Some(t(0)), Some("feat/a")),
+        trec("s", 1, Some(t(0)), Some("feat/a")),
+    ];
+    assert!(tl(rs, &[]).iter().all(|p| p.1 == BranchBasis::Stamped));
+}
+
+#[test]
+fn timeline_ts_with_offsets_compares_by_instant() {
+    let rs = vec![
+        trec("s", 0, Some("2026-11-01T10:30:00+01:00"), Some("feat/a")),
+        trec("s", 1, Some("2026-11-01T09:45:00Z"), Some("main")),
+        trec("s", 2, Some("2026-11-01T09:15:00Z"), Some("main")),
+    ];
+    let out = tl(rs, &[]);
+    // 10:30+01:00 is 09:30Z: record 2 (09:15Z) is before it, record 1 (09:45Z) after.
+    assert_eq!(out[1], pair("feat/a", BranchBasis::TimelineCarried));
+    assert_eq!(out[2], pair("feat/a", BranchBasis::TimelineForward));
+}
+
+fn tdispatch(agent: &str, stamp: Option<&str>, ts: Option<&str>) -> Dispatch {
+    Dispatch {
+        session_id: SessionId::new("orch"),
+        agent_id: AgentId::new(agent),
+        git_branch: stamp.map(str::to_owned),
+        ts: ts.map(str::to_owned),
+    }
+}
+
+fn orch(n: usize, minute: usize, stamp: &str) -> Record {
+    trec("orch", n, Some(t(minute)), Some(stamp))
+}
+
+#[test]
+fn timeline_subagent_takes_the_dispatchers_timeline_branch_not_the_dispatch_stamp() {
+    let cwd = format!("{WT_BACKSLASH}\\agent-zzz");
+    let s1 = sub("a1", Some("worktree-agent-zzz"), Some(&cwd));
+    let s2 = sub("a2", Some("main"), None);
+    let rs = vec![
+        orch(0, 0, "main"),
+        orch(1, 1, "feat/a"),
+        orch(2, 2, "main"),
+        s1,
+        s2,
+    ];
+    let ds = [
+        tdispatch("a1", Some("worktree-agent-zzz"), Some(t(2))),
+        tdispatch("a2", Some("main"), Some(t(3))),
+    ];
+    let work = default_work_branch("main");
+    let out = attribute_timeline(rs, &ds, &map(), &work);
+    assert_eq!(out[3].branch, "feat/a");
+    assert_eq!(out[3].basis, BranchBasis::DispatcherRolledUp);
+    assert_eq!(out[4].branch, "feat/a");
+    assert_eq!(out[4].basis, BranchBasis::DispatcherRolledUp);
+    let tags = out[3].subagent.as_ref().expect("tags");
+    assert_eq!(tags.workspace, Workspace::Worktree("agent-zzz".into()));
+}
+
+#[test]
+fn timeline_subagent_follows_the_timeline_at_dispatch_time_not_later() {
+    let rs = vec![
+        orch(0, 0, "feat/a"),
+        orch(1, 3, "fix/b"),
+        sub("a1", None, None),
+    ];
+    let ds = [tdispatch("a1", Some("main"), Some(t(1)))];
+    let work = default_work_branch("main");
+    let out = attribute_timeline(rs, &ds, &map(), &work);
+    assert_eq!(out[2].branch, "feat/a");
+    assert_eq!(out[2].basis, BranchBasis::DispatcherRolledUp);
+}
+
+#[test]
+fn timeline_subagent_without_a_usable_link_is_unlinked_and_keeps_its_stamp() {
+    let mut no_work_parent = sub("nowork", Some("fix/own"), None);
+    no_work_parent.parent_session = Some(SessionId::new("other"));
+    let rs = vec![
+        orch(0, 0, "feat/a"),
+        sub("none", Some("worktree-agent-q"), None),
+        sub("nots", Some("fix/own"), None),
+        sub("badts", Some("fix/own"), None),
+        no_work_parent,
+        trec("other", 0, Some(t(0)), Some("main")),
+    ];
+    let ds = vec![
+        tdispatch("nots", Some("main"), None),
+        tdispatch("badts", Some("main"), Some("garbage")),
+        Dispatch {
+            session_id: SessionId::new("other"),
+            agent_id: AgentId::new("nowork"),
+            git_branch: None,
+            ts: Some(t(0).to_owned()),
+        },
+    ];
+    let work = default_work_branch("main");
+    let out = attribute_timeline(rs, &ds, &map(), &work);
+    assert_eq!(out[1].branch, "worktree-agent-q");
+    for (i, a) in out.iter().enumerate().take(5).skip(1) {
+        assert_eq!(a.basis, BranchBasis::SubagentUnlinked, "record {i}");
+    }
+    assert_eq!(out[2].branch, "fix/own");
+    assert!(out[1].subagent.is_some());
+}
+
+#[test]
+fn timeline_subagent_dispatched_inside_a_conflict_is_unlinked() {
+    let rs = vec![
+        orch(0, 0, "feat/a"),
+        orch(1, 1, "feat/a"),
+        orch(2, 1, "fix/b"),
+        sub("a1", None, None),
+    ];
+    let ds = [tdispatch("a1", Some("feat/a"), Some(t(1)))];
+    let work = default_work_branch("main");
+    let out = attribute_timeline(rs, &ds, &map(), &work);
+    assert_eq!(out[3].basis, BranchBasis::SubagentUnlinked);
+}
+
+#[test]
+fn timeline_subagent_records_do_not_move_the_dispatchers_timeline() {
+    let rs = vec![
+        orch(0, 0, "feat/a"),
+        sub("a1", Some("fix/own"), None),
+        orch(1, 3, "main"),
+    ];
+    let ds = [tdispatch("a1", None, Some(t(1)))];
+    let work = default_work_branch("main");
+    let out = attribute_timeline(rs, &ds, &map(), &work);
+    assert_eq!(out[2].branch, "feat/a");
+    assert_eq!(out[2].basis, BranchBasis::TimelineCarried);
+}
+
+#[test]
+fn timeline_keeps_every_record_in_order() {
+    let rs: Vec<Record> = (0..6)
+        .map(|i| {
+            let ts = if i % 2 == 0 { Some(t(i)) } else { None };
+            trec("s", i, ts, Some("feat/a"))
+        })
+        .collect();
+    let ids: Vec<String> = rs.iter().map(|r| r.request_id.to_string()).collect();
+    let work = default_work_branch("main");
+    let out = attribute_timeline(rs, &[], &map(), &work);
+    let got: Vec<String> = out
+        .iter()
+        .map(|a| a.record.request_id.to_string())
+        .collect();
+    assert_eq!(got, ids);
+}
+
+#[test]
+fn select_timeline_is_exact_equality_and_never_claims() {
+    let rs = vec![
+        trec("s", 0, Some(t(0)), Some("feat/a")),
+        trec("s", 1, Some(t(1)), Some("main")),
+        trec("s", 2, Some(t(2)), Some("fix/b")),
+        trec("t", 0, Some(t(0)), Some("main")),
+    ];
+    let work = default_work_branch("main");
+    let out = select_timeline(attribute_timeline(rs, &[], &map(), &work), "feat/a");
+    assert_eq!(out.len(), 2);
+    assert!(out.iter().all(|s| s.kept_by == Selection::Exact));
+}
+
+#[test]
+fn claim_and_strict_are_unchanged_by_timeline_support() {
+    let (b, basis) = one(rec("s", Some("worktree-agent-abc"), None), false);
+    assert_eq!(
+        (b.as_str(), basis),
+        ("feat/real", BranchBasis::WorktreeRecovered)
+    );
+    let sel = select(
+        attributed(vec![
+            rec("s", Some("feat/a"), None),
+            rec("s", Some("main"), None),
+        ]),
+        "feat/a",
+        false,
+    );
+    assert_eq!(sel.len(), 2);
+}

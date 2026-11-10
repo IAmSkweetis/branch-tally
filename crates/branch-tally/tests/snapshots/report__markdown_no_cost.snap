@@ -12,7 +12,7 @@ expression: text
 |---|---|---|---|--:|--:|
 | `s1` | main checkout | subagent | 01-01 00:00 → 01-01 00:00 | 3 | 0.0M |
 
-<sub>Branch `feat/x` · 1 session(s), 0 in a worktree · 2 of 3 calls from subagents · 0.0M tokens recovered from pre-branch/worktree checkouts</sub>
+<sub>Branch `feat/x` · 1 session(s), 0 in a worktree · 2 of 3 calls from subagents · attributed by heuristic: dispatcher roll-up 2 call(s) / 120 tokens</sub>
 
 ### Subagent usage (rolled up to `feat/x`)
 

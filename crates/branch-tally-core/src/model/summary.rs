@@ -102,22 +102,120 @@ pub enum Mode {
     /// Session claim and worktree recovery (the default).
     #[default]
     Claim,
+    /// Per-session branch timeline: records are placed by `(ts, gitBranch)` on the work branch
+    /// active at that time. A heuristic; the report must say so.
+    Timeline,
 }
 
 impl Mode {
-    /// The `mode` string `as_json` prints: `"strict"` or `"claim"`.
+    /// The `mode` string `as_json` prints: `"strict"`, `"claim"` or `"timeline"`.
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Strict => "strict",
             Self::Claim => "claim",
+            Self::Timeline => "timeline",
         }
     }
+}
+
+/// Calls and tokens attributed by one heuristic.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HeuristicCount {
+    /// Number of calls.
+    pub calls: u64,
+    /// Total tokens, counted as [`Bucket::tokens`] does (thinking excluded).
+    pub tokens: u64,
+}
+
+impl HeuristicCount {
+    /// Counts one call of `tokens` tokens.
+    pub fn add(&mut self, tokens: u64) {
+        self.calls += 1;
+        self.tokens += tokens;
+    }
+}
+
+/// Calls and tokens per attribution heuristic, over the records the report kept. Filled by the
+/// summary stage, printed by render. A record counts under exactly one field.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HeuristicBreakdown {
+    /// Kept only because its session was claimed ([`super::Selection::SessionClaim`]).
+    pub session_claim: HeuristicCount,
+    /// [`super::BranchBasis::WorktreeRecovered`].
+    pub worktree_recovery: HeuristicCount,
+    /// [`super::BranchBasis::OriginRecovered`].
+    pub origin_recovery: HeuristicCount,
+    /// [`super::BranchBasis::DispatcherRolledUp`].
+    pub dispatcher_roll_up: HeuristicCount,
+    /// [`super::BranchBasis::TimelineForward`].
+    pub timeline_forward: HeuristicCount,
+    /// [`super::BranchBasis::TimelineCarried`].
+    pub timeline_carried: HeuristicCount,
+    /// [`super::BranchBasis::TimelineAmbiguous`] plus [`super::BranchBasis::SubagentUnlinked`]:
+    /// records that could not be placed with certainty. Any call here makes the total a floor.
+    pub ambiguous: HeuristicCount,
+}
+
+impl HeuristicBreakdown {
+    /// `true` when any record could not be attributed with certainty, so the report must say
+    /// "at least" and show the ambiguous token count.
+    #[must_use]
+    pub fn any_ambiguous(&self) -> bool {
+        self.ambiguous.calls > 0
+    }
+}
+
+/// Where the default branch a timeline report excluded came from. Anything but
+/// [`Self::OriginHead`] is a fallback, and the report says so (Governance II).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DefaultBranchSource {
+    /// `refs/remotes/origin/HEAD`: what the remote says.
+    OriginHead,
+    /// `git config init.defaultBranch`, used because `origin/HEAD` was unresolvable.
+    InitDefaultBranch,
+    /// Neither was available: `main` was assumed.
+    AssumedMain,
+}
+
+impl DefaultBranchSource {
+    /// Text for the report: `origin/HEAD`, `init.defaultBranch` or `assumed`.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OriginHead => "origin/HEAD",
+            Self::InitDefaultBranch => "init.defaultBranch",
+            Self::AssumedMain => "assumed",
+        }
+    }
+}
+
+/// Which branches timeline mode treated as work branches. Recorded on the summary so the report
+/// can state it. Not transcript content: a branch name and a user-supplied pattern.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WorkBranchRule {
+    /// Every branch except the default branch and `worktree-agent-*`.
+    ExcludesDefault {
+        /// The default branch that was excluded.
+        branch: String,
+        /// Where `branch` came from.
+        source: DefaultBranchSource,
+    },
+    /// A custom `--work-branch` pattern was used (its text).
+    Custom {
+        /// The pattern as the user gave it.
+        pattern: String,
+    },
 }
 
 /// The counts `render`'s footnote prints, precomputed by the summary stage.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Footnote {
+    /// Calls and tokens per attribution heuristic. Absent in older serialized data.
+    #[serde(default)]
+    pub heuristics: HeuristicBreakdown,
     /// Calls with `is_sidechain` set (`sub_calls`).
     pub subagent_calls: u64,
     /// Tokens of records whose assigned branch is not the requested one (`off_branch`): the
@@ -148,6 +246,10 @@ pub struct Summary {
     /// Absent in older serialized data.
     #[serde(default)]
     pub subagents: SubagentSummary,
+    /// Which branches timeline mode treated as work branches. `None` outside timeline mode.
+    /// Absent in older serialized data.
+    #[serde(default)]
+    pub work_branch: Option<WorkBranchRule>,
 }
 
 #[cfg(test)]
@@ -190,6 +292,44 @@ mod tests {
         assert_eq!(Mode::Claim.as_str(), "claim");
         assert_eq!(Mode::default(), Mode::Claim);
         assert_eq!(serde_json::to_string(&Mode::Strict).unwrap(), "\"strict\"");
+    }
+
+    #[test]
+    fn timeline_mode_has_its_name_and_claim_stays_default() {
+        assert_eq!(Mode::Timeline.as_str(), "timeline");
+        assert_eq!(Mode::default(), Mode::Claim);
+        assert_eq!(
+            serde_json::to_string(&Mode::Timeline).unwrap(),
+            "\"timeline\""
+        );
+    }
+
+    #[test]
+    fn heuristic_count_adds_calls_and_tokens() {
+        let mut c = HeuristicCount::default();
+        c.add(10);
+        c.add(5);
+        assert_eq!((c.calls, c.tokens), (2, 15));
+    }
+
+    #[test]
+    fn any_ambiguous_follows_the_ambiguous_calls_only() {
+        let mut b = HeuristicBreakdown::default();
+        assert!(!b.any_ambiguous());
+        b.timeline_carried.add(7);
+        assert!(!b.any_ambiguous());
+        b.ambiguous.add(0);
+        assert!(b.any_ambiguous());
+    }
+
+    #[test]
+    fn footnote_without_heuristics_still_loads() {
+        let json = r#"{"subagent_calls":1,"off_branch_tokens":2,"worktree_sessions":3}"#;
+        let f: Footnote = serde_json::from_str(json).unwrap();
+        assert_eq!(f.heuristics, HeuristicBreakdown::default());
+        assert_eq!(f.worktree_sessions, 3);
+        let back: Footnote = serde_json::from_str(&serde_json::to_string(&f).unwrap()).unwrap();
+        assert_eq!(back, f);
     }
 
     #[test]
