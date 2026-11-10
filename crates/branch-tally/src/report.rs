@@ -9,10 +9,11 @@ use std::path::{Path, PathBuf};
 use branch_tally_core::config::{self, Flags, Format};
 use branch_tally_core::git::{Git, SystemGit, normalize_path};
 use branch_tally_core::model::{Harness, Mode};
+use branch_tally_core::paths::slug_candidates;
 use branch_tally_core::pr::{PrError, PrOutcome, SystemGh, update_pr};
 use branch_tally_core::render;
 use branch_tally_core::report::{Options, Report, ReportError, WorkBranch};
-use branch_tally_core::sources::claude_code::{ClaudeCode, slug_candidates};
+use branch_tally_core::sources::claude_code::ClaudeCode;
 use branch_tally_core::sources::{ReadStats, RepoIdentity, Source, SourceError, TranscriptRoot};
 
 use clap::CommandFactory;
