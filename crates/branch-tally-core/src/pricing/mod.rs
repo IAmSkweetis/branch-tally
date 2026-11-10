@@ -20,7 +20,7 @@ pub use resolve::{
 };
 pub use table::{ModelPrice, PriceTable, PriceTableError};
 
-use crate::model::{Bucket, Costs, Summary};
+use crate::model::{Bucket, Costs, RowCost, Summary};
 
 /// Python's `int` to `float` conversion for a token count.
 #[expect(
@@ -81,12 +81,40 @@ pub fn price(summary: &Summary, table: &PriceTable) -> Costs {
         .collect();
     let total = sum_costs(by_model.iter().map(|(_, c)| c.unwrap_or(0.0)));
     let unpriced_models = by_model.iter().filter(|(_, c)| c.is_none()).count() as u64;
+    let subagent_rows: Vec<RowCost> = summary
+        .subagents
+        .rows
+        .iter()
+        .map(|row| {
+            row_cost(
+                row.by_model
+                    .iter()
+                    .map(|(model, bucket)| cost(bucket, model, table)),
+            )
+        })
+        .collect();
+    let subagent_total = RowCost {
+        known: sum_costs(subagent_rows.iter().map(|r| r.known)),
+        priced_models: subagent_rows.iter().map(|r| r.priced_models).sum(),
+        unpriced_models: subagent_rows.iter().map(|r| r.unpriced_models).sum(),
+    };
     Costs {
         by_model,
         total,
         unpriced_models,
         price_table: table.info(),
-        subagent_rows: Vec::new(),
-        subagent_total: crate::model::RowCost::default(),
+        subagent_rows,
+        subagent_total,
+    }
+}
+
+/// Folds per-model costs (`None` = no price) into one [`RowCost`].
+fn row_cost(costs: impl IntoIterator<Item = Option<f64>>) -> RowCost {
+    let costs: Vec<Option<f64>> = costs.into_iter().collect();
+    let priced = costs.iter().filter(|c| c.is_some()).count() as u64;
+    RowCost {
+        known: sum_costs(costs.iter().map(|c| c.unwrap_or(0.0))),
+        priced_models: priced,
+        unpriced_models: costs.len() as u64 - priced,
     }
 }
