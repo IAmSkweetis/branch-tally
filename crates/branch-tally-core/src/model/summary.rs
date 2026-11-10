@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use super::SessionId;
+use super::{SessionId, SubagentSummary};
 
 /// Summed token counts (`Bucket` in `reference/token_report.py`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,6 +144,10 @@ pub struct Summary {
     pub by_attribution: Vec<(String, Bucket)>,
     /// Per session id (`sessions`).
     pub sessions: Vec<(SessionId, SessionRow)>,
+    /// The dispatched-subagent breakdown (workspace and subagent tags). Empty in strict mode.
+    /// Absent in older serialized data.
+    #[serde(default)]
+    pub subagents: SubagentSummary,
 }
 
 #[cfg(test)]

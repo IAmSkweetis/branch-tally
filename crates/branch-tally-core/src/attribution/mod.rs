@@ -119,6 +119,7 @@ pub fn attribute(
                 record,
                 branch,
                 basis,
+                subagent: None,
             }
         })
         .collect()
