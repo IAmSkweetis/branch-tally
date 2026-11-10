@@ -19,7 +19,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use branch_tally_core::git::Worktree;
-use branch_tally_core::model::Record;
+use branch_tally_core::model::{Dispatch, Record};
 use branch_tally_core::render;
 use branch_tally_core::report::{self, ReportError};
 use branch_tally_core::sources::claude_code::ClaudeCode;
@@ -33,6 +33,54 @@ const REFERENCE_DIVERGENT_SCENARIOS: &[(&str, &str)] = &[("malformed-and-keyless
 /// Deliberate divergences between Rust and the reference, as `(scenario, branch key, issue,
 /// reason)`. A listed key is asserted to differ, so the entry cannot outlive its reason.
 const DIVERGENCES: &[(&str, &str, &str, &str)] = &[];
+
+/// Deliberate divergences of the full claim-mode report from the reference, as `(scenario,
+/// branch, issue, reason)`. Strict mode stays raw and never diverges. A listed pair is asserted
+/// to differ, so an entry cannot outlive its reason. The `subagents` key itself is handled
+/// separately (see `without_subagent_divergence`).
+const CLAIM_DIVERGENCES: &[(&str, &str, &str, &str)] = &[
+    (
+        "subagent",
+        "feat/x",
+        "#6",
+        "dispatched subagent calls the reference stamped elsewhere roll up to the dispatcher",
+    ),
+    (
+        "subagent-renamed-branch",
+        "feat/x",
+        "#6",
+        "the subagent's calls, including the one stamped after it renamed its branch, roll up \
+         to the dispatcher's feat/x",
+    ),
+    (
+        "subagent-renamed-branch",
+        "chore/x-part",
+        "#6",
+        "its only call belongs to a dispatched subagent, so it rolls up to feat/x and the \
+         renamed branch has no records of its own in claim mode",
+    ),
+    (
+        "subagent-switches-branch",
+        "feat/x",
+        "#6",
+        "all eight subagent calls roll up to the dispatcher, including those stamped with the \
+         subagents' own branches",
+    ),
+    (
+        "subagent-switches-branch",
+        "chore/d1-data",
+        "#6",
+        "the subagent's calls roll up to feat/x, so this branch has no records of its own in \
+         claim mode",
+    ),
+    (
+        "subagent-switches-branch",
+        "chore/d2-data",
+        "#6",
+        "the subagent's calls roll up to feat/x, so this branch has no records of its own in \
+         claim mode",
+    ),
+];
 
 /// Scenarios and branch keys compared. Pinned so the test cannot green by comparing nothing.
 /// Claim pairs the report test compares.
@@ -317,10 +365,42 @@ fn without_price_divergences(mut payload: Value) -> Value {
     payload
 }
 
+/// Checks the #6 `subagents` object, when present, adds up on its own terms, then removes it so
+/// the rest of the payload can be compared with the golden. Strict mode never carries it (it
+/// stays raw), and the reference never has it.
+fn without_subagent_divergence(mut payload: Value, strict: bool) -> Value {
+    let Some(object) = payload.as_object_mut() else {
+        return payload;
+    };
+    let Some(sub) = object.remove("subagents") else {
+        return payload;
+    };
+    assert!(!strict, "strict mode must not carry a subagents breakdown");
+    let rows = sub["rows"].as_array().unwrap();
+    assert!(
+        !rows.is_empty() || num(&sub, "unattributedCalls") > 0,
+        "an empty breakdown must be omitted"
+    );
+    for field in ["calls", "tokens"] {
+        let sum: u64 = rows.iter().map(|r| num(r, field)).sum();
+        assert_eq!(num(&sub, field), sum, "subagents.{field} != sum of rows");
+    }
+    payload
+}
+
+/// The dispatch links the Claude Code source reports for a scenario.
+fn read_dispatches(dir: &Path) -> Vec<Dispatch> {
+    let roots = ClaudeCode
+        .discover(dir, &RepoIdentity::new(r"C:\repo"))
+        .unwrap();
+    ClaudeCode.dispatches(&roots).unwrap()
+}
+
 /// Rust's report for `branch` as the reference's `--json` payload, or `{"error":"no_records"}`.
 fn rust_payload(dir: &Path, manifest: &Value, branch: &str, strict: bool) -> Value {
     match report::build(
         read_records(dir),
+        &read_dispatches(dir),
         ReadStats::default(),
         Path::new(r"C:\repo"),
         &worktrees_for(manifest),
@@ -328,8 +408,11 @@ fn rust_payload(dir: &Path, manifest: &Value, branch: &str, strict: bool) -> Val
         strict,
         branch_tally_core::pricing::PriceTable::bundled(),
     ) {
-        Ok(r) => without_price_divergences(
-            serde_json::from_str(&render::json(&r.summary, &r.costs)).unwrap(),
+        Ok(r) => without_subagent_divergence(
+            without_price_divergences(
+                serde_json::from_str(&render::json(&r.summary, &r.costs)).unwrap(),
+            ),
+            strict,
         ),
         Err(ReportError::NoRecords { .. }) => serde_json::json!({"error": "no_records"}),
         Err(e) => panic!("{branch}: {e}"),
@@ -358,6 +441,7 @@ fn reference_origins(golden: &Value) -> Value {
 fn rust_report_matches_the_reference_claim_goldens() {
     let mut claim_pairs = 0;
     let mut strict_pairs = 0;
+    let mut divergences_hit = 0;
     let mut failures = Vec::new();
     for (name, dir) in scenarios() {
         let claim_path = dir.join("goldens").join("claim.json");
@@ -372,8 +456,19 @@ fn rust_report_matches_the_reference_claim_goldens() {
                 .get(branch)
                 .unwrap_or_else(|| panic!("{name}: claim.json has no key {branch}"));
             claim_pairs += 1;
-            if rust_payload(&dir, &manifest, branch, false) != reference_origins(golden) {
-                failures.push(format!("{name} [{branch}] claim"));
+            let rust = rust_payload(&dir, &manifest, branch, false);
+            let reference = reference_origins(golden);
+            let divergence = CLAIM_DIVERGENCES
+                .iter()
+                .find(|(s, b, _, _)| *s == name && *b == branch);
+            match (divergence, rust == reference) {
+                (None, true) => {}
+                (None, false) => failures.push(format!("{name} [{branch}] claim")),
+                (Some(_), false) => divergences_hit += 1,
+                (Some((_, _, issue, _)), true) => failures.push(format!(
+                    "{name} [{branch}] claim: listed as a divergence ({issue}) but now matches; \
+                     remove it"
+                )),
             }
         }
         let strict = read_json(&dir.join("goldens").join("strict.json"));
@@ -388,6 +483,7 @@ fn rust_report_matches_the_reference_claim_goldens() {
         failures.is_empty(),
         "report differs from goldens: {failures:?}"
     );
+    assert_eq!(divergences_hit, CLAIM_DIVERGENCES.len());
     assert_eq!(claim_pairs, EXPECTED_CLAIM_PAIRS, "claim pairs compared");
     assert_eq!(strict_pairs, EXPECTED_BRANCH_KEYS, "strict pairs compared");
 }
