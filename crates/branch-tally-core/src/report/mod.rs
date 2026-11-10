@@ -81,7 +81,9 @@ pub fn build(
     );
     let attributed = crate::attribution::attribute(records, dispatches, &map, strict);
     let unattributed = crate::model::SubagentSummary::count_unattributed(&attributed);
+    let attributed_all = attributed.clone();
     let selected = crate::attribution::select(attributed, branch, strict);
+    let ambiguous = crate::summary::count_ambiguous(&attributed_all, &selected);
     if selected.is_empty() {
         return Err(ReportError::NoRecords {
             branch: branch.to_owned(),
@@ -89,7 +91,7 @@ pub fn build(
         });
     }
     let mode = if strict { Mode::Strict } else { Mode::Claim };
-    let summary = crate::summary::summarize(branch, mode, &selected, unattributed);
+    let summary = crate::summary::summarize(branch, mode, &selected, unattributed, ambiguous);
     let costs = crate::pricing::price(&summary, table);
     Ok(Report {
         branch: branch.to_owned(),
