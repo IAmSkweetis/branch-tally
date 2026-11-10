@@ -131,8 +131,8 @@ fn subagent_section(summary: &Summary, o: &mut Vec<String>) {
     } else {
         let _ = writeln!(
             text,
-            "{} subagent call(s) ({} tokens) had no dispatch link, so they are not in any \
-             branch's total; counted across all attributed records, not only this branch.",
+            "{} subagent call(s) ({} tokens) across this repository's transcripts had no \
+             dispatch link, so their branch is unverified (raw stamp kept).",
             n(sub.unattributed_calls),
             n(sub.unattributed_tokens),
         );
