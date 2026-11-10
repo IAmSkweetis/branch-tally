@@ -271,6 +271,12 @@ build rather than the branch under review. Install the latest
 [release](https://github.com/IAmSkweetis/branch-tally/releases/latest) archive for your platform
 and put `branch-tally` on `PATH`. The recipe stops with that hint if it is missing.
 
+`report` attributes by the session's claimed branch by default. `--strict` is the naive
+`gitBranch` filter. `--timeline` attributes each call to the branch the session was on at that
+moment (a third mode, exclusive with `--strict`); `--work-branch <REGEX>` (timeline only) names
+which branches count as work branches, matched unanchored as written, so `^(feat|fix)/` works.
+The default is every branch except the repository's default branch and `worktree-agent-*`.
+
 It must run on the machine that did the work, and **while every agent worktree still exists**
 until issue #6 removes that dependency. Report the number as a floor ("at least $X").
 `reference/token_report.py` is no longer run for this. Only the golden generator (`just goldens`)

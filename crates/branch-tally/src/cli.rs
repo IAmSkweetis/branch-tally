@@ -50,6 +50,29 @@ pub(crate) struct ShowArgs {
     pub(crate) repo: PathBuf,
 }
 
+/// A `--work-branch` pattern: the text as given (the report shows it) and its compiled form.
+#[derive(Debug, Clone)]
+pub(crate) struct WorkBranchPattern {
+    pub(crate) text: String,
+    regex: regex_lite::Regex,
+}
+
+impl WorkBranchPattern {
+    /// Unanchored, as written: `^(feat|refactor)/` works as users expect.
+    pub(crate) fn matches(&self, branch: &str) -> bool {
+        self.regex.is_match(branch)
+    }
+}
+
+fn parse_work_branch(text: &str) -> Result<WorkBranchPattern, String> {
+    regex_lite::Regex::new(text)
+        .map(|regex| WorkBranchPattern {
+            text: text.to_owned(),
+            regex,
+        })
+        .map_err(|e| e.to_string())
+}
+
 #[derive(Debug, Args)]
 // Each flag is an independent switch of the public CLI contract, not a state machine.
 #[expect(clippy::struct_excessive_bools, reason = "one bool per CLI flag")]
@@ -64,6 +87,16 @@ pub(crate) struct ReportArgs {
     /// Naive gitBranch filter: no session claim, no worktree recovery.
     #[arg(long)]
     pub(crate) strict: bool,
+
+    /// Attribute by each session's branch timeline instead of its single claimed branch.
+    #[arg(long, conflicts_with = "strict")]
+    pub(crate) timeline: bool,
+
+    /// With --timeline, a regex naming the work branches (default: every branch except the
+    /// repository's default branch and worktree-agent-*). Matched anywhere in the branch name,
+    /// as written; anchor it with ^ and $ to match the whole name.
+    #[arg(long, requires = "timeline", value_name = "REGEX", value_parser = parse_work_branch)]
+    pub(crate) work_branch: Option<WorkBranchPattern>,
 
     /// Emit Markdown (the default).
     #[arg(long, conflicts_with = "json")]
