@@ -25,6 +25,41 @@ pub enum BranchBasis {
     /// was missing or itself a `worktree-agent-<id>`). It keeps its raw stamp and is **counted
     /// as unattributed**, never guessed.
     SubagentUnlinked,
+    /// Timeline mode: a non-work record before the session's first work branch, assigned
+    /// **forward** to that first work branch.
+    TimelineForward,
+    /// Timeline mode: a non-work record after a work branch was active, carried **back** to the
+    /// last active work branch.
+    TimelineCarried,
+    /// Timeline mode: the record's place on the timeline cannot be decided with certainty (no
+    /// parseable timestamp, or same-timestamp records on conflicting work branches). It keeps
+    /// its raw stamp and is **counted as ambiguous**, never guessed.
+    TimelineAmbiguous,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timeline_bases_serialize_kebab_case() {
+        let names: Vec<String> = [
+            BranchBasis::TimelineForward,
+            BranchBasis::TimelineCarried,
+            BranchBasis::TimelineAmbiguous,
+        ]
+        .iter()
+        .map(|b| serde_json::to_string(b).unwrap())
+        .collect();
+        assert_eq!(
+            names,
+            [
+                "\"timeline-forward\"",
+                "\"timeline-carried\"",
+                "\"timeline-ambiguous\""
+            ]
+        );
+    }
 }
 
 /// A record with the branch attribution assigned to it.
