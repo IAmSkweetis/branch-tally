@@ -167,6 +167,15 @@ expected behaviour directly, next to the same issue number. `malformed-and-keyle
   and `branch-tally/tests/report.rs` (inline in `tests/render.rs`). Each test asserts the
   keys are present and consistent with the per-model costs, removes only those, then compares
   everything else to the goldens exactly. Markdown is not compared with the reference.
+- Output divergence #6 (subagent rollup): when `Summary.subagents` is not empty, the JSON report
+  has a top-level `subagents` object (`calls`, `tokens`, `dispatched`, `workspaces`, `worktrees`,
+  `unattributedCalls`, `unattributedTokens`, `rows[]` of `workspace`, `isWorktree`, `subagent`,
+  `calls`, `tokens`, `agents`) and the Markdown report has a `### Subagent usage` section between
+  the footnote and the attribution details. Both are omitted when empty, so `--strict` and
+  reports without dispatched subagents are unchanged. Once attribution fills the summary, a
+  golden branch with dispatched subagents gains the key, so `subagents` joins the divergent keys
+  in the parity tests. The unattributed count spans all attributed records, not only the branch,
+  and the Markdown line says so.
 - The bundled table was reseeded from LiteLLM's current rates (#5), not the reference's `PRICES`.
   Every model the goldens price (`claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-4-6`) has the
   same input, output and cache-read rate in both, so every cost still matches the goldens exactly

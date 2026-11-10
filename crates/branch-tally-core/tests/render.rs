@@ -544,3 +544,166 @@ fn from_payload(p: &serde_json::Value) -> (Summary, Costs) {
     }
     (summary, costs)
 }
+
+// ---- Subagent breakdown (#6) ----
+
+use branch_tally_core::model::{AgentId, SubagentRow, SubagentSummary, Workspace};
+
+fn sub_row(ws: Workspace, name: &str, calls: u64, tokens: u64, ids: &[&str]) -> SubagentRow {
+    SubagentRow {
+        workspace: ws,
+        subagent: name.to_owned(),
+        calls,
+        tokens,
+        agent_ids: ids.iter().map(|i| AgentId::new(*i)).collect(),
+    }
+}
+
+/// Main checkout plus two worktrees, one of which holds two subagents.
+fn with_subagents(unattributed: (u64, u64)) -> (Summary, Costs) {
+    let (mut s, c) = sample();
+    s.subagents = SubagentSummary {
+        rows: vec![
+            sub_row(Workspace::Main, "Explore", 4, 12_000, &["e1"]),
+            sub_row(
+                Workspace::worktree("agent-a1"),
+                "Core Implementer",
+                20,
+                410_000,
+                &["a1"],
+            ),
+            sub_row(
+                Workspace::worktree("agent-a1"),
+                "Reviewer",
+                2,
+                5_000,
+                &["a2"],
+            ),
+            sub_row(
+                Workspace::worktree("agent-b2"),
+                "Harness Source Author",
+                18,
+                380_000,
+                &["b1"],
+            ),
+        ],
+        unattributed_calls: unattributed.0,
+        unattributed_tokens: unattributed.1,
+    };
+    (s, c)
+}
+
+#[test]
+fn markdown_lists_each_workspace_and_subagent_row_with_totals() {
+    let (s, c) = with_subagents((0, 0));
+    let md = markdown(&s, &c, false);
+    let want = "### Subagent usage (rolled up to `feat/x`)\n\
+        \n\
+        | Workspace | Subagent | Calls | Tokens |\n\
+        |---|---|--:|--:|\n\
+        | main checkout | Explore | 4 | 12,000 |\n\
+        | worktree `agent-a1` | Core Implementer | 20 | 410,000 |\n\
+        | worktree `agent-a1` | Reviewer | 2 | 5,000 |\n\
+        | worktree `agent-b2` | Harness Source Author | 18 | 380,000 |\n\
+        \n\
+        807,000 tokens (44 calls) from 4 dispatched subagent(s) across 3 workspace(s) \
+        (2 worktree(s)).\n\
+        0 subagent call(s) had no dispatch link.\n";
+    assert!(md.contains(want), "{md}");
+    // The section sits between the footnote and the attribution details.
+    let at = md.find("### Subagent usage").unwrap();
+    assert!(md.find("<sub>Branch").unwrap() < at);
+    assert!(at < md.find("<details>").unwrap());
+}
+
+#[test]
+fn markdown_reports_unattributed_subagent_calls_without_claiming_a_branch() {
+    let (s, c) = with_subagents((3, 1_500));
+    let md = markdown(&s, &c, false);
+    assert!(
+        md.contains(
+            "3 subagent call(s) (1,500 tokens) had no dispatch link, so they are not in any \
+             branch's total; counted across all attributed records, not only this branch.\n"
+        ),
+        "{md}"
+    );
+}
+
+#[test]
+fn markdown_with_only_unattributed_calls_still_says_so() {
+    let (mut s, c) = sample();
+    s.subagents = SubagentSummary {
+        unattributed_calls: 2,
+        unattributed_tokens: 40,
+        ..SubagentSummary::default()
+    };
+    let md = markdown(&s, &c, false);
+    assert!(
+        md.contains("### Subagent usage (rolled up to `feat/x`)\n"),
+        "{md}"
+    );
+    assert!(!md.contains("| Workspace |"), "{md}");
+    assert!(
+        md.contains("2 subagent call(s) (40 tokens) had no dispatch link"),
+        "{md}"
+    );
+}
+
+#[test]
+fn markdown_without_subagents_is_unchanged() {
+    let (s, c) = sample();
+    assert!(s.subagents.is_empty());
+    assert!(!markdown(&s, &c, true).contains("Subagent usage"));
+}
+
+#[test]
+fn markdown_escapes_pipes_in_subagent_cells() {
+    let (mut s, c) = sample();
+    s.subagents.rows = vec![sub_row(Workspace::Main, "a|b", 1, 1, &["x"])];
+    let md = markdown(&s, &c, false);
+    assert!(md.contains("| main checkout | a\\|b | 1 | 1 |"), "{md}");
+}
+
+#[test]
+fn json_has_a_subagents_object_with_rows_and_totals() {
+    use serde_json::Value;
+    let (s, c) = with_subagents((3, 1_500));
+    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    let sub = &v["subagents"];
+    assert_eq!(sub["calls"], 44);
+    assert_eq!(sub["tokens"], 807_000);
+    assert_eq!(sub["dispatched"], 4);
+    assert_eq!(sub["workspaces"], 3);
+    assert_eq!(sub["worktrees"], 2);
+    assert_eq!(sub["unattributedCalls"], 3);
+    assert_eq!(sub["unattributedTokens"], 1_500);
+    let rows = sub["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 4);
+    assert_eq!(rows[0]["workspace"], "main");
+    assert_eq!(rows[0]["isWorktree"], false);
+    assert_eq!(rows[0]["subagent"], "Explore");
+    assert_eq!(rows[0]["calls"], 4);
+    assert_eq!(rows[0]["tokens"], 12_000);
+    assert_eq!(rows[0]["agents"], 1);
+    assert_eq!(rows[1]["workspace"], "agent-a1");
+    assert_eq!(rows[1]["isWorktree"], true);
+    assert_eq!(rows[2]["workspace"], "agent-a1");
+}
+
+#[test]
+fn json_omits_subagents_when_there_is_nothing_to_report() {
+    use serde_json::Value;
+    let (s, c) = sample();
+    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    assert!(v.get("subagents").is_none());
+}
+
+#[test]
+fn json_keeps_subagents_for_unattributed_only() {
+    use serde_json::Value;
+    let (mut s, c) = sample();
+    s.subagents.unattributed_calls = 2;
+    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    assert_eq!(v["subagents"]["unattributedCalls"], 2);
+    assert_eq!(v["subagents"]["rows"].as_array().unwrap().len(), 0);
+}

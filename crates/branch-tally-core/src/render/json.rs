@@ -9,7 +9,7 @@
 use std::cmp::Reverse;
 use std::fmt::Write as _;
 
-use crate::model::{Costs, PriceTableSource, Summary};
+use crate::model::{Costs, PriceTableSource, SubagentSummary, Summary};
 
 /// Python `json.dumps` string escaping with `ensure_ascii=True`.
 fn string(s: &str) -> String {
@@ -91,6 +91,52 @@ fn repr(x: f64) -> String {
     }
 }
 
+/// The `subagents` object (#6). Not in the reference: omitted when empty, so strict mode and
+/// reports without dispatched subagents keep the reference's shape. Totals come from the
+/// accessors; `unattributed*` span every attributed record, not only this branch's.
+fn subagents(sub: &SubagentSummary, o: &mut String) {
+    if sub.is_empty() {
+        return;
+    }
+    o.push_str("  \"subagents\": {\n");
+    let _ = writeln!(o, "    \"calls\": {},", sub.calls());
+    let _ = writeln!(o, "    \"tokens\": {},", sub.tokens());
+    let _ = writeln!(o, "    \"dispatched\": {},", sub.dispatched());
+    let _ = writeln!(o, "    \"workspaces\": {},", sub.workspaces());
+    let _ = writeln!(o, "    \"worktrees\": {},", sub.worktrees());
+    let _ = writeln!(o, "    \"unattributedCalls\": {},", sub.unattributed_calls);
+    let _ = writeln!(
+        o,
+        "    \"unattributedTokens\": {},",
+        sub.unattributed_tokens
+    );
+    if sub.rows.is_empty() {
+        o.push_str("    \"rows\": []\n");
+    } else {
+        o.push_str("    \"rows\": [\n");
+        for (i, r) in sub.rows.iter().enumerate() {
+            o.push_str("      {\n");
+            let _ = writeln!(
+                o,
+                "        \"workspace\": {},",
+                string(&r.workspace.label())
+            );
+            let _ = writeln!(o, "        \"isWorktree\": {},", r.workspace.is_worktree());
+            let _ = writeln!(o, "        \"subagent\": {},", string(&r.subagent));
+            let _ = writeln!(o, "        \"calls\": {},", r.calls);
+            let _ = writeln!(o, "        \"tokens\": {},", r.tokens);
+            let _ = writeln!(o, "        \"agents\": {}", r.agent_ids.len());
+            o.push_str(if i + 1 == sub.rows.len() {
+                "      }\n"
+            } else {
+                "      },\n"
+            });
+        }
+        o.push_str("    ]\n");
+    }
+    o.push_str("  },\n");
+}
+
 /// The report as JSON (`as_json` in the reference).
 ///
 /// `totalCalls` is `Summary::total.calls` (the reference's `len(mine)`, the same number as the
@@ -138,6 +184,8 @@ pub fn json(summary: &Summary, costs: &Costs) -> String {
     let _ = writeln!(o, "    \"asOf\": {as_of},");
     let _ = writeln!(o, "    \"source\": \"{source}\"");
     o.push_str("  },\n");
+
+    subagents(&summary.subagents, &mut o);
 
     if sessions.is_empty() {
         o.push_str("  \"sessions\": [],\n");

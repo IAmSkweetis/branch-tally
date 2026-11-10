@@ -7,7 +7,7 @@
 use std::cmp::Reverse;
 use std::fmt::Write as _;
 
-use crate::model::{Costs, PriceTableSource, Summary};
+use crate::model::{Costs, PriceTableSource, Summary, Workspace};
 
 /// Opens the region of a PR body this tool owns.
 pub const START: &str = "<!-- token-report:start -->";
@@ -75,6 +75,69 @@ fn price_note(costs: &Costs) -> String {
         );
     }
     note
+}
+
+/// A table cell from recorded text: a pipe would end the cell early.
+fn cell(s: &str) -> String {
+    s.replace('|', "\\|")
+}
+
+/// The dispatched-subagent breakdown (#6), pushed as lines ending in a blank line.
+///
+/// Not in the reference, so it is omitted entirely when [`SubagentSummary::is_empty`]: that keeps
+/// strict mode (which never fills it) and reports with no subagents byte-identical to before.
+/// All totals come from the summary's accessors. The unattributed count spans every attributed
+/// record, not only this branch's, and the line says so rather than imply otherwise.
+fn subagent_section(summary: &Summary, o: &mut Vec<String>) {
+    let sub = &summary.subagents;
+    if sub.is_empty() {
+        return;
+    }
+    o.push(format!(
+        "### Subagent usage (rolled up to `{}`)",
+        summary.branch
+    ));
+    o.push(String::new());
+    let mut text = String::new();
+    if !sub.rows.is_empty() {
+        o.push("| Workspace | Subagent | Calls | Tokens |".to_owned());
+        o.push("|---|---|--:|--:|".to_owned());
+        for r in &sub.rows {
+            let ws = match &r.workspace {
+                Workspace::Main => "main checkout".to_owned(),
+                Workspace::Worktree(name) => format!("worktree `{}`", cell(name)),
+            };
+            o.push(format!(
+                "| {ws} | {} | {} | {} |",
+                cell(&r.subagent),
+                n(r.calls),
+                n(r.tokens),
+            ));
+        }
+        o.push(String::new());
+        let _ = writeln!(
+            text,
+            "{} tokens ({} calls) from {} dispatched subagent(s) across {} workspace(s) \
+             ({} worktree(s)).",
+            n(sub.tokens()),
+            n(sub.calls()),
+            n(sub.dispatched()),
+            n(sub.workspaces()),
+            n(sub.worktrees()),
+        );
+    }
+    if sub.unattributed_calls == 0 {
+        text.push_str("0 subagent call(s) had no dispatch link.\n");
+    } else {
+        let _ = writeln!(
+            text,
+            "{} subagent call(s) ({} tokens) had no dispatch link, so they are not in any \
+             branch's total; counted across all attributed records, not only this branch.",
+            n(sub.unattributed_calls),
+            n(sub.unattributed_tokens),
+        );
+    }
+    o.push(text);
 }
 
 /// The report (`render` in the reference): no trailing newline, no markers.
@@ -173,6 +236,14 @@ pub fn markdown(summary: &Summary, costs: &Costs, show_cost: bool) -> String {
     o.push(note);
     o.push(String::new());
 
+    subagent_section(summary, &mut o);
+
+    attribution_details(summary, &mut o);
+    o.join("\n")
+}
+
+/// The collapsed attribution table, sorted by descending tokens (stably).
+fn attribution_details(summary: &Summary, o: &mut Vec<String>) {
     o.push("<details><summary>Breakdown by skill / agent</summary>".to_owned());
     o.push(String::new());
     o.push("| Attribution | Calls | Tokens |".to_owned());
@@ -187,7 +258,6 @@ pub fn markdown(summary: &Summary, costs: &Costs, show_cost: bool) -> String {
     }
     o.push(String::new());
     o.push("</details>".to_owned());
-    o.join("\n")
 }
 
 /// Puts the markers on their own lines around a report (`wrap`). Markers are owned here, not by
