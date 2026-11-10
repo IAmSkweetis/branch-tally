@@ -12,6 +12,7 @@ use crate::model::{
     AgentId, AttributedRecord, BranchBasis, Dispatch, Origin, Record, SelectedRecord, Selection,
     SessionId, SubagentTags, Workspace,
 };
+use crate::paths;
 
 /// The branch the reference reports for a record with no stamp.
 const NONE: &str = "(none)";
@@ -38,7 +39,11 @@ impl WorktreeMap {
     ) -> Self {
         let mut by_key = HashMap::new();
         for (path, branch) in worktrees {
-            by_key.insert(slug_for(path).to_lowercase(), branch.to_owned());
+            // Every slug form the transcript directory or cwd may use for this path (literal and
+            // Git Bash `/d/...` vs `D:` drive), so a lookup hits whichever form arrives.
+            for slug in paths::slug_candidates(path) {
+                by_key.insert(slug.to_lowercase(), branch.to_owned());
+            }
             by_key.insert(
                 format!("worktree-{}", final_component(path)),
                 branch.to_owned(),
@@ -46,7 +51,7 @@ impl WorktreeMap {
         }
         Self {
             by_key,
-            main_components: components(&path_text(main_checkout)),
+            main_components: components(&paths::normalize(main_checkout)),
         }
     }
 
@@ -57,29 +62,10 @@ impl WorktreeMap {
     }
 }
 
-/// The transcript slug of `path`: every character outside `[A-Za-z0-9]` becomes `-`
-/// (`slug_for` in the reference).
-#[must_use]
-pub fn slug_for(path: &Path) -> String {
-    path_text(path)
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect()
-}
-
-/// The path as text, without a Windows verbatim prefix (the reference's `resolve()` yields none).
-fn path_text(path: &Path) -> String {
-    let text = path.to_string_lossy();
-    text.strip_prefix(r"\\?\")
-        .or_else(|| text.strip_prefix("//?/"))
-        .unwrap_or(&text)
-        .to_owned()
-}
-
 /// Python's `Path.name`: the last non-empty component, splitting on either separator so a
 /// Windows path reads the same on every platform.
 fn final_component(path: &Path) -> String {
-    path_text(path)
+    paths::normalize(path)
         .rsplit(['/', '\\'])
         .find(|c| !c.is_empty())
         .unwrap_or("")
@@ -200,7 +186,7 @@ fn components(text: &str) -> Vec<String> {
 /// `.claude/worktrees/`, or the main checkout. `None` when the cwd is outside both (never
 /// guessed as main; the caller tags it [`Workspace::Unknown`]).
 fn workspace_of(cwd: &str, map: &WorktreeMap) -> Option<Workspace> {
-    let parts = components(&path_text(Path::new(cwd)));
+    let parts = components(&paths::normalize(Path::new(cwd)));
     let worktree = parts.windows(3).find_map(|w| {
         (w[0].eq_ignore_ascii_case(".claude") && w[1].eq_ignore_ascii_case("worktrees"))
             .then(|| w[2].clone())
