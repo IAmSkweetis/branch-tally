@@ -90,6 +90,7 @@ fn build_selects_summarizes_and_carries_read_stats() {
     ];
     let report = build(
         records,
+        &[],
         stats(),
         Path::new("/repo"),
         &[],
@@ -110,6 +111,7 @@ fn build_reports_strict_mode() {
     let records = vec![rec("s1", "a", Some("feat/x"))];
     let report = build(
         records,
+        &[],
         stats(),
         Path::new("/repo"),
         &[],
@@ -126,6 +128,7 @@ fn build_with_nothing_selected_is_an_explicit_outcome_with_stats() {
     let records = vec![rec("s1", "a", Some("other"))];
     let err = build(
         records,
+        &[],
         stats(),
         Path::new("/repo"),
         &[],
@@ -227,6 +230,7 @@ fn build_prices_with_the_table_the_caller_supplies() {
     let table = custom();
     let report = build(
         records,
+        &[],
         stats(),
         Path::new("/repo"),
         &[],
@@ -259,4 +263,129 @@ fn run_prices_with_the_table_the_caller_supplies() {
     assert_eq!(report.costs.cost_for("m"), Some(20.0));
     assert_eq!(report.costs.price_table.as_of, "2031-02-03");
     assert_eq!(report.costs.price_table.source, PriceTableSource::Override);
+}
+
+// --- #6: subagent rollup, end to end on the scrubbed fixtures -------------------------------
+
+use branch_tally_core::model::Workspace;
+use branch_tally_core::report::Report;
+use branch_tally_core::sources::claude_code::ClaudeCode;
+
+fn fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("tests")
+        .join("fixtures")
+        .join("claude-code")
+        .join(name)
+}
+
+/// Runs the real Claude Code source over a fixture with a fake git whose live worktrees are
+/// `worktrees`, as `(directory name, branch)` under `C:\repo\.claude\worktrees`.
+fn fixture_report(
+    name: &str,
+    branch: &str,
+    strict: bool,
+    worktrees: &[(&str, &str)],
+) -> Result<Report, ReportError> {
+    let repo = PathBuf::from(r"C:\repo");
+    let mut list = vec![Worktree {
+        path: repo.clone(),
+        branch: "main".to_owned(),
+    }];
+    for (dir, b) in worktrees {
+        list.push(Worktree {
+            path: repo.join(".claude").join("worktrees").join(dir),
+            branch: (*b).to_owned(),
+        });
+    }
+    let git = FakeGit::new().with_worktrees(&repo, list);
+    run(
+        &git,
+        &ClaudeCode,
+        &fixture(name),
+        &repo,
+        Some(branch),
+        strict,
+        bundled(),
+    )
+}
+
+#[test]
+fn removed_worktrees_roll_up_to_the_dispatcher_branch() {
+    let r = fixture_report("subagent-removed-worktree", "feat/x", false, &[]).unwrap();
+    assert_eq!(r.summary.total.calls, 7);
+    assert_eq!(r.summary.total.input, 28);
+    let sub = &r.summary.subagents;
+    assert_eq!(sub.calls(), 5);
+    assert_eq!(sub.dispatched(), 3);
+    assert!(sub.rows.iter().all(|x| x.workspace.is_worktree()));
+    assert_eq!((sub.unattributed_calls, sub.unattributed_tokens), (0, 0));
+    let json = branch_tally_core::render::json(&r.summary, &r.costs);
+    assert!(json.contains("\"subagents\""), "{json}");
+}
+
+#[test]
+fn a_renamed_worktree_branch_does_not_steal_the_subagent_calls() {
+    let live = [("agent-e1", "chore/x-part")];
+    let r = fixture_report("subagent-renamed-branch", "feat/x", false, &live).unwrap();
+    assert_eq!(r.summary.total.calls, 4);
+    assert_eq!(r.summary.total.input, 10);
+    let rows = &r.summary.subagents.rows;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].subagent, "e1");
+    assert_eq!(rows[0].workspace, Workspace::worktree("agent-e1"));
+}
+
+#[test]
+fn strict_mode_stays_raw_and_has_no_subagent_breakdown() {
+    let live = [("agent-e1", "chore/x-part")];
+    let r = fixture_report("subagent-renamed-branch", "chore/x-part", true, &live).unwrap();
+    assert_eq!(r.summary.total.calls, 1);
+    assert_eq!(r.summary.total.input, 4);
+    assert!(r.summary.subagents.is_empty());
+}
+
+#[test]
+fn a_subagent_with_no_dispatch_link_is_counted_unattributed_not_guessed() {
+    let r = fixture_report("subagent-no-dispatch-link", "feat/x", false, &[]).unwrap();
+    // Decision 6: an unlinked subagent record still takes part in the session claim like any
+    // stamped record, so the total holds all four calls (1 + 2 + 5 + 6 input). The two unlinked
+    // calls are also counted as unattributed.
+    assert_eq!(r.summary.total.calls, 4);
+    assert_eq!(r.summary.total.input, 14);
+    // The breakdown covers every selected subagent record, linked or not (n1 plus n2's two).
+    assert_eq!(r.summary.subagents.calls(), 3);
+    assert_eq!(r.summary.subagents.unattributed_calls, 2);
+    assert!(r.summary.subagents.unattributed_tokens > 0);
+}
+
+#[test]
+fn unusable_dispatchers_keep_raw_stamps_and_are_counted() {
+    let r = fixture_report("subagent-dispatcher-unusable", "feat/x", false, &[]).unwrap();
+    // All five calls (1..=5 input) ride the session claims; g2 and g3 stay counted unattributed.
+    assert_eq!(r.summary.total.input, 15);
+    assert_eq!(r.summary.subagents.unattributed_calls, 2);
+}
+
+#[test]
+fn a_main_checkout_subagent_rolls_up_in_the_main_workspace() {
+    let r = fixture_report("subagent-main-checkout", "feat/x", false, &[]).unwrap();
+    assert_eq!(r.summary.total.calls, 3);
+    assert_eq!(r.summary.total.input, 6);
+    let rows = &r.summary.subagents.rows;
+    assert_eq!(rows.len(), 1);
+    assert!(!rows[0].workspace.is_worktree());
+}
+
+#[test]
+fn subagents_sharing_a_worktree_get_one_row_each() {
+    let r = fixture_report("subagent-shared-worktree", "feat/x", false, &[]).unwrap();
+    assert_eq!(r.summary.total.input, 10);
+    let rows = &r.summary.subagents.rows;
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].subagent, "explorer");
+    assert_eq!(rows[0].calls, 2);
+    assert_eq!(rows[1].subagent, "h2");
 }
