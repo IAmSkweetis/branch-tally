@@ -20,12 +20,9 @@ pub(crate) fn fixtures_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/claude-code")
 }
 
-/// Claude Code's slug for a path: every non-alphanumeric becomes `-`.
+/// Claude Code's slug for a path, from core's shared `paths` module.
 pub(crate) fn slug_for(path: &Path) -> String {
-    path.to_string_lossy()
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect()
+    branch_tally_core::paths::slug(path)
 }
 
 fn git(dir: &Path, args: &[&str]) {
@@ -241,9 +238,7 @@ impl World {
 /// The resolved path without a Windows verbatim (`\\?\`) prefix, which git rejects.
 pub(crate) fn canon(path: &Path) -> PathBuf {
     let resolved = fs::canonicalize(path).expect("canonicalize");
-    let text = resolved.to_string_lossy();
-    text.strip_prefix(r"\\?\")
-        .map_or_else(|| resolved.clone(), PathBuf::from)
+    PathBuf::from(branch_tally_core::paths::normalize(&resolved))
 }
 
 pub(crate) fn stdout(o: &Output) -> String {
