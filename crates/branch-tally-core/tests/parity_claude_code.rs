@@ -85,13 +85,20 @@ const CLAIM_DIVERGENCES: &[(&str, &str, &str, &str)] = &[
         "the subagent's calls roll up to feat/x, so this branch has no records of its own in \
          claim mode",
     ),
+    (
+        "unstamped-main",
+        "main",
+        "#37",
+        "the reference recovers unstamped main-checkout calls onto the branch the main checkout \
+         has checked out now; they stay (none) and are reported as unattributed",
+    ),
 ];
 
 /// Scenarios and branch keys compared. Pinned so the test cannot green by comparing nothing.
 /// Claim pairs the report test compares.
-const EXPECTED_CLAIM_PAIRS: usize = 33;
-const EXPECTED_SCENARIOS: usize = 19;
-const EXPECTED_BRANCH_KEYS: usize = 47;
+const EXPECTED_CLAIM_PAIRS: usize = 35;
+const EXPECTED_SCENARIOS: usize = 20;
+const EXPECTED_BRANCH_KEYS: usize = 50;
 
 fn fixtures_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -315,7 +322,8 @@ fn rust_matches_the_reference_on_calls_and_tokens() {
 }
 
 /// Worktrees as `git worktree list` reports them for the generator's throwaway repo: the main
-/// checkout on `main` (which the reference also maps; #37), then each manifest worktree under
+/// checkout on `main` (the reference recovers unstamped main-checkout records onto it; Rust does
+/// not, #37), then each manifest worktree under
 /// `.claude/worktrees/<name>`.
 fn worktrees_for(manifest: &Value) -> Vec<Worktree> {
     let repo = PathBuf::from(r"C:\repo");

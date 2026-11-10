@@ -116,7 +116,8 @@ reference once per pair. It writes, next to the manifest:
   They feed `rust_report_matches_the_reference_claim_goldens` (#4), which compares the full
   `render::json` report against every `claim.json` key (claim mode) and every `strict.json` key
   (strict mode) as parsed JSON, through `report::build`. Worktrees are built as git lists them (main
-  checkout on `main`, then `.claude/worktrees/<name>`), the reference's #37 behaviour kept as is.
+  checkout on `main`, then `.claude/worktrees/<name>`). The reference recovers unstamped
+  main-checkout records onto that `main`; Rust doesn't (#37, listed in `CLAIM_DIVERGENCES`).
   Origins are compared lowercased: the reference lowercases them and the generator maps them back to
   fixture spelling, which is not behaviour. One output divergence is listed (#5, below).
 
@@ -153,7 +154,7 @@ expected behaviour directly, next to the same issue number. `malformed-and-keyle
   both cache writes, cache read, output and thinking. Tokens follow the reference's
   `Record.tokens` (input + 5m + 1h + read + output; thinking is inside output). A `no_records`
   key must match zero Rust records. Cost, origin, first/last and agents are not compared. The
-  test pins the number of scenarios (19) and branch keys (47) compared, so it cannot go green
+  test pins the number of scenarios (20) and branch keys (50) compared, so it cannot go green
   on nothing, and fails on a scenario with a manifest but no goldens. Adding a scenario means
   bumping `EXPECTED_SCENARIOS`, `EXPECTED_BRANCH_KEYS` and `EXPECTED_CLAIM_PAIRS`.
 - Divergences are two lists in the test: `REFERENCE_DIVERGENT_SCENARIOS` (the manifest's
@@ -195,7 +196,10 @@ expected behaviour directly, next to the same issue number. `malformed-and-keyle
   (scenario, branch, issue `#6`, reason; a listed pair must still differ): `feat/x` in `subagent`,
   `subagent-renamed-branch` and `subagent-switches-branch` (calls stamped elsewhere roll up to the
   dispatcher), and `chore/x-part`, `chore/d1-data` and `chore/d2-data` (their records belong to the
-  dispatcher, so claim mode finds none). `DIVERGENCES`, the raw-stamp comparison, stays empty.
+  dispatcher, so claim mode finds none). A seventh, `main` in `unstamped-main` (issue `#37`), is
+  there because Rust doesn't recover unstamped main-checkout calls onto the main checkout's
+  current branch. `DIVERGENCES`, the raw-stamp comparison, stays empty: strict mode never recovers,
+  so #37 can't show there.
 - Output divergence #7 (attribution heuristics): the JSON report has a top-level `heuristics`
   object (`sessionClaim`, `worktreeRecovery`, `originRecovery`, `dispatcherRollUp`,
   `timelineForward`, `timelineCarried`, `ambiguous`, each `{calls, tokens}`, plus `isFloor`) that
@@ -224,7 +228,7 @@ expected behaviour directly, next to the same issue number. `malformed-and-keyle
   which macOS derives the cache from) at the throwaway home so a developer's real cache never
   leaks into a run. The update logic is also unit-tested with an injected feed, date and path.
 - `rust_report_matches_the_reference_claim_goldens` is live (not ignored). It compares the full
-  `render::json` report with every `claim.json` key (`EXPECTED_CLAIM_PAIRS`, 27) and every
+  `render::json` report with every `claim.json` key (`EXPECTED_CLAIM_PAIRS`, 35) and every
   `strict.json` key, as described above.
 - The binary is checked end to end in `crates/branch-tally/tests/report.rs`: `--json` against
   the same `claim.json` and `strict.json` goldens, plus insta snapshots of the Markdown. Markdown

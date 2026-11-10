@@ -129,11 +129,11 @@ fn real_stamp_is_never_replaced_by_origin() {
 }
 
 #[test]
-fn main_origin_none_looks_up_the_main_checkout_slug_like_the_reference() {
-    // Reference: `recovered = wt_branches.get(origin_name)` also runs for the main root, and the
-    // main checkout is in the worktree list. Ported as-is.
+fn unstamped_main_checkout_record_is_not_recovered_onto_the_checkouts_current_branch() {
+    // #37: the reference also looks the main checkout up in the worktree list, which only says
+    // what is checked out *now*. The record stays `(none)` and is reported as unattributed.
     let (b, basis) = one(rec("s", None, Some(Origin::Main)), false);
-    assert_eq!((b.as_str(), basis), ("main", BranchBasis::OriginRecovered));
+    assert_eq!((b.as_str(), basis), ("(none)", BranchBasis::Stamped));
 }
 
 #[test]

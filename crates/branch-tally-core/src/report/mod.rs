@@ -181,8 +181,8 @@ fn resolve_default_branch(git: &dyn Git, main_checkout: &Path) -> DefaultBranch 
 
 /// Attributes, selects, summarizes and prices `records` for `branch`. Pure.
 ///
-/// `worktrees` is git's branch-holding worktree list, which includes the main checkout itself
-/// (kept as the reference does; #37).
+/// `worktrees` is git's branch-holding worktree list, which includes the main checkout itself.
+/// Attribution never recovers a branch from the main checkout's entry (#37).
 ///
 /// `dispatches` link dispatching sessions to their subagents. They roll subagent records up to
 /// the dispatcher's branch (#6) and are ignored in strict mode.
