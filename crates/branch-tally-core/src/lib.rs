@@ -5,6 +5,7 @@
 //! callers pass the directories in.
 
 pub mod attribution;
+pub mod config;
 pub mod git;
 pub mod model;
 pub mod pr;
