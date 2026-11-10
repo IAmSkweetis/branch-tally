@@ -53,16 +53,22 @@ fn origin_of(map: &WorktreeMap, slug: &str) -> (String, BranchBasis) {
 }
 
 #[test]
-fn git_bash_main_checkout_recovers_worktree_origin() {
+fn git_bash_main_checkout_recovers_worktree_origin_in_either_slug_form() {
     // Main checkout arrives as /d/x; git reports the worktree as D:\x\...
     let m = WorktreeMap::new(
         Path::new("/d/x"),
         [(Path::new(r"D:\x\.claude\worktrees\agent-a"), "feat/a")],
     );
-    assert_eq!(
-        origin_of(&m, "D--x--claude-worktrees-agent-a"),
-        ("feat/a".to_owned(), BranchBasis::OriginRecovered)
-    );
+    for slug in [
+        "D--x--claude-worktrees-agent-a",
+        "-d-x--claude-worktrees-agent-a",
+    ] {
+        assert_eq!(
+            origin_of(&m, slug),
+            ("feat/a".to_owned(), BranchBasis::OriginRecovered),
+            "{slug}"
+        );
+    }
 }
 
 #[test]
