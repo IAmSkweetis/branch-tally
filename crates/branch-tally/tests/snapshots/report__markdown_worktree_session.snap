@@ -12,7 +12,7 @@ expression: stdout(&out)
 |---|---|---|---|--:|--:|
 | `s2` | worktree | — | 01-01 00:00 → 01-01 00:00 | 1 | 0.0M |
 
-<sub>Branch `wt-a` · 1 session(s), 1 in a worktree · 0 of 1 calls from subagents · 0.0M tokens recovered from pre-branch/worktree checkouts · prices as of 2026-11-09 (bundled table) · 1 model(s) unpriced, total is a floor · est. cost at list API rates, not amounts billed</sub>
+<sub>Branch `wt-a` · 1 session(s), 1 in a worktree · 0 of 1 calls from subagents · prices as of 2026-11-09 (bundled table) · 1 model(s) unpriced, total is a floor · est. cost at list API rates, not amounts billed</sub>
 
 <details><summary>Breakdown by skill / agent</summary>
 
