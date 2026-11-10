@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 
 use branch_tally_core::model::{AgentId, Dispatch, Harness, Origin, Record, SessionId};
-use branch_tally_core::sources::claude_code::{ClaudeCode, slug_candidates};
+use branch_tally_core::sources::claude_code::ClaudeCode;
 use branch_tally_core::sources::{
     ReadStats, RepoIdentity, RootKind, Source, SourceError, TranscriptRoot,
 };
@@ -67,27 +67,6 @@ fn harness_is_claude_code() {
 }
 
 #[test]
-fn slug_replaces_every_non_alphanumeric_char() {
-    assert_eq!(slug_candidates(Path::new(r"C:\repo")), ["C--repo"]);
-    assert_eq!(slug_candidates(Path::new("/repo")), ["-repo"]);
-    assert_eq!(
-        slug_candidates(Path::new(r"D:\work spaces\my.repo_x")),
-        ["D--work-spaces-my-repo-x"]
-    );
-}
-
-#[test]
-fn slug_accepts_git_bash_drive_form_and_verbatim_prefix() {
-    let windows = slug_candidates(Path::new(r"C:\repo"));
-    assert!(slug_candidates(Path::new("/c/repo")).contains(&windows[0]));
-    // Case is not normalised here; matching against directory names is case-insensitive.
-    assert_eq!(slug_candidates(Path::new("c:/repo")), ["c--repo"]);
-    assert!(slug_candidates(Path::new(r"\\?\C:\repo")).contains(&windows[0]));
-    // The literal reading stays a candidate, so a real Unix `/c/repo` still matches.
-    assert!(slug_candidates(Path::new("/c/repo")).contains(&"-c-repo".to_owned()));
-}
-
-#[test]
 fn discovery_includes_worktrees_and_excludes_prefix_siblings() {
     let roots = discover("worktree-and-siblings", r"C:\repo");
     let mut got = names(&roots);
@@ -115,6 +94,21 @@ fn discovery_matches_slug_case_insensitively_for_every_path_form() {
             "repo form {repo}"
         );
     }
+}
+
+#[test]
+fn discovery_finds_a_repo_given_in_verbatim_unc_form() {
+    let roots = discover("unc-share", r"\\?\UNC\srv\share\repo");
+    assert_eq!(
+        names(&roots),
+        vec![("--srv-share-repo".to_owned(), RootKind::Repository)]
+    );
+}
+
+#[test]
+fn discovery_finds_verbatim_drive_and_git_bash_forms_but_not_other_paths() {
+    assert_eq!(discover("slug-case", r"\\?\C:\repo").len(), 1);
+    assert_eq!(discover("slug-case", "/repo").len(), 0);
 }
 
 #[test]
