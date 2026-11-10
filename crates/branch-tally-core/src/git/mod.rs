@@ -90,6 +90,16 @@ pub trait Git {
     /// not resolvable ([`GitError::Failed`]), or git printed something unusable
     /// ([`GitError::UnexpectedOutput`]).
     fn default_branch(&self, repo: &Path) -> Result<String, GitError>;
+
+    /// The configured `init.defaultBranch` (`git config --get init.defaultBranch`), the fallback
+    /// when [`Git::default_branch`] cannot resolve `origin/HEAD`. It is a setting, not a fact
+    /// about the repository, so a report that uses it must say so.
+    ///
+    /// # Errors
+    ///
+    /// [`GitError`] when the tool cannot run or the setting is unset ([`GitError::Failed`], exit
+    /// status 1), or is empty ([`GitError::UnexpectedOutput`]).
+    fn init_default_branch(&self, repo: &Path) -> Result<String, GitError>;
 }
 
 /// Extract the default branch from `git symbolic-ref --short refs/remotes/origin/HEAD` output
@@ -225,6 +235,18 @@ impl Git for SystemGit {
             subcommand: SUBCOMMAND,
         })
     }
+
+    fn init_default_branch(&self, repo: &Path) -> Result<String, GitError> {
+        const SUBCOMMAND: &str = "config --get init.defaultBranch";
+        let out = Self::run(repo, SUBCOMMAND, &["config", "--get", "init.defaultBranch"])?;
+        let name = out.trim();
+        if name.is_empty() {
+            return Err(GitError::UnexpectedOutput {
+                subcommand: SUBCOMMAND,
+            });
+        }
+        Ok(name.to_owned())
+    }
 }
 
 /// A scripted [`Git`] for tests, keyed by the directory passed in.
@@ -237,6 +259,7 @@ pub struct FakeGit {
     mains: BTreeMap<PathBuf, PathBuf>,
     worktrees: BTreeMap<PathBuf, Vec<Worktree>>,
     default_branches: BTreeMap<PathBuf, String>,
+    init_default_branches: BTreeMap<PathBuf, String>,
 }
 
 impl FakeGit {
@@ -277,6 +300,18 @@ impl FakeGit {
         self.default_branches.insert(repo.into(), branch.into());
         self
     }
+
+    /// Script `init_default_branch(repo)`.
+    #[must_use]
+    pub fn with_init_default_branch(
+        mut self,
+        repo: impl Into<PathBuf>,
+        branch: impl Into<String>,
+    ) -> Self {
+        self.init_default_branches
+            .insert(repo.into(), branch.into());
+        self
+    }
 }
 
 impl Git for FakeGit {
@@ -310,6 +345,16 @@ impl Git for FakeGit {
                 code: Some(128),
             })
     }
+
+    fn init_default_branch(&self, repo: &Path) -> Result<String, GitError> {
+        self.init_default_branches
+            .get(repo)
+            .cloned()
+            .ok_or(GitError::Failed {
+                subcommand: "config --get init.defaultBranch",
+                code: Some(1),
+            })
+    }
 }
 
 #[cfg(test)]
@@ -335,6 +380,13 @@ mod default_branch_tests {
         assert_eq!(parse_origin_head("origin/\n"), None);
         assert_eq!(parse_origin_head("upstream/main\n"), None);
         assert_eq!(parse_origin_head("main\n"), None);
+    }
+
+    #[test]
+    fn fake_init_default_branch_scripted_and_unscripted() {
+        let f = FakeGit::new().with_init_default_branch("/r", "trunk");
+        assert_eq!(f.init_default_branch(Path::new("/r")).unwrap(), "trunk");
+        assert!(f.init_default_branch(Path::new("/other")).is_err());
     }
 
     #[test]

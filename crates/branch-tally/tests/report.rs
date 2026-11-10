@@ -91,6 +91,7 @@ fn check_against_golden(golden: &str, extra: &[&str], strict: bool) -> usize {
                 let mut got: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
                 world.normalize(&mut got);
                 strip_price_divergences(&mut got);
+                strip_heuristics_divergence(&mut got, strict);
                 strip_subagent_divergence(&mut got, strict);
                 match divergence {
                     None => assert_eq!(&got, want, "{name} {branch}"),
@@ -160,6 +161,35 @@ const CLAIM_DIVERGENCES: &[(&str, &str, &str, &str)] = &[
          claim mode",
     ),
 ];
+
+/// #7: a claim-mode payload that used an attribution heuristic carries a `heuristics` object the
+/// reference does not emit. A report-field divergence, listed here next to the #6 ones and
+/// stripped deliberately (after checking its values) so no other key is loosened. Mirrors
+/// `without_heuristics_divergence` in `branch-tally-core/tests/parity_claude_code.rs`.
+fn strip_heuristics_divergence(payload: &mut serde_json::Value, strict: bool) {
+    let object = payload.as_object_mut().unwrap();
+    let sub = object.get("subagents").cloned();
+    let Some(h) = object.remove("heuristics") else {
+        return;
+    };
+    assert!(!strict, "strict mode must not carry a heuristics object");
+    let calls = |v: &serde_json::Value, k: &str| v[k]["calls"].as_u64().unwrap();
+    assert_eq!(calls(&h, "timelineForward"), 0);
+    assert_eq!(calls(&h, "timelineCarried"), 0);
+    assert_eq!(
+        h["isFloor"].as_bool().unwrap(),
+        calls(&h, "ambiguous") > 0,
+        "isFloor disagrees with the ambiguous calls"
+    );
+    let (sub_calls, sub_tokens) = sub.as_ref().map_or((0, 0), |s| {
+        (s["calls"].as_u64().unwrap(), s["tokens"].as_u64().unwrap())
+    });
+    assert_eq!(calls(&h, "dispatcherRollUp"), sub_calls);
+    assert_eq!(
+        h["dispatcherRollUp"]["tokens"].as_u64().unwrap(),
+        sub_tokens
+    );
+}
 
 /// Checks the #6 `subagents` object, when present, adds up on its own terms and is absent in
 /// strict mode, then removes it so the rest of the payload can be compared with the golden.

@@ -12,7 +12,7 @@ expression: text
 |---|---|---|---|--:|--:|
 | `s1` | main checkout | subagent | 01-01 00:00 → 01-01 00:00 | 3 | 0.0M |
 
-<sub>Branch `feat/x` · 1 session(s), 0 in a worktree · 2 of 3 calls from subagents · prices as of 2026-11-09 (bundled table) · 1 model(s) unpriced, total is a floor · est. cost at list API rates, not amounts billed</sub>
+<sub>Branch `feat/x` · 1 session(s), 0 in a worktree · 2 of 3 calls from subagents · attributed by heuristic: dispatcher roll-up 2 call(s) / 120 tokens · prices as of 2026-11-09 (bundled table) · 1 model(s) unpriced, total is a floor · est. cost at list API rates, not amounts billed</sub>
 
 ### Subagent usage (rolled up to `feat/x`)
 

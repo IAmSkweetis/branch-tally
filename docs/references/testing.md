@@ -196,6 +196,20 @@ expected behaviour directly, next to the same issue number. `malformed-and-keyle
   `subagent-renamed-branch` and `subagent-switches-branch` (calls stamped elsewhere roll up to the
   dispatcher), and `chore/x-part`, `chore/d1-data` and `chore/d2-data` (their records belong to the
   dispatcher, so claim mode finds none). `DIVERGENCES`, the raw-stamp comparison, stays empty.
+- Output divergence #7 (attribution heuristics): the JSON report has a top-level `heuristics`
+  object (`sessionClaim`, `worktreeRecovery`, `originRecovery`, `dispatcherRollUp`,
+  `timelineForward`, `timelineCarried`, `ambiguous`, each `{calls, tokens}`, plus `isFloor`) that
+  the reference lacks, and the Markdown footnote gains "attributed by heuristic: ..." (for example
+  "dispatcher roll-up 2 call(s) / 120 tokens"). It is omitted when no heuristic assigned a call.
+  Claim attribution is unchanged; only this report field is new, so no `CLAIM_DIVERGENCES` pair is
+  added. `without_heuristics_divergence` (and `strip_heuristics_divergence` in
+  `branch-tally/tests/report.rs`) removes only that key, after checking it: strict mode must not
+  carry it, the timeline counts are zero in claim mode, `isFloor` equals "ambiguous calls > 0", and
+  `dispatcherRollUp` equals the #6 `subagents` `calls` and `tokens`. Every other key is still
+  compared exactly. Timeline mode adds a `workBranch` object (`kind` `excludesDefault` with
+  `defaultBranch` and `source`, or `custom` with `pattern`), and the footnote names the default
+  branch when it did not come from `origin/HEAD` and any custom pattern; neither appears in claim
+  or strict output.
 - The bundled table was reseeded from LiteLLM's current rates (#5), not the reference's `PRICES`.
   Every model the goldens price (`claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-4-6`) has the
   same input, output and cache-read rate in both, so every cost still matches the goldens exactly

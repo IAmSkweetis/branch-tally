@@ -19,9 +19,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use branch_tally_core::git::Worktree;
-use branch_tally_core::model::{Dispatch, Record};
+use branch_tally_core::model::{Dispatch, Mode, Record};
 use branch_tally_core::render;
-use branch_tally_core::report::{self, ReportError};
+use branch_tally_core::report::{self, Options, ReportError};
 use branch_tally_core::sources::claude_code::ClaudeCode;
 use branch_tally_core::sources::{ReadStats, RepoIdentity, Source};
 use serde_json::Value;
@@ -38,6 +38,11 @@ const DIVERGENCES: &[(&str, &str, &str, &str)] = &[];
 /// branch, issue, reason)`. Strict mode stays raw and never diverges. A listed pair is asserted
 /// to differ, so an entry cannot outlive its reason. The `subagents` key itself is handled
 /// separately (see `without_subagent_divergence`).
+///
+/// #7: every claim-mode payload that used a heuristic also carries a `heuristics` object the
+/// reference does not emit. That is a report-field divergence, not an attribution one: it is
+/// stripped deliberately by `without_heuristics_divergence` after its values are checked against
+/// what the selection implies, and no other key is loosened. Strict mode never carries it.
 const CLAIM_DIVERGENCES: &[(&str, &str, &str, &str)] = &[
     (
         "subagent",
@@ -365,6 +370,56 @@ fn without_price_divergences(mut payload: Value) -> Value {
     payload
 }
 
+/// Checks the #7 `heuristics` object, when present, is what claim-mode selection implies, then
+/// removes it so the rest of the payload can be compared with the golden. The reference never
+/// emits it. Strict mode stays raw and must not carry it. Claim mode never uses the timeline
+/// heuristics, and the dispatcher roll-up it counts is exactly the #6 subagent breakdown.
+fn without_heuristics_divergence(mut payload: Value, strict: bool) -> Value {
+    let Some(object) = payload.as_object_mut() else {
+        return payload;
+    };
+    let sub = object.get("subagents").cloned();
+    let Some(h) = object.remove("heuristics") else {
+        return payload;
+    };
+    assert!(!strict, "strict mode must not carry a heuristics object");
+    for key in ["timelineForward", "timelineCarried"] {
+        assert_eq!(num(&h[key], "calls"), 0, "claim mode used {key}");
+    }
+    assert_eq!(
+        h["isFloor"],
+        Value::Bool(num(&h["ambiguous"], "calls") > 0),
+        "isFloor disagrees with the ambiguous calls"
+    );
+    let (sub_calls, sub_tokens) = sub
+        .as_ref()
+        .map_or((0, 0), |s| (num(s, "calls"), num(s, "tokens")));
+    assert_eq!(
+        num(&h["dispatcherRollUp"], "calls"),
+        sub_calls,
+        "dispatcherRollUp.calls != subagents.calls"
+    );
+    assert_eq!(
+        num(&h["dispatcherRollUp"], "tokens"),
+        sub_tokens,
+        "dispatcherRollUp.tokens != subagents.tokens"
+    );
+    let counted: u64 = [
+        "sessionClaim",
+        "worktreeRecovery",
+        "originRecovery",
+        "dispatcherRollUp",
+    ]
+    .iter()
+    .map(|k| num(&h[*k], "calls"))
+    .sum();
+    assert!(
+        counted <= num(&payload, "totalCalls"),
+        "heuristics count more calls than the report holds"
+    );
+    payload
+}
+
 /// Checks the #6 `subagents` object, when present, adds up on its own terms, then removes it so
 /// the rest of the payload can be compared with the golden. Strict mode never carries it (it
 /// stays raw), and the reference never has it.
@@ -398,6 +453,7 @@ fn read_dispatches(dir: &Path) -> Vec<Dispatch> {
 
 /// Rust's report for `branch` as the reference's `--json` payload, or `{"error":"no_records"}`.
 fn rust_payload(dir: &Path, manifest: &Value, branch: &str, strict: bool) -> Value {
+    let mode = if strict { Mode::Strict } else { Mode::Claim };
     match report::build(
         read_records(dir),
         &read_dispatches(dir),
@@ -405,12 +461,15 @@ fn rust_payload(dir: &Path, manifest: &Value, branch: &str, strict: bool) -> Val
         Path::new(r"C:\repo"),
         &worktrees_for(manifest),
         branch,
-        strict,
+        &Options::new(mode),
         branch_tally_core::pricing::PriceTable::bundled(),
     ) {
         Ok(r) => without_subagent_divergence(
-            without_price_divergences(
-                serde_json::from_str(&render::json(&r.summary, &r.costs)).unwrap(),
+            without_heuristics_divergence(
+                without_price_divergences(
+                    serde_json::from_str(&render::json(&r.summary, &r.costs)).unwrap(),
+                ),
+                strict,
             ),
             strict,
         ),

@@ -10,7 +10,7 @@ use branch_tally_core::model::{
     Dispatch, Harness, Mode, Origin, PriceTableSource, Record, RequestId, SessionId, Usage,
 };
 use branch_tally_core::pricing::PriceTable;
-use branch_tally_core::report::{ReportError, build, run};
+use branch_tally_core::report::{Options, ReportError, build, run};
 use branch_tally_core::sources::{ReadStats, RepoIdentity, Source, SourceError, TranscriptRoot};
 
 fn rec(session: &str, request: &str, branch: Option<&str>) -> Record {
@@ -98,7 +98,7 @@ fn build_selects_summarizes_and_carries_read_stats() {
         Path::new("/repo"),
         &[],
         "feat/x",
-        false,
+        &Options::default(),
         bundled(),
     )
     .unwrap();
@@ -119,7 +119,7 @@ fn build_reports_strict_mode() {
         Path::new("/repo"),
         &[],
         "feat/x",
-        true,
+        &Options::new(Mode::Strict),
         bundled(),
     )
     .unwrap();
@@ -136,7 +136,7 @@ fn build_with_nothing_selected_is_an_explicit_outcome_with_stats() {
         Path::new("/repo"),
         &[],
         "feat/x",
-        false,
+        &Options::default(),
         bundled(),
     )
     .unwrap_err();
@@ -168,7 +168,7 @@ fn run_defaults_to_the_current_branch_and_reads_for_the_main_checkout() {
         Path::new("/projects"),
         Path::new("/repo/wt"),
         None,
-        false,
+        &Options::default(),
         bundled(),
     )
     .unwrap();
@@ -191,7 +191,7 @@ fn run_treats_an_unreadable_worktree_list_as_empty_but_says_so() {
         Path::new("/projects"),
         Path::new("/repo"),
         Some("feat/x"),
-        false,
+        &Options::default(),
         bundled(),
     )
     .unwrap();
@@ -209,7 +209,7 @@ fn run_without_a_branch_and_without_git_is_a_git_error() {
         Path::new("/projects"),
         Path::new("/repo"),
         None,
-        false,
+        &Options::default(),
         bundled(),
     )
     .unwrap_err();
@@ -238,7 +238,7 @@ fn build_prices_with_the_table_the_caller_supplies() {
         Path::new("/repo"),
         &[],
         "feat/x",
-        false,
+        &Options::default(),
         &table,
     )
     .unwrap();
@@ -259,7 +259,7 @@ fn run_prices_with_the_table_the_caller_supplies() {
         Path::new("/projects"),
         Path::new("/repo"),
         Some("feat/x"),
-        false,
+        &Options::default(),
         &table,
     )
     .unwrap();
@@ -289,7 +289,7 @@ fn fixture(name: &str) -> PathBuf {
 fn fixture_report(
     name: &str,
     branch: &str,
-    strict: bool,
+    mode: Mode,
     worktrees: &[(&str, &str)],
 ) -> Result<Report, ReportError> {
     let repo = PathBuf::from(r"C:\repo");
@@ -310,14 +310,14 @@ fn fixture_report(
         &fixture(name),
         &repo,
         Some(branch),
-        strict,
+        &Options::new(mode),
         bundled(),
     )
 }
 
 #[test]
 fn removed_worktrees_roll_up_to_the_dispatcher_branch() {
-    let r = fixture_report("subagent-removed-worktree", "feat/x", false, &[]).unwrap();
+    let r = fixture_report("subagent-removed-worktree", "feat/x", Mode::Claim, &[]).unwrap();
     assert_eq!(r.summary.total.calls, 7);
     assert_eq!(r.summary.total.input, 28);
     let sub = &r.summary.subagents;
@@ -332,7 +332,7 @@ fn removed_worktrees_roll_up_to_the_dispatcher_branch() {
 #[test]
 fn a_renamed_worktree_branch_does_not_steal_the_subagent_calls() {
     let live = [("agent-e1", "chore/x-part")];
-    let r = fixture_report("subagent-renamed-branch", "feat/x", false, &live).unwrap();
+    let r = fixture_report("subagent-renamed-branch", "feat/x", Mode::Claim, &live).unwrap();
     assert_eq!(r.summary.total.calls, 4);
     assert_eq!(r.summary.total.input, 10);
     let rows = &r.summary.subagents.rows;
@@ -344,7 +344,13 @@ fn a_renamed_worktree_branch_does_not_steal_the_subagent_calls() {
 #[test]
 fn strict_mode_stays_raw_and_has_no_subagent_breakdown() {
     let live = [("agent-e1", "chore/x-part")];
-    let r = fixture_report("subagent-renamed-branch", "chore/x-part", true, &live).unwrap();
+    let r = fixture_report(
+        "subagent-renamed-branch",
+        "chore/x-part",
+        Mode::Strict,
+        &live,
+    )
+    .unwrap();
     assert_eq!(r.summary.total.calls, 1);
     assert_eq!(r.summary.total.input, 4);
     assert!(r.summary.subagents.is_empty());
@@ -352,7 +358,7 @@ fn strict_mode_stays_raw_and_has_no_subagent_breakdown() {
 
 #[test]
 fn a_subagent_with_no_dispatch_link_is_counted_unattributed_not_guessed() {
-    let r = fixture_report("subagent-no-dispatch-link", "feat/x", false, &[]).unwrap();
+    let r = fixture_report("subagent-no-dispatch-link", "feat/x", Mode::Claim, &[]).unwrap();
     // Decision 6: an unlinked subagent record still takes part in the session claim like any
     // stamped record, so the total holds all four calls (1 + 2 + 5 + 6 input). The two unlinked
     // calls are also counted as unattributed.
@@ -372,7 +378,7 @@ fn a_subagent_with_no_dispatch_link_is_counted_unattributed_not_guessed() {
 
 #[test]
 fn unusable_dispatchers_keep_raw_stamps_and_are_counted() {
-    let r = fixture_report("subagent-dispatcher-unusable", "feat/x", false, &[]).unwrap();
+    let r = fixture_report("subagent-dispatcher-unusable", "feat/x", Mode::Claim, &[]).unwrap();
     // All five calls (1..=5 input) ride the session claims; g2 and g3 stay counted unattributed.
     assert_eq!(r.summary.total.input, 15);
     assert_eq!(r.summary.subagents.unattributed_calls, 2);
@@ -422,7 +428,7 @@ fn a_forwarding_wrapper_source_still_links_subagents() {
         &fixture("subagent-removed-worktree"),
         &repo,
         Some("feat/x"),
-        false,
+        &Options::default(),
         bundled(),
     )
     .unwrap();
@@ -432,7 +438,7 @@ fn a_forwarding_wrapper_source_still_links_subagents() {
 
 #[test]
 fn a_main_checkout_subagent_rolls_up_in_the_main_workspace() {
-    let r = fixture_report("subagent-main-checkout", "feat/x", false, &[]).unwrap();
+    let r = fixture_report("subagent-main-checkout", "feat/x", Mode::Claim, &[]).unwrap();
     assert_eq!(r.summary.total.calls, 3);
     assert_eq!(r.summary.total.input, 6);
     let rows = &r.summary.subagents.rows;
@@ -442,11 +448,196 @@ fn a_main_checkout_subagent_rolls_up_in_the_main_workspace() {
 
 #[test]
 fn subagents_sharing_a_worktree_get_one_row_each() {
-    let r = fixture_report("subagent-shared-worktree", "feat/x", false, &[]).unwrap();
+    let r = fixture_report("subagent-shared-worktree", "feat/x", Mode::Claim, &[]).unwrap();
     assert_eq!(r.summary.total.input, 10);
     let rows = &r.summary.subagents.rows;
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].subagent, "explorer");
     assert_eq!(rows[0].calls, 2);
     assert_eq!(rows[1].subagent, "h2");
+}
+
+// --- #7: timeline mode, the work-branch rule and the default-branch fallback ----------------
+
+use branch_tally_core::model::{DefaultBranchSource, WorkBranchRule};
+use branch_tally_core::report::{DefaultBranch, WorkBranch};
+
+fn rec_at(session: &str, request: &str, branch: &str, ts: &str) -> Record {
+    let mut r = rec(session, request, Some(branch));
+    r.ts = Some(ts.to_owned());
+    r
+}
+
+/// Feature work, a stretch stamped `main`, then feature work again, in one session.
+fn timeline_records() -> Vec<Record> {
+    vec![
+        rec_at("s1", "a", "feat/x", "2026-01-01T00:00:01Z"),
+        rec_at("s1", "b", "main", "2026-01-01T00:00:02Z"),
+        rec_at("s1", "c", "feat/x", "2026-01-01T00:00:03Z"),
+    ]
+}
+
+#[expect(
+    clippy::unwrap_used,
+    reason = "a helper that fails to report should fail the test loudly"
+)]
+fn timeline_build(branch: &str, opts: &Options<'_>) -> Report {
+    build(
+        timeline_records(),
+        &[],
+        ReadStats::default(),
+        Path::new("/repo"),
+        &[],
+        branch,
+        opts,
+        bundled(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn timeline_mode_carries_a_default_branch_stamp_back_to_the_work_branch() {
+    let opts = Options::new(Mode::Timeline).with_default_branch(DefaultBranch {
+        name: "main".to_owned(),
+        source: DefaultBranchSource::OriginHead,
+    });
+    let r = timeline_build("feat/x", &opts);
+    assert_eq!(r.summary.mode, Mode::Timeline);
+    assert_eq!(r.summary.total.calls, 3);
+    assert_eq!(r.summary.footnote.heuristics.timeline_carried.calls, 1);
+    assert_eq!(
+        r.summary.work_branch,
+        Some(WorkBranchRule::ExcludesDefault {
+            branch: "main".to_owned(),
+            source: DefaultBranchSource::OriginHead,
+        })
+    );
+}
+
+#[test]
+fn timeline_default_rule_excludes_the_resolved_default_not_a_hardcoded_main() {
+    // With "trunk" as the default, `main` is an ordinary work branch: its record stays there.
+    let opts = Options::new(Mode::Timeline).with_default_branch(DefaultBranch {
+        name: "trunk".to_owned(),
+        source: DefaultBranchSource::OriginHead,
+    });
+    assert_eq!(timeline_build("feat/x", &opts).summary.total.calls, 2);
+}
+
+#[test]
+fn timeline_without_a_resolved_default_assumes_main_and_says_so() {
+    let r = timeline_build("feat/x", &Options::new(Mode::Timeline));
+    assert_eq!(r.summary.total.calls, 3);
+    assert_eq!(
+        r.summary.work_branch,
+        Some(WorkBranchRule::ExcludesDefault {
+            branch: "main".to_owned(),
+            source: DefaultBranchSource::AssumedMain,
+        })
+    );
+}
+
+#[test]
+fn timeline_custom_rule_is_used_and_its_pattern_reported() {
+    // `main` is a work branch under this rule, so its record stays on it.
+    let any = |b: &str| b == "feat/x" || b == "main";
+    let opts = Options::new(Mode::Timeline).with_work_branch(WorkBranch::Custom {
+        pattern: "^(feat/x|main)$",
+        matches: &any,
+    });
+    let r = timeline_build("feat/x", &opts);
+    assert_eq!(r.summary.total.calls, 2);
+    assert_eq!(
+        r.summary.work_branch,
+        Some(WorkBranchRule::Custom {
+            pattern: "^(feat/x|main)$".to_owned()
+        })
+    );
+}
+
+#[test]
+fn claim_and_strict_record_no_work_branch_rule() {
+    for mode in [Mode::Claim, Mode::Strict] {
+        let r = timeline_build("feat/x", &Options::new(mode));
+        assert_eq!(r.summary.work_branch, None, "{mode:?}");
+    }
+}
+
+#[expect(
+    clippy::unwrap_used,
+    reason = "a helper that fails to report should fail the test loudly"
+)]
+fn run_timeline(git: &FakeGit) -> Report {
+    let source = FakeSource::new(timeline_records(), ReadStats::default());
+    run(
+        git,
+        &source,
+        Path::new("/projects"),
+        Path::new("/repo"),
+        Some("feat/x"),
+        &Options::new(Mode::Timeline),
+        bundled(),
+    )
+    .unwrap()
+}
+
+fn rule_of(r: &Report) -> (String, DefaultBranchSource) {
+    match &r.summary.work_branch {
+        Some(WorkBranchRule::ExcludesDefault { branch, source }) => (branch.clone(), *source),
+        other => panic!("expected the default rule, got {other:?}"),
+    }
+}
+
+#[test]
+fn run_resolves_the_default_branch_from_origin_head_first() {
+    let git = FakeGit::new()
+        .with_default_branch("/repo", "trunk")
+        .with_init_default_branch("/repo", "develop");
+    assert_eq!(
+        rule_of(&run_timeline(&git)),
+        ("trunk".to_owned(), DefaultBranchSource::OriginHead)
+    );
+}
+
+#[test]
+fn run_falls_back_to_init_default_branch_and_says_so() {
+    let git = FakeGit::new().with_init_default_branch("/repo", "develop");
+    assert_eq!(
+        rule_of(&run_timeline(&git)),
+        ("develop".to_owned(), DefaultBranchSource::InitDefaultBranch)
+    );
+}
+
+#[test]
+fn run_assumes_main_when_neither_is_available_and_says_so() {
+    assert_eq!(
+        rule_of(&run_timeline(&FakeGit::new())),
+        ("main".to_owned(), DefaultBranchSource::AssumedMain)
+    );
+}
+
+#[test]
+fn run_with_a_custom_rule_reports_the_pattern_and_ignores_git_defaults() {
+    let any = |_: &str| true;
+    let opts = Options::new(Mode::Timeline).with_work_branch(WorkBranch::Custom {
+        pattern: ".",
+        matches: &any,
+    });
+    let source = FakeSource::new(timeline_records(), ReadStats::default());
+    let r = run(
+        &FakeGit::new().with_default_branch("/repo", "trunk"),
+        &source,
+        Path::new("/projects"),
+        Path::new("/repo"),
+        Some("feat/x"),
+        &opts,
+        bundled(),
+    )
+    .unwrap();
+    assert_eq!(
+        r.summary.work_branch,
+        Some(WorkBranchRule::Custom {
+            pattern: ".".to_owned()
+        })
+    );
 }
