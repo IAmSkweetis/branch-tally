@@ -1,5 +1,6 @@
 //! Integration tests for `summary`, built from in-code records (no transcript content).
 
+use branch_tally_core::model::{AgentId, SubagentSummary, SubagentTags, Workspace};
 use branch_tally_core::model::{
     AttributedRecord, BranchBasis, Harness, Mode, Origin, Record, RequestId, SelectedRecord,
     Selection, SessionId, Summary, Usage,
@@ -67,12 +68,12 @@ impl Rec {
 
 fn run(recs: Vec<Rec>) -> Summary {
     let v: Vec<SelectedRecord> = recs.into_iter().map(|r| r.0).collect();
-    summarize("feat/x", Mode::Claim, &v)
+    summarize("feat/x", Mode::Claim, &v, (0, 0))
 }
 
 #[test]
 fn carries_branch_and_mode() {
-    let s = summarize("feat/x", Mode::Strict, &[]);
+    let s = summarize("feat/x", Mode::Strict, &[], (0, 0));
     assert_eq!(s.branch, "feat/x");
     assert_eq!(s.mode, Mode::Strict);
     assert!(s.by_model.is_empty() && s.sessions.is_empty());
@@ -250,4 +251,84 @@ fn unknown_origin_is_labelled_and_not_counted_as_a_worktree() {
     let s = run(vec![rec("s", "feat/x").origin(None)]);
     assert_eq!(s.sessions[0].1.origin, "unknown");
     assert_eq!(s.footnote.worktree_sessions, 0);
+}
+
+fn sub(mut r: Rec, ws: Workspace, name: &str, id: &str) -> Rec {
+    r.0.attributed.basis = BranchBasis::DispatcherRolledUp;
+    r.0.attributed.subagent = Some(SubagentTags {
+        workspace: ws,
+        subagent: name.to_owned(),
+        agent_id: AgentId::new(id),
+    });
+    r
+}
+
+fn run_with(recs: Vec<Rec>, mode: Mode, un: (u64, u64)) -> Summary {
+    let v: Vec<SelectedRecord> = recs.into_iter().map(|r| r.0).collect();
+    summarize("feat/x", mode, &v, un)
+}
+
+#[test]
+fn subagent_rows_merge_by_workspace_and_name_in_first_seen_order() {
+    let recs = vec![
+        sub(
+            rec("s", "feat/x").usage([10, 0, 0, 0, 0], None),
+            Workspace::worktree("wt-a"),
+            "writer",
+            "a1",
+        ),
+        sub(
+            rec("s", "feat/x").usage([0, 0, 0, 0, 5], None),
+            Workspace::Main,
+            "a9",
+            "a9",
+        ),
+        sub(
+            rec("s", "feat/x").usage([1, 0, 0, 0, 1], None),
+            Workspace::worktree("WT-A"),
+            "writer",
+            "a2",
+        ),
+        rec("s", "feat/x").usage([100, 0, 0, 0, 0], None),
+    ];
+    let s = run_with(recs, Mode::Claim, (2, 30));
+    let rows = &s.subagents.rows;
+    assert_eq!(rows.len(), 2);
+    assert_eq!(
+        (rows[0].subagent.as_str(), rows[0].calls, rows[0].tokens),
+        ("writer", 2, 12)
+    );
+    assert_eq!(rows[0].agent_ids.len(), 2);
+    assert_eq!(
+        (rows[1].workspace.clone(), rows[1].calls, rows[1].tokens),
+        (Workspace::Main, 1, 5)
+    );
+    assert_eq!(
+        (
+            s.subagents.unattributed_calls,
+            s.subagents.unattributed_tokens
+        ),
+        (2, 30)
+    );
+    assert_eq!(s.total.calls, 4);
+}
+
+#[test]
+fn strict_mode_leaves_subagents_empty() {
+    let recs = vec![sub(rec("s", "feat/x"), Workspace::Main, "a", "a")];
+    let s = run_with(recs, Mode::Strict, (3, 9));
+    assert_eq!(s.subagents, SubagentSummary::default());
+}
+
+#[test]
+fn unattributed_is_reported_even_without_selected_subagents() {
+    let s = run_with(vec![rec("s", "feat/x")], Mode::Claim, (4, 40));
+    assert_eq!(s.subagents.rows.len(), 0);
+    assert_eq!(
+        (
+            s.subagents.unattributed_calls,
+            s.subagents.unattributed_tokens
+        ),
+        (4, 40)
+    );
 }
