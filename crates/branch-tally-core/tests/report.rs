@@ -316,6 +316,17 @@ fn fixture_report(
 }
 
 #[test]
+fn unstamped_main_checkout_calls_are_not_put_on_the_checkouts_current_branch() {
+    // #37: the main checkout is on `main` in the fake worktree list. Its unstamped calls
+    // (`req_2`, `req_5`) must not land there just because that is what is checked out now.
+    let main = fixture_report("unstamped-main", "main", Mode::Claim, &[]).unwrap();
+    assert_eq!((main.summary.total.calls, main.summary.total.input), (1, 4));
+    // `s1`'s only work branch is `feat/x`, so its unstamped call is still claimed there.
+    let feat = fixture_report("unstamped-main", "feat/x", Mode::Claim, &[]).unwrap();
+    assert_eq!((feat.summary.total.calls, feat.summary.total.input), (3, 6));
+}
+
+#[test]
 fn removed_worktrees_roll_up_to_the_dispatcher_branch() {
     let r = fixture_report("subagent-removed-worktree", "feat/x", Mode::Claim, &[]).unwrap();
     assert_eq!(r.summary.total.calls, 7);

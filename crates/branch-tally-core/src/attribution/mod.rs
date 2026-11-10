@@ -20,12 +20,11 @@ const NONE: &str = "(none)";
 ///
 /// Keyed two ways in one map, exactly as the reference does: the lowercased transcript slug of
 /// each worktree path, and `worktree-<final path component>` (the harness-generated branch name
-/// a subagent dispatch stamps). The main checkout's slug is kept so a `main` origin looks up the
-/// same way the reference's does.
+/// a subagent dispatch stamps). The main checkout's own entry is in the map too, as git lists it,
+/// but attribution never looks it up (#37).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WorktreeMap {
     by_key: HashMap<String, String>,
-    main_slug: String,
     main_components: Vec<String>,
 }
 
@@ -47,7 +46,6 @@ impl WorktreeMap {
         }
         Self {
             by_key,
-            main_slug: slug_for(main_checkout).to_lowercase(),
             main_components: components(&path_text(main_checkout)),
         }
     }
@@ -220,22 +218,22 @@ fn workspace_of(cwd: &str, map: &WorktreeMap) -> Option<Workspace> {
     inside.then_some(Workspace::Main)
 }
 
-/// Non-strict recovery: a known `worktree-agent-` stamp, else `(none)` plus an origin lookup.
+/// Non-strict recovery: a known `worktree-agent-` stamp, else `(none)` plus a worktree-origin
+/// lookup.
 fn recover(record: &Record, stamp: &str, map: &WorktreeMap) -> (String, BranchBasis) {
     if stamp.starts_with("worktree-agent-")
         && let Some(branch) = map.get(stamp)
     {
         return (branch.to_owned(), BranchBasis::WorktreeRecovered);
     }
-    if stamp == NONE {
-        let key = match &record.origin {
-            Some(Origin::Main) => Some(map.main_slug.clone()),
-            Some(origin @ Origin::Worktree(_)) => Some(origin.label()),
-            None => None,
-        };
-        if let Some(branch) = key.and_then(|k| map.get(&k)) {
-            return (branch.to_owned(), BranchBasis::OriginRecovered);
-        }
+    // Only a worktree root names a branch for its records. The main checkout's entry in the
+    // worktree list is what it has checked out *now*, not when the call was made, so an unstamped
+    // main-checkout record stays `(none)` (#37; the reference recovers it).
+    if stamp == NONE
+        && let Some(origin @ Origin::Worktree(_)) = &record.origin
+        && let Some(branch) = map.get(&origin.label())
+    {
+        return (branch.to_owned(), BranchBasis::OriginRecovered);
     }
     (stamp.to_owned(), BranchBasis::Stamped)
 }

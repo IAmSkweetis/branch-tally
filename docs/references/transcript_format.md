@@ -120,6 +120,11 @@ What follows for attribution:
   pulls the usage away from the feature PR the work was merged into.
 - An orchestrator session commonly touches several work branches (session `ae8c842c` touched four),
   so "one session, one branch" doesn't hold (#7).
+- A record with no `gitBranch` is recovered from its origin (`OriginRecovered`) only when it was
+  read under a **worktree** root. `git worktree list` lists the main checkout too, but its entry
+  only says what is checked out now, not what was checked out when the call was made. So an
+  unstamped main-checkout record stays `(none)` (#37). The reference recovers it. Fixture:
+  `unstamped-main`.
 
 ### Timeline mode (#7)
 

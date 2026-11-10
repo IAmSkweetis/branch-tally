@@ -118,7 +118,7 @@ fn check_against_golden(golden: &str, extra: &[&str], strict: bool) -> usize {
     compared
 }
 
-/// Deliberate divergences of the claim-mode report from the reference (#6), as `(scenario,
+/// Deliberate divergences of the claim-mode report from the reference (#6, #37), as `(scenario,
 /// branch, issue, reason)`. Strict mode stays raw and never diverges. This is a copy of
 /// `CLAIM_DIVERGENCES` in `branch-tally-core/tests/parity_claude_code.rs` (that list is private to
 /// a test target); keep the two identical.
@@ -163,6 +163,13 @@ const CLAIM_DIVERGENCES: &[(&str, &str, &str, &str)] = &[
         "#6",
         "the subagent's calls roll up to feat/x, so this branch has no records of its own in \
          claim mode",
+    ),
+    (
+        "unstamped-main",
+        "main",
+        "#37",
+        "the reference recovers unstamped main-checkout calls onto the branch the main checkout \
+         has checked out now; they stay (none) and are reported as unattributed",
     ),
 ];
 
