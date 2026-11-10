@@ -18,7 +18,9 @@ mod summary;
 pub use attributed::{AttributedRecord, BranchBasis, SelectedRecord, Selection};
 pub use costs::{Costs, PriceTableInfo, PriceTableSource, RowCost};
 pub use subagent::{Dispatch, SubagentRow, SubagentSummary, SubagentTags, Workspace};
-pub use summary::{Bucket, Footnote, Mode, SessionRow, Summary};
+pub use summary::{
+    Bucket, Footnote, HeuristicBreakdown, HeuristicCount, Mode, SessionRow, Summary,
+};
 
 /// The transcript root a record was read from (`origin` in `load_records` of
 /// `reference/token_report.py`): the main checkout's directory, or a worktree's.

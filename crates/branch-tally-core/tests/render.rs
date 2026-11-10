@@ -52,6 +52,7 @@ fn sample() -> (Summary, Costs) {
             subagent_calls: 1234,
             off_branch_tokens: 2_500_000,
             worktree_sessions: 1,
+            ..Footnote::default()
         },
         by_model: vec![
             (
