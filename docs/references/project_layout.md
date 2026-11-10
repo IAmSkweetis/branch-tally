@@ -58,6 +58,7 @@ table, plus `model`:
 | ------ | ----- | -------- |
 | `model` | `Record`, `Usage`, ids: the normalized types every stage shares | contain logic beyond constructors and accessors |
 | `sources/` | The `Source` trait and its shared types (`sources/mod.rs`); each harness lives in `sources/<harness>/` (`claude_code/` exists; others *planned*). Discovering a harness's transcript roots for a repo and parsing them into `Record`s | decide which branch a record belongs to |
+| `paths` | Path-text normalisation (verbatim and UNC prefixes) and transcript slugs, shared by `git`, `sources` and `attribution`; no filesystem access | do I/O, or be re-implemented by a caller |
 | `git` | The trait for asking git about branches and worktrees, with the real implementation | be called directly by anything that should take the trait |
 | `attribution` | Assigning each record to a branch, with a certainty level | format output, or read files itself |
 | `summary` | Aggregating attributed records into the by-model, by-attribution and by-session tables (the reference's `summarize`), plus `footnote.heuristics` (calls and tokens per heuristic over the selected records; `ambiguous` comes from `count_ambiguous` over the full attributed set; left at default in strict, the raw view) | assign branches, price, or format output |
