@@ -1,1 +1,3 @@
 {"type":"assistant","requestId":"req_1","uuid":"u_req_1","sessionId":"s1","timestamp":"2026-01-01T00:00:00.000Z","cwd":"C:\\repo","gitBranch":"feat/x","isSidechain":false,"message":{"model":"claude-test-1","content":"PLACEHOLDER","usage":{"input_tokens":1,"output_tokens":101,"cache_read_input_tokens":1001}}}
+{"type":"user","uuid":"u_disp_d1","sessionId":"s1","timestamp":"2026-01-01T00:00:00.000Z","gitBranch":"feat/x","cwd":"C:\\repo","isSidechain":false,"sourceToolAssistantUUID":"u_tool_d1","toolUseResult":{"agentId":"d1","isAsync":true}}
+{"type":"user","uuid":"u_disp_d2","sessionId":"s1","timestamp":"2026-01-01T00:00:00.000Z","gitBranch":"feat/x","cwd":"C:\\repo","isSidechain":false,"sourceToolAssistantUUID":"u_tool_d2","toolUseResult":{"agentId":"d2","isAsync":true}}

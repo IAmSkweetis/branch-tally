@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use branch_tally_core::model::{AgentId, Harness, Origin, Record, SessionId};
+use branch_tally_core::model::{AgentId, Dispatch, Harness, Origin, Record, SessionId};
 use branch_tally_core::sources::claude_code::{ClaudeCode, slug_candidates};
 use branch_tally_core::sources::{
     ReadStats, RepoIdentity, RootKind, Source, SourceError, TranscriptRoot,
@@ -540,4 +540,123 @@ fn worktree_roots_need_only_the_infix_prefix() {
             ("C--repo--claude-worktreesX".to_owned(), RootKind::Worktree),
         ]
     );
+}
+
+// ---- dispatch links (#6) -------------------------------------------------------------------
+
+fn dispatches(scenario: &str) -> Vec<Dispatch> {
+    let roots = discover(scenario, r"C:\repo");
+    ClaudeCode.dispatches(&roots).unwrap()
+}
+
+type Link = (String, String, Option<String>);
+
+/// `(session, agent, branch)` triples, sorted for a stable comparison.
+fn links(scenario: &str) -> Vec<Link> {
+    let mut found: Vec<Link> = dispatches(scenario)
+        .into_iter()
+        .map(|d| {
+            (
+                d.session_id.as_str().to_owned(),
+                d.agent_id.as_str().to_owned(),
+                d.git_branch,
+            )
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+fn link(session: &str, agent: &str, branch: Option<&str>) -> Link {
+    (
+        session.to_owned(),
+        agent.to_owned(),
+        branch.map(str::to_owned),
+    )
+}
+
+#[test]
+fn removed_worktree_scenario_links_all_three_subagents_to_the_orchestrator_branch() {
+    assert_eq!(
+        links("subagent-removed-worktree"),
+        vec![
+            link("s1", "c1", Some("feat/x")),
+            link("s1", "c2", Some("feat/x")),
+            link("s1", "c3", Some("feat/x")),
+        ]
+    );
+    let all = dispatches("subagent-removed-worktree");
+    assert!(all.iter().all(|d| d.ts.is_some()));
+}
+
+#[test]
+fn dispatch_lines_do_not_change_what_read_reports() {
+    let (_, stats) = read_all("subagent-removed-worktree", r"C:\repo");
+    assert_eq!(stats, clean_stats(4, 7));
+}
+
+#[test]
+fn every_subagent_scenario_has_its_dispatch_lines() {
+    assert_eq!(links("subagent"), vec![link("s1", "a1", Some("feat/x"))]);
+    assert_eq!(
+        links("subagent-orchestrator-stamp"),
+        vec![link("s1", "b1", Some("feat/x"))]
+    );
+    assert_eq!(
+        links("subagent-switches-branch"),
+        vec![
+            link("s1", "d1", Some("feat/x")),
+            link("s1", "d2", Some("feat/x"))
+        ]
+    );
+    assert_eq!(
+        links("subagent-renamed-branch"),
+        vec![link("s1", "e1", Some("feat/x"))]
+    );
+    assert_eq!(
+        links("subagent-shared-worktree"),
+        vec![
+            link("s1", "h1", Some("feat/x")),
+            link("s1", "h2", Some("feat/x"))
+        ]
+    );
+    assert_eq!(
+        links("subagent-main-checkout"),
+        vec![link("s1", "i1", Some("feat/x"))]
+    );
+}
+
+#[test]
+fn a_subagent_file_without_a_dispatch_line_has_no_link() {
+    assert_eq!(
+        links("subagent-no-dispatch-link"),
+        vec![link("s1", "n1", Some("feat/x"))]
+    );
+    let (records, stats) = read_all("subagent-no-dispatch-link", r"C:\repo");
+    assert_eq!(stats, clean_stats(3, 4));
+    assert_eq!(of_agent(&records, "n2").len(), 2);
+}
+
+#[test]
+fn dispatches_inside_subagent_files_and_stampless_dispatches_are_reported_raw() {
+    assert_eq!(
+        links("subagent-dispatcher-unusable"),
+        vec![
+            link("s1", "g1", Some("feat/x")),
+            link("s1", "g2", Some("worktree-agent-g1")),
+            link("s2", "g3", None),
+        ]
+    );
+}
+
+#[test]
+fn malformed_and_non_agent_tool_results_are_skipped_and_replays_deduped() {
+    // A string result, an object with no agentId, an empty agentId, a non-string agentId, a
+    // truncated line and `42` yield nothing; the one real dispatch, replayed, is reported once.
+    assert_eq!(
+        links("malformed-and-keyless"),
+        vec![link("s1", "m1", Some("main"))]
+    );
+    let (_, stats) = read_all("malformed-and-keyless", r"C:\repo");
+    assert_eq!((stats.malformed_lines, stats.records_emitted), (2, 2));
 }

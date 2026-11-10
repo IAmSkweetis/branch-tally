@@ -30,6 +30,15 @@
 //! `sorted(root.rglob("*.jsonl"))`. Only `<session>/subagents/agent-*.jsonl` takes its
 //! `parent_session` from the directory.
 //!
+//! # Dispatch links
+//!
+//! [`Source::dispatches`] reports one [`Dispatch`] per `(session, agent)` for every line whose
+//! `toolUseResult` is an object with a non-empty string `agentId`, in main and subagent files
+//! alike. Only `agentId` is deserialized from `toolUseResult`; its prompt, description and
+//! output path are content. A line that is malformed or has no usable `agentId` yields nothing,
+//! so the subagent it should have linked stays unlinked and is counted as unattributed
+//! downstream.
+//!
 //! # Privacy
 //!
 //! Content fields are not deserialized, and errors carry paths only.
@@ -38,7 +47,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::model::{Harness, Origin, Record};
+use crate::model::{Dispatch, Harness, Origin, Record};
 use crate::sources::{ReadStats, RepoIdentity, RootKind, Source, SourceError, TranscriptRoot};
 
 mod parse;
@@ -46,7 +55,7 @@ mod slug;
 
 pub use slug::slug_candidates;
 
-use parse::{FileContext, read_file};
+use parse::{FileContext, read_dispatches, read_file};
 use slug::{Match, classify};
 
 /// The Claude Code transcript reader.
@@ -171,31 +180,60 @@ impl Source for ClaudeCode {
             };
             // One pass per root over every `.jsonl` at any depth, in the reference's
             // `sorted(root.rglob("*.jsonl"))` order.
-            let mut files = Vec::new();
-            collect_jsonl(root_path, &mut Vec::new(), &mut files)?;
-            files.sort_by_cached_key(|f| sort_key(&f.1));
-            for (file, rel) in files {
-                let stem = file
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                // `<session>/subagents/agent-*.jsonl` takes its parent from the directory;
-                // every other file is read like a main file (the record's own `sessionId`
-                // wins, else the file stem).
-                let parent = match rel.as_slice() {
-                    [session, dir, name] if dir == "subagents" && name.starts_with("agent-") => {
-                        Some(session.as_str())
-                    }
-                    _ => None,
-                };
-                let ctx = FileContext {
-                    parent_session: parent,
-                    fallback_session: parent.unwrap_or(&stem),
-                    origin: &origin,
-                };
+            for (file, rel) in sorted_jsonl(root_path)? {
+                let stem = file_stem(&file);
+                let ctx = file_context(&rel, &stem, &origin);
                 read_file(&file, &ctx, &mut seen, &mut stats, sink)?;
             }
         }
         Ok(stats)
+    }
+
+    /// Dispatch links: lines carrying `toolUseResult.agentId` (the Agent tool's launch result),
+    /// in main files and in subagent files alike (a subagent may launch its own). The dispatch
+    /// session is the line's own `sessionId`, else the file's session as for records. A replay of
+    /// the same (session, agent) pair is reported once, in read order.
+    fn dispatches(&self, roots: &[TranscriptRoot]) -> Result<Vec<Dispatch>, SourceError> {
+        let mut seen = HashSet::new();
+        let mut found = Vec::new();
+        for root in roots {
+            let origin = Origin::Main; // unused by the dispatch pass
+            for (file, rel) in sorted_jsonl(root.path())? {
+                let stem = file_stem(&file);
+                let ctx = file_context(&rel, &stem, &origin);
+                read_dispatches(&file, &ctx, &mut seen, &mut found)?;
+            }
+        }
+        Ok(found)
+    }
+}
+
+/// Every `.jsonl` under `root` in the reference's `sorted(root.rglob("*.jsonl"))` order.
+fn sorted_jsonl(root: &Path) -> Result<Vec<(PathBuf, Vec<String>)>, SourceError> {
+    let mut files = Vec::new();
+    collect_jsonl(root, &mut Vec::new(), &mut files)?;
+    files.sort_by_cached_key(|f| sort_key(&f.1));
+    Ok(files)
+}
+
+fn file_stem(file: &Path) -> String {
+    file.file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// `<session>/subagents/agent-*.jsonl` takes its parent from the directory; every other file is
+/// read like a main file (the record's own `sessionId` wins, else the file stem).
+fn file_context<'a>(rel: &'a [String], stem: &'a str, origin: &'a Origin) -> FileContext<'a> {
+    let parent = match rel {
+        [session, dir, name] if dir == "subagents" && name.starts_with("agent-") => {
+            Some(session.as_str())
+        }
+        _ => None,
+    };
+    FileContext {
+        parent_session: parent,
+        fallback_session: parent.unwrap_or(stem),
+        origin,
     }
 }
