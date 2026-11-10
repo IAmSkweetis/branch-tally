@@ -102,6 +102,7 @@ pub fn summarize(branch: &str, mode: Mode, selected: &[SelectedRecord]) -> Summa
         by_model,
         by_attribution,
         sessions,
+        subagents: crate::model::SubagentSummary::default(),
     }
 }
 

@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::model::{Harness, Record};
+use crate::model::{Dispatch, Harness, Record};
 
 pub mod claude_code;
 
@@ -166,6 +166,21 @@ pub trait Source {
         roots: &[TranscriptRoot],
         sink: &mut dyn FnMut(Record),
     ) -> Result<ReadStats, SourceError>;
+
+    /// Every dispatch link found under `roots`: which parent session launched which subagent,
+    /// and the parent's raw branch stamp at that moment. Raw facts only; deciding what a stamp
+    /// means is attribution's job.
+    ///
+    /// The default reports none, so a source that cannot see dispatches (or has not been taught
+    /// yet) leaves its subagent records unlinked and therefore counted as unattributed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SourceError`] if a file cannot be read. Bad lines are not errors.
+    fn dispatches(&self, roots: &[TranscriptRoot]) -> Result<Vec<Dispatch>, SourceError> {
+        let _ = roots;
+        Ok(Vec::new())
+    }
 }
 
 #[cfg(test)]
@@ -242,6 +257,12 @@ mod tests {
         assert_eq!(seen.len(), 2);
         assert_eq!(stats.records_emitted, 2);
         assert_eq!(source.harness(), Harness::ClaudeCode);
+    }
+
+    #[test]
+    fn dispatches_default_reports_none_so_existing_sources_still_compile() {
+        let source: Box<dyn Source> = Box::new(Fake);
+        assert_eq!(source.dispatches(&[]).unwrap(), Vec::new());
     }
 
     #[test]

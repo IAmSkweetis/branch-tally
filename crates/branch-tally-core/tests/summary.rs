@@ -23,6 +23,7 @@ fn rec(session: &str, branch: &str) -> Rec {
             record: r,
             branch: branch.to_owned(),
             basis: BranchBasis::Stamped,
+            subagent: None,
         },
         kept_by: Selection::Exact,
     })

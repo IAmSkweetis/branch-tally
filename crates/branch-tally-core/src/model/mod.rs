@@ -12,10 +12,12 @@ use serde::{Deserialize, Serialize};
 
 mod attributed;
 mod costs;
+mod subagent;
 mod summary;
 
 pub use attributed::{AttributedRecord, BranchBasis, SelectedRecord, Selection};
 pub use costs::{Costs, PriceTableInfo, PriceTableSource};
+pub use subagent::{Dispatch, SubagentRow, SubagentSummary, SubagentTags, Workspace};
 pub use summary::{Bucket, Footnote, Mode, SessionRow, Summary};
 
 /// The transcript root a record was read from (`origin` in `load_records` of
