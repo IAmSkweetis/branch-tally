@@ -25,7 +25,8 @@ $ARGUMENTS
 
 - `git branch --show-current` must not be `main`. If it is, stop and ask.
 - `gh auth status` must be authenticated.
-- `git status --short` should be clean. If there is uncommitted work, ask before going on.
+- `git status --short -- . ':!.tally'` should print nothing. If there is other uncommitted work, ask
+  before going on. Step 5 commits `.tally/`, so changes there are expected.
 - `just ci` should be green. Record the exit code **and the test count**. If it's red, say so and
   ask whether to open the PR as a draft.
 - `git fetch origin && git merge-base --is-ancestor origin/main HEAD`: if `main` has moved, offer
