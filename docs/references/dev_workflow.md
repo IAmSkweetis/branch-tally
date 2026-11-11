@@ -152,6 +152,7 @@ its own lists the recipes.
 | `just audit-workflows [--offline]` | `zizmor` over `.github/`, pinned. Online audits run when `GH_TOKEN` is set. | `uvx zizmor@<pin> .github/` |
 | `just test-scripts` | proves `scripts/check-commit-subject.sh`, `scripts/check-branch-name.sh` and `scripts/package.sh` reject what they must and accept what they should | `sh scripts/test-checks.sh` |
 | `just test-py` | `unittest` for `scripts/scrub_transcripts.py` and `scripts/make_goldens.py`, including one end-to-end run of the reference | `uv run python -m unittest discover -s scripts/tests` |
+| `just check-plugin` | build the binary, then check the shipped plugin and marketplace: manifests parse, every hook command ends in `; exit 0`, every hook names a real subcommand of that binary. `claude plugin validate` also runs when the `claude` CLI is installed and is a printed `SKIP` otherwise (CI has none). Needs `cargo` and `uv` | `cargo build -p branch-tally` then `sh plugin/tests/check.sh target/debug/branch-tally` |
 | `just lint-install` | ShellCheck on `install.sh` and its test, PSScriptAnalyzer on the `.ps1` files. A missing tool is a printed skip locally and an error when `CI` is set | `sh scripts/lint-install.sh` |
 | `just test-install` | the installers' offline tests under `sh` and `pwsh`, with the same skip rule | `sh scripts/test-install.sh` |
 | `just docs` | build the user manual with mdBook and mdbook-mermaid (pinned) into `docs/manual/book/`; a `SUMMARY.md` entry with no page fails it ([The user manual](#the-user-manual)) | `mdbook build docs/manual` |
@@ -201,6 +202,7 @@ same `just` recipes and `scripts/check-*.sh`.
 | Tests | `pre-push`: `just test` | `test (ubuntu-latest)`, `test (macos-latest)`, `test (windows-latest)` and `msrv`: `just test` |
 | Release build | — | `build` (workflow `Build`): on a PR that touches `build.yml`, `release.yml`, `scripts/package.sh`, `scripts/smoke-test.sh`, `cliff.toml`, `Cargo.lock` or `rust-toolchain.toml`, builds and smoke-tests all six release targets with a dummy version and publishes nothing ([release.md](release.md#proving-the-build-before-a-release)) |
 | Gate scripts | — | `scripts`: `just test-scripts` (so the commit and branch checks, the packaging script and the installer gates, can't silently stop rejecting) and `just test-py` (the scrubber and goldens generator) |
+| Plugin | — | `plugin`: `just check-plugin`, so a hook that could block a Claude Code session, or name a subcommand that does not exist, fails the PR. Manifest validation by `claude plugin validate` is skipped there (no `claude` CLI on the runner) and says so |
 | Installers | — | `lint-install` and `test-install (<os>)` (workflow `Installers`), only when an installer, its tests or the workflow change ([release.md](release.md#proving-an-install-works)) |
 | User manual | — | `docs` (workflow `Docs`): `just docs`, only when `docs/manual/`, the justfile or the workflow change. Not a required check, for the same reason as `zizmor` ([The user manual](#the-user-manual)) |
 | Rust path filter | — | `changes` (workflow `CI`): `dorny/paths-filter` decides whether a PR touches Rust-relevant files and the Rust jobs skip their steps when it doesn't ([Path filtering](#path-filtering)) |
@@ -243,6 +245,7 @@ the PR touches any of:
 - `crates/**` (which holds the Rust sources, the tests under `crates/*/tests/` and the bundled
   data), `tests/**`, `Cargo.toml` (root or any crate), `Cargo.lock`, `rust-toolchain.toml`;
 - `rustfmt.toml`, `clippy.toml`, `.config/nextest.toml`, `deny.toml`, `.cargo/**`;
+- `plugin/**` and `.claude-plugin/**`, which the `plugin` job checks against the built binary;
 - `justfile`, `scripts/ci-detect.sh`, `scripts/ci-install-rust.sh` and `ci.yml` itself, because a
   change to the gate must exercise the gate.
 

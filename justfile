@@ -30,7 +30,7 @@ default:
     @{{ just_executable() }} --list
 
 # Every gate CI runs (everything except fmt and audit-workflows).
-ci: lint lint-md test test-scripts test-py lint-install test-install docs secret-scan
+ci: lint lint-md test test-scripts test-py check-plugin lint-install test-install docs secret-scan
 
 # Prove the commit-message and branch-name checks reject what they must and accept what they should.
 [unix]
@@ -106,6 +106,20 @@ audit-workflows *args: (_require "uvx" "install uv: https://docs.astral.sh/uv/ge
 # Unit tests for the Python tooling in scripts/ (stdlib unittest via uv; needs git for the e2e test).
 test-py: (_require "uv" "install uv: https://docs.astral.sh/uv/getting-started/installation/") (_require "git" "install git")
     uv run python -m unittest discover -s scripts/tests
+
+# Check the shipped plugin and marketplace: manifests parse, every hook command ends in `; exit 0`,
+# every hook names a real subcommand of the freshly built binary. `claude plugin validate` also runs
+# when the claude CLI is installed, and is a printed skip otherwise (CI has none).
+[unix]
+check-plugin: (_require "cargo" "install Rust: https://rustup.rs") (_require "uv" "install uv: https://docs.astral.sh/uv/getting-started/installation/") (_require "sh" "install a POSIX sh")
+    cargo build -p branch-tally
+    sh plugin/tests/check.sh target/debug/branch-tally
+
+# Same sh lookup as test-scripts.
+[windows]
+check-plugin: (_require "cargo" "install Rust: https://rustup.rs") (_require "uv" "install uv: https://docs.astral.sh/uv/getting-started/installation/") (_require "git" "install Git for Windows: https://gitforwindows.org")
+    cargo build -p branch-tally
+    @$sh = (Get-Command sh -ErrorAction SilentlyContinue).Source; if (-not $sh) { $sh = Join-Path (git --exec-path) '../../../bin/sh.exe' }; if (-not (Test-Path $sh)) { [Console]::Error.WriteLine('error: sh not found on PATH or beside git; install Git for Windows: https://gitforwindows.org'); exit 1 }; & $sh plugin/tests/check.sh target/debug/branch-tally; exit $LASTEXITCODE
 
 # Scrub a real transcript tree into a committable fixture: just scrub --root <repo root> <src> <dest>
 scrub *args: (_require "uv" "install uv: https://docs.astral.sh/uv/getting-started/installation/")
