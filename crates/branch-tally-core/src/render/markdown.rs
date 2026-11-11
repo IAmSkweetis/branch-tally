@@ -130,10 +130,16 @@ fn work_branch_note(rule: Option<&WorkBranchRule>) -> String {
                 }
                 _ => "assumed; neither origin/HEAD nor init.defaultBranch was available",
             };
-            format!(" \u{b7} work branches: all except default branch `{branch}` ({why})")
+            format!(
+                " \u{b7} work branches: all except default branch {} ({why})",
+                code(branch, false)
+            )
         }
         Some(WorkBranchRule::Custom { pattern }) => {
-            format!(" \u{b7} work branches: custom pattern `{pattern}`")
+            format!(
+                " \u{b7} work branches: custom pattern {}",
+                code(pattern, false)
+            )
         }
     }
 }
@@ -154,9 +160,73 @@ fn floor_statement(h: &HeuristicBreakdown, total_tokens: u64, o: &mut Vec<String
     o.push(String::new());
 }
 
-/// A table cell from recorded text: a pipe would end the cell early.
-fn cell(s: &str) -> String {
-    s.replace('|', "\\|")
+/// Recorded text on one line: a line break would end a table row, a heading or the footnote.
+fn one_line(s: &str) -> String {
+    s.replace("\r\n", " ").replace(['\r', '\n'], " ")
+}
+
+/// Escapes each pipe for a GFM table cell (#39). The cell splitter treats a backslash as escaping
+/// the next character, so a run of backslashes right before a pipe is padded to an even length
+/// first. Otherwise the run would swallow the pipe's escape and the pipe would end the cell. In a
+/// code span that shows one extra backslash, which is better than a broken table.
+fn escape_pipes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        if ch == '|' {
+            let run = out.chars().rev().take_while(|&c| c == '\\').count();
+            if run % 2 == 1 {
+                out.push('\\');
+            }
+            out.push_str("\\|");
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// Recorded text as a code span (#39). The fence is one backtick longer than the longest run of
+/// backticks inside, padded with a space when the text starts or ends with a backtick or a space
+/// (the parser strips one space from each side). `<` and `>` are literal inside a code span, so no
+/// HTML gets through. `in_table` also escapes pipes, which GFM unescapes even inside code spans;
+/// outside a table a pipe is harmless and a backslash would show. Empty text stays an empty pair
+/// of backticks, as the reference prints it.
+fn code(s: &str, in_table: bool) -> String {
+    let line = one_line(s);
+    let body = if in_table { escape_pipes(&line) } else { line };
+    let mut longest = 0;
+    let mut run = 0;
+    for ch in body.chars() {
+        run = if ch == '`' { run + 1 } else { 0 };
+        longest = longest.max(run);
+    }
+    let fence = "`".repeat(longest + 1);
+    let edge = |c: char| c == '`' || c == ' ';
+    let pad = if body.starts_with(edge) || body.ends_with(edge) {
+        " "
+    } else {
+        ""
+    };
+    format!("{fence}{pad}{body}{pad}{fence}")
+}
+
+/// Recorded text as a plain table cell (#39). Backslashes and backticks are escaped so they can't
+/// escape a pipe or open a code span. `&`, `<` and `>` become entities so no raw HTML reaches the
+/// PR body. Pipes are escaped so they can't end the cell.
+fn plain(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in one_line(s).chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '`' => out.push_str("\\`"),
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '|' => out.push_str("\\|"),
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 /// A subagent cost as text: a dash when there is no price (or no entry), "at least $X" for a
@@ -176,7 +246,7 @@ fn model_text(model: &str) -> String {
     if model.is_empty() {
         "\u{2014}".to_owned()
     } else {
-        format!("`{model}`")
+        code(model, true)
     }
 }
 
@@ -193,8 +263,8 @@ fn subagent_section(summary: &Summary, costs: &Costs, show_cost: bool, o: &mut V
         return;
     }
     o.push(format!(
-        "### Subagent usage (rolled up to `{}`)",
-        summary.branch
+        "### Subagent usage (rolled up to {})",
+        code(&summary.branch, false)
     ));
     o.push(String::new());
     let mut text = String::new();
@@ -214,7 +284,7 @@ fn subagent_section(summary: &Summary, costs: &Costs, show_cost: bool, o: &mut V
         for (i, r) in sub.rows.iter().enumerate() {
             let ws = match &r.workspace {
                 Workspace::Main => "main checkout".to_owned(),
-                Workspace::Worktree(name) => format!("worktree `{}`", cell(name)),
+                Workspace::Worktree(name) => format!("worktree {}", code(name, true)),
                 Workspace::Unknown => "unknown workspace".to_owned(),
             };
             // A row without a per-model split (older data) has no usage breakdown to show: a dash,
@@ -238,7 +308,7 @@ fn subagent_section(summary: &Summary, costs: &Costs, show_cost: bool, o: &mut V
             };
             o.push(format!(
                 "| {ws} | {} | {} | {} | {} | {} |{cost}",
-                cell(&r.subagent),
+                plain(&r.subagent),
                 model_text(&r.model),
                 n(r.calls),
                 usage.join(" | "),
@@ -306,8 +376,9 @@ fn session_table(ordered: &[&(SessionId, SessionRow)], redacted: bool, o: &mut V
         };
         let short: String = sid.as_str().chars().take(8).collect();
         o.push(format!(
-            "| `{short}` | {where_} | {} | {} \u{2192} {} | {} | {} |",
-            s.who(),
+            "| {} | {where_} | {} | {} \u{2192} {} | {} | {} |",
+            code(&short, true),
+            plain(&s.who()),
             when(&s.first, redacted),
             when(&s.last, redacted),
             n(s.calls),
@@ -386,9 +457,9 @@ pub fn markdown(summary: &Summary, costs: &Costs, show_cost: bool) -> String {
         ""
     };
     let mut note = format!(
-        "<sub>Branch `{}`{mode} \u{b7} {} session(s), {} in a worktree \u{b7} {} of {} calls \
+        "<sub>Branch {}{mode} \u{b7} {} session(s), {} in a worktree \u{b7} {} of {} calls \
          from subagents{}{}",
-        summary.branch,
+        code(&summary.branch, false),
         ordered.len(),
         summary.footnote.worktree_sessions,
         n(summary.footnote.subagent_calls),
@@ -425,7 +496,13 @@ fn attribution_details(summary: &Summary, o: &mut Vec<String>) {
     for (attr, b) in attrs {
         let mut line = String::new();
         // Writing to a String cannot fail.
-        let _ = write!(line, "| {attr} | {} | {} |", n(b.calls), n(b.tokens()));
+        let _ = write!(
+            line,
+            "| {} | {} | {} |",
+            plain(attr),
+            n(b.calls),
+            n(b.tokens())
+        );
         o.push(line);
     }
     o.push(String::new());
