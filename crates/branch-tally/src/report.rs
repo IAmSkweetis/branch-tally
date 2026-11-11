@@ -9,6 +9,7 @@ use branch_tally_core::config::{self, Flags, Format};
 use branch_tally_core::git::{Git, SystemGit, normalize_path};
 use branch_tally_core::model::Mode;
 use branch_tally_core::pr::{PrError, PrOutcome, SystemGh, update_pr};
+use branch_tally_core::redact::RedactOptions;
 use branch_tally_core::render;
 use branch_tally_core::report::{Options, Report, ReportError, WorkBranch};
 use branch_tally_core::sources::claude_code::ClaudeCode;
@@ -37,6 +38,8 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), String> {
             work_branch: args.work_branch.as_ref().map(|p| p.text.clone()),
             format: args.format_flag(),
             cost: args.cost_flag(),
+            redact: args.redact_flag(),
+            redact_names: args.redact_names_flag(),
         },
     )
     .map_err(|e| e.to_string())?;
@@ -61,7 +64,14 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), String> {
         &projects,
         &cwd,
         args.branch.as_deref(),
-        &options(mode, pattern.as_ref(), &matches),
+        &options(
+            mode,
+            pattern.as_ref(),
+            &matches,
+            settings.redact.value.then_some(RedactOptions {
+                names: settings.redact_names.value,
+            }),
+        ),
         &table,
     )
     .map_err(|e| {
@@ -109,8 +119,12 @@ fn options<'a>(
     mode: Mode,
     pattern: Option<&'a WorkBranchPattern>,
     matches: &'a dyn Fn(&str) -> bool,
+    redaction: Option<RedactOptions>,
 ) -> Options<'a> {
-    let options = Options::new(mode);
+    let mut options = Options::new(mode);
+    if let Some(redaction) = redaction {
+        options = options.with_redaction(redaction);
+    }
     match (mode, pattern) {
         (Mode::Timeline, Some(p)) => options.with_work_branch(WorkBranch::Custom {
             pattern: &p.text,

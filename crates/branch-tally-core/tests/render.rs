@@ -93,6 +93,7 @@ fn sample() -> (Summary, Costs) {
         ],
         subagents: branch_tally_core::model::SubagentSummary::default(),
         work_branch: None,
+        redacted: false,
     };
     // 0.125 and 2.675 are ties for two decimals: 0.125 is exact (half-even gives 0.12), 2.675 is
     // 2.67499999... in binary (gives 2.67).
@@ -1144,4 +1145,79 @@ fn json_states_the_work_branch_rule_only_when_there_is_one() {
     let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
     assert_eq!(v["workBranch"]["kind"], "custom");
     assert_eq!(v["workBranch"]["pattern"], "^f\"x");
+}
+
+// ---- redacted output (#9) -------------------------------------------------------------------
+// `redact` is a core stage that runs before render; these summaries are built by hand the way it
+// leaves them: generic ids and names, dates instead of timestamps, `redacted` set.
+
+fn redacted_sample() -> (Summary, Costs) {
+    let (mut s, c) = sample();
+    s.redacted = true;
+    s.sessions = vec![
+        (
+            SessionId::new("s1"),
+            session(
+                "2026-01-01",
+                "2026-01-01",
+                "worktree-1",
+                50_000,
+                1,
+                &["agent-1"],
+            ),
+        ),
+        (
+            SessionId::new("s2"),
+            session("2026-01-02", "2026-01-03", "main", 1_234_567, 2, &[]),
+        ),
+        (SessionId::new("s3"), session("", "", "main", 10, 1, &[])),
+    ];
+    (s, c)
+}
+
+#[test]
+fn redacted_markdown_with_cost_is_pinned() {
+    let (s, c) = redacted_sample();
+    insta::assert_snapshot!("markdown_redacted_cost", markdown(&s, &c, true));
+}
+
+#[test]
+fn redacted_markdown_without_cost_is_pinned() {
+    let (s, c) = redacted_sample();
+    insta::assert_snapshot!("markdown_redacted_no_cost", markdown(&s, &c, false));
+}
+
+#[test]
+fn redacted_json_is_pinned() {
+    let (s, c) = redacted_sample();
+    insta::assert_snapshot!("json_redacted", json(&s, &c));
+}
+
+#[test]
+fn redacted_output_says_so_and_prints_dates_whole() {
+    let (s, c) = redacted_sample();
+    for show_cost in [true, false] {
+        let md = markdown(&s, &c, show_cost);
+        let note = footnote_line(&md);
+        assert!(note.contains(" \u{b7} identifiers redacted"), "{note}");
+        assert!(md.contains("| Span (UTC date) |"), "{md}");
+        assert!(md.contains("| 2026-01-02 \u{2192} 2026-01-03 |"), "{md}");
+        // An empty date stays empty, as the clock span does today.
+        assert!(md.contains("|  \u{2192}  |"), "{md}");
+    }
+    assert!(json(&s, &c).contains("\n  \"redacted\": true,\n"));
+}
+
+#[test]
+fn unredacted_json_has_no_redacted_key() {
+    let (s, c) = sample();
+    assert!(!json(&s, &c).contains("redacted"));
+}
+
+#[test]
+fn unredacted_markdown_has_no_redaction_note_and_keeps_the_clock_span() {
+    let (s, c) = sample();
+    let md = markdown(&s, &c, true);
+    assert!(!md.contains("redacted"));
+    assert!(md.contains("| Span (UTC) |"));
 }
