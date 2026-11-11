@@ -1,0 +1,1 @@
+{"session_id":"sess-fake-1","transcript_path":"/d/fake/transcript.jsonl","cwd":"/d/repo","hook_event_name":"SessionStart","source":"startup","model":"fake-model","future_field":{"nested":[1,2]}}

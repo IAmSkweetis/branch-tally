@@ -654,3 +654,96 @@ fn malformed_and_non_agent_tool_results_are_skipped_and_replays_deduped() {
     let (_, stats) = read_all("malformed-and-keyless", r"C:\repo");
     assert_eq!((stats.malformed_lines, stats.records_emitted), (2, 2));
 }
+
+// ---- Hook payloads (#13) ----
+
+mod hook_payloads {
+    use super::fixture;
+    use branch_tally_core::model::{AgentId, SessionId};
+    use branch_tally_core::sources::claude_code::hook::{
+        HookError, HookEventKind, parse_hook_payload,
+    };
+
+    fn load(name: &str) -> Vec<u8> {
+        std::fs::read(fixture("hook-payloads").join(name)).unwrap()
+    }
+
+    #[test]
+    fn session_start_ignores_unknown_fields() {
+        let p = parse_hook_payload(&load("session-start.json")).unwrap();
+        assert_eq!(p.event, HookEventKind::SessionStart);
+        assert_eq!(p.session_id, SessionId::new("sess-fake-1"));
+        assert_eq!(p.agent_id, None);
+        assert_eq!(p.cwd.as_deref(), Some("/d/repo"));
+    }
+
+    #[test]
+    fn subagent_stop_windows_cwd() {
+        let p = parse_hook_payload(&load("subagent-stop-windows.json")).unwrap();
+        assert_eq!(p.event, HookEventKind::SubagentStop);
+        assert_eq!(p.agent_id, Some(AgentId::new("fake1")));
+        assert_eq!(p.agent_type.as_deref(), Some("Explore"));
+        assert_eq!(
+            p.cwd.as_deref(),
+            Some("D:\\repo\\.claude\\worktrees\\agent-fake1")
+        );
+    }
+
+    #[test]
+    fn subagent_stop_posix_cwd_and_empty_agent_type() {
+        let p = parse_hook_payload(&load("subagent-stop-posix.json")).unwrap();
+        assert_eq!(p.agent_id, Some(AgentId::new("fake2")));
+        assert_eq!(p.agent_type, None);
+    }
+
+    #[test]
+    fn stop_and_session_end() {
+        let stop = parse_hook_payload(&load("stop.json")).unwrap();
+        assert_eq!(stop.event, HookEventKind::Stop);
+        let end = parse_hook_payload(&load("session-end.json")).unwrap();
+        assert_eq!(end.event, HookEventKind::SessionEnd);
+    }
+
+    #[test]
+    fn errors_are_typed() {
+        let err = |name: &str| parse_hook_payload(&load(name)).unwrap_err();
+        assert_eq!(err("unknown-event.json"), HookError::UnknownEvent);
+        assert_eq!(err("missing-session.json"), HookError::MissingSessionId);
+        assert_eq!(
+            err("subagent-stop-no-agent.json"),
+            HookError::MissingAgentId
+        );
+        assert_eq!(err("wrong-type.json"), HookError::Malformed);
+        assert_eq!(parse_hook_payload(b"").unwrap_err(), HookError::Malformed);
+        assert_eq!(
+            parse_hook_payload(b"{not json").unwrap_err(),
+            HookError::Malformed
+        );
+        assert_eq!(
+            parse_hook_payload(b"[1]").unwrap_err(),
+            HookError::Malformed
+        );
+    }
+
+    #[test]
+    fn error_messages_never_echo_payload() {
+        let bad = br#"{"session_id":"SECRETVALUE","hook_event_name":"Stop","cwd":["SECRETVALUE"]}"#;
+        let unknown = br#"{"session_id":"s","hook_event_name":"SECRETEVENT"}"#;
+        for input in [&bad[..], &unknown[..]] {
+            let err = parse_hook_payload(input).unwrap_err();
+            let shown = format!("{err} {err:?}");
+            assert!(!shown.contains("SECRET"), "{shown}");
+        }
+    }
+
+    #[test]
+    fn debug_output_never_shows_cwd() {
+        let input = br#"{"session_id":"s1","hook_event_name":"Stop","cwd":"/fake/CWDMARKER"}"#;
+        let p = parse_hook_payload(input).unwrap();
+        let shown = format!("{p:?} {p:#?}");
+        assert!(!shown.contains("CWDMARKER"), "{shown}");
+        assert!(shown.contains("cwd: Some(<redacted>)"), "{shown}");
+        let none = parse_hook_payload(br#"{"session_id":"s1","hook_event_name":"Stop"}"#).unwrap();
+        assert!(format!("{none:?}").contains("cwd: None"));
+    }
+}

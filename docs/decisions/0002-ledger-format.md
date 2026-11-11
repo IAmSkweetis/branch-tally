@@ -60,3 +60,20 @@ The ledger is **append-only JSON Lines** at `.tally/ledger.jsonl`.
 - Other backends stay possible. The service container (later) can import the JSONL into SQLite,
   and a different backend can sit behind the same ledger API if a need appears. Neither needs this
   decision reopened.
+
+## Addendum: the captures file (#13)
+
+Hook-captured attribution events (`model::CaptureEvent`) are stored in a sibling file,
+`.tally/captures.jsonl`, not in `ledger.jsonl`, so v1 ledger readers never see a line they do not
+understand. The format follows the ledger's: append-only JSON Lines, one event per line in field
+order, LF endings, `merge=union` in `.gitattributes`.
+
+- **Dedupe key:** the whole event, `ts` included. A replayed hook produces an exact duplicate; a
+  writer skips it and a reader collapses and counts it.
+- **Ids only.** An event holds session and agent ids and resolved branch names, never a path, cwd
+  or content. Because there is nothing to hide, writes do not pass through the ledger's `Redact`
+  seam, which is typed on ledger entries. #67 can add a seam if a policy needs one.
+- **Concurrency:** one append-mode `write_all` per call, no locking. Two hooks racing on the same
+  event may both write it; the reader collapses it. Distinct events are never lost.
+- **Honest reading:** malformed lines, unknown schema versions and unknown kinds are counted
+  separately, with line numbers, never dropped silently.

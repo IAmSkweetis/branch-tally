@@ -13,11 +13,20 @@
 //! Every entry passes through a [`Redact`] seam before it is written; [`Identity`] is the default
 //! until #9 supplies a policy.
 //!
+//! Hook-captured attribution events live beside the ledger, not in it, in
+//! `.tally/captures.jsonl`; see [`append_captures`] and [`read_captures`].
+//!
 //! Bad input is counted in [`ReadStats`], never dropped silently and never a panic. Errors name
 //! a path, never line content.
 
+mod captures;
+
 use std::path::{Path, PathBuf};
 
+pub use captures::{
+    CAPTURES_PATH, CaptureAppendOutcome, CaptureReadStats, Captures, append_captures,
+    captures_path, read_captures,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::model::{

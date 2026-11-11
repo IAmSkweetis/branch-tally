@@ -205,6 +205,8 @@ expected behaviour directly, next to the same issue number. `malformed-and-keyle
   `timelineForward`, `timelineCarried`, `ambiguous`, each `{calls, tokens}`, plus `isFloor`) that
   the reference lacks, and the Markdown footnote gains "attributed by heuristic: ..." (for example
   "dispatcher roll-up 2 call(s) / 120 tokens"). It is omitted when no heuristic assigned a call.
+  A `captured` entry (`{calls, tokens}`; "captured hook data" in the footnote) is added only when
+  hook-captured data placed a call, so output without it is unchanged.
   Claim attribution is unchanged; only this report field is new, so no `CLAIM_DIVERGENCES` pair is
   added. `without_heuristics_divergence` (and `strip_heuristics_divergence` in
   `branch-tally/tests/report.rs`) removes only that key, after checking it: strict mode must not

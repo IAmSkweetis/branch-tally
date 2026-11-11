@@ -8,7 +8,8 @@ for that branch. It can also write the table into the branch's pull request. Tha
 done by subagents running in git worktrees.
 
 Claude Code is the agent harness supported today. branch-tally ships as a command-line tool for
-Linux, macOS and Windows.
+Linux, macOS and Windows, plus two optional Claude Code plugins whose hooks keep its numbers intact
+after transcripts are purged (see [Integration](integration.md)).
 
 > **Status: pre-alpha.** The flags, output and ledger format may still change between releases.
 > Follow the [roadmap](https://github.com/IAmSkweetis/branch-tally/issues/16) for what is planned.
@@ -47,7 +48,8 @@ A cost table is only useful if it says what it could not see. branch-tally holds
 Transcripts hold your prompts, your code and sometimes secrets. branch-tally reads only the fields
 it needs: token usage, model, ids, timestamps, branch, working directory and the subagent dispatch
 link. **Message content is never read into output.** It does not appear in the report, in the
-[ledger](ledger.md), in error messages or in anything sent to GitHub.
+[ledger](ledger.md), in the [hook captures](captures.md) file, in error messages or in anything
+sent to GitHub.
 
 Reports do show session ids, agent and skill names, worktree names and timestamps. `--redact` hides
 those identifiers in the output (see the [CLI reference](cli.md#redaction)). The only network calls
@@ -87,4 +89,6 @@ flowchart LR
 - [Getting Started](getting-started.md): install, run your first report and read it.
 - [Persisting the Ledger](ledger.md): keep usage after transcripts are purged, and combine
   machines.
+- [Integration](integration.md): the optional Claude Code plugins that capture each session's
+  branch and fill the ledger for you.
 - [CLI reference](cli.md) and [Config reference](config.md): every flag and key.

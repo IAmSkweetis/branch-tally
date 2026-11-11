@@ -125,7 +125,7 @@ fn price_table(costs: &Costs, o: &mut String) {
 /// total is only a floor because some calls were ambiguous. Omitted when no call was counted, so
 /// reports that predate it keep their shape.
 fn heuristics(h: &HeuristicBreakdown, o: &mut String) {
-    let entries = [
+    let mut entries = vec![
         ("sessionClaim", h.session_claim),
         ("worktreeRecovery", h.worktree_recovery),
         ("originRecovery", h.origin_recovery),
@@ -134,6 +134,10 @@ fn heuristics(h: &HeuristicBreakdown, o: &mut String) {
         ("timelineCarried", h.timeline_carried),
         ("ambiguous", h.ambiguous),
     ];
+    // Emitted only when used, so reports that never touch captured hook data keep their shape.
+    if h.captured.calls > 0 {
+        entries.insert(2, ("captured", h.captured));
+    }
     if entries.iter().all(|(_, c)| c.calls == 0) {
         return;
     }

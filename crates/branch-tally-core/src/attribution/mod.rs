@@ -9,8 +9,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::model::{
-    AgentId, AttributedRecord, BranchBasis, Dispatch, Origin, Record, SelectedRecord, Selection,
-    SessionId, SubagentTags, Workspace,
+    AgentId, AttributedRecord, BranchBasis, CaptureEvent, Dispatch, Origin, Record, SelectedRecord,
+    Selection, SessionId, SubagentTags, Workspace,
 };
 use crate::paths;
 
@@ -90,6 +90,30 @@ pub fn attribute(
     map: &WorktreeMap,
     strict: bool,
 ) -> Vec<AttributedRecord> {
+    attribute_with_captures(records, dispatches, &[], map, strict)
+}
+
+/// [`attribute`] plus hook captures. Captured data is authoritative over `git worktree list` and
+/// origin recovery, but never over a real stamp and never in strict mode. A record whose stamp is
+/// missing or `worktree-agent-<id>` takes the branch its session's captures agree on around its
+/// timestamp ([`BranchBasis::Captured`]); see `captured_branch`. Anything undecidable falls
+/// through to the existing recovery, so it is as uncertain as before. Subagent records keep the
+/// #6 dispatcher roll-up and their cwd-derived workspace tag.
+#[must_use]
+pub fn attribute_with_captures(
+    records: impl IntoIterator<Item = Record>,
+    dispatches: &[Dispatch],
+    captures: &[CaptureEvent],
+    map: &WorktreeMap,
+    strict: bool,
+) -> Vec<AttributedRecord> {
+    let mut by_session: HashMap<&SessionId, Vec<CaptureMark<'_>>> = HashMap::new();
+    for c in captures {
+        by_session
+            .entry(&c.session_id)
+            .or_default()
+            .push((parse_ts(&c.ts), usable_branch(&c.branch)));
+    }
     let mut links: HashMap<(&SessionId, &AgentId), &Dispatch> = HashMap::new();
     for d in dispatches {
         links.entry((&d.session_id, &d.agent_id)).or_insert(d);
@@ -106,6 +130,12 @@ pub fn attribute(
                 (stamp.to_owned(), BranchBasis::Stamped, None)
             } else if let Some(parent) = &record.parent_session {
                 roll_up(&record, parent, stamp, &links, map)
+            } else if (stamp == NONE || stamp.starts_with(WORKTREE_AGENT))
+                && let Some(branch) = by_session
+                    .get(&record.session_id)
+                    .and_then(|c| captured_branch(c, record.ts.as_deref().and_then(parse_ts)))
+            {
+                (branch.to_owned(), BranchBasis::Captured, None)
             } else {
                 let (branch, basis) = recover(&record, stamp, map);
                 (branch, basis, None)
@@ -118,6 +148,51 @@ pub fn attribute(
             }
         })
         .collect()
+}
+
+/// One capture reduced to what the decision needs: its instant (if parseable) and its branch (if
+/// usable).
+type CaptureMark<'a> = (Option<i128>, Option<&'a str>);
+
+/// A captured branch the hook could actually name: not empty, not a detached `HEAD`, not a
+/// harness-generated worktree branch.
+fn usable_branch(branch: &str) -> Option<&str> {
+    (!branch.is_empty() && branch != "HEAD" && !branch.starts_with(WORKTREE_AGENT))
+        .then_some(branch)
+}
+
+/// The branch a session's captures settle for a record at `ts`, or `None` when they do not.
+///
+/// `captures` are the session's `(instant, usable branch)` pairs. The captures bracketing `ts`
+/// are the latest at-or-before it and the earliest at-or-after it (every capture sharing that
+/// instant). Both sides are required and they must all name one usable branch. A record with
+/// captures on one side only is not recovered: the user may have switched branches after the last
+/// capture (Stop not yet fired, or the capture failed), so nothing vouches for the record. A
+/// record with no usable timestamp, a capture with an unparseable timestamp or an unusable
+/// branch where agreement is required, and any disagreement all give `None`: nothing is guessed.
+///
+/// Residual limitation: an `A..A` bracket can hide an `A -> B -> A` switch inside the window.
+/// Stop fires every turn, so the window is one turn, but the result is a bounded-window
+/// inference, not a certainty.
+fn captured_branch<'a>(
+    captures: &[(Option<i128>, Option<&'a str>)],
+    ts: Option<i128>,
+) -> Option<&'a str> {
+    let ts = ts?;
+    let timed = || captures.iter().filter_map(|(t, b)| t.map(|t| (t, *b)));
+    let before = timed().map(|(t, _)| t).filter(|t| *t <= ts).max();
+    let after = timed().map(|(t, _)| t).filter(|t| *t >= ts).min();
+    let agreed = |branches: Vec<Option<&'a str>>| -> Option<&'a str> {
+        let first = (*branches.first()?)?;
+        branches.iter().all(|b| *b == Some(first)).then_some(first)
+    };
+    let (b, a) = (before?, after?);
+    agreed(
+        timed()
+            .filter(|(t, _)| *t == b || *t == a)
+            .map(|(_, br)| br)
+            .collect(),
+    )
 }
 
 /// Claim-mode handling of a record from a subagent file. The branch is the dispatcher's raw

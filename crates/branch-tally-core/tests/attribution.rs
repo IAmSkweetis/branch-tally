@@ -953,3 +953,200 @@ fn claim_and_strict_are_unchanged_by_timeline_support() {
     );
     assert_eq!(sel.len(), 2);
 }
+
+// ---- captured attribution (#13) ----
+
+use branch_tally_core::attribution::attribute_with_captures;
+use branch_tally_core::model::{CAPTURE_SCHEMA_VERSION, CaptureEvent, CaptureKind};
+
+fn cap(session: &str, kind: CaptureKind, branch: &str, ts: &str) -> CaptureEvent {
+    CaptureEvent {
+        v: CAPTURE_SCHEMA_VERSION,
+        harness: Harness::ClaudeCode,
+        kind,
+        session_id: SessionId::new(session),
+        agent_id: None,
+        branch: branch.to_owned(),
+        worktree_branch: None,
+        ts: ts.to_owned(),
+    }
+}
+
+fn at(mut r: Record, ts: Option<&str>) -> Record {
+    r.ts = ts.map(str::to_owned);
+    r
+}
+
+fn with_caps(r: Record, caps: &[CaptureEvent], strict: bool) -> (String, BranchBasis) {
+    let a = attribute_with_captures([r], &[], caps, &map(), strict).remove(0);
+    (a.branch, a.basis)
+}
+
+const T0: &str = "2026-11-01T10:00:00Z";
+const T1: &str = "2026-11-01T11:00:00Z";
+const T2: &str = "2026-11-01T12:00:00Z";
+
+#[test]
+fn bracketing_captures_that_agree_recover_a_missing_stamp() {
+    let caps = [
+        cap("s", CaptureKind::SessionStart, "feat/cap", T0),
+        cap("s", CaptureKind::Stop, "feat/cap", T2),
+    ];
+    let r = at(rec("s", None, None), Some(T1));
+    assert_eq!(
+        with_caps(r, &caps, false),
+        ("feat/cap".to_owned(), BranchBasis::Captured)
+    );
+}
+
+#[test]
+fn captured_beats_worktree_and_origin_recovery() {
+    let caps = [
+        cap("s", CaptureKind::SessionStart, "feat/cap", T0),
+        cap("s", CaptureKind::Stop, "feat/cap", T2),
+    ];
+    let stamped = at(rec("s", Some("worktree-agent-abc"), None), Some(T1));
+    assert_eq!(
+        with_caps(stamped, &caps, false),
+        ("feat/cap".to_owned(), BranchBasis::Captured)
+    );
+    let origin = at(
+        rec("s", None, Some(Origin::Worktree("agent-abc".to_owned()))),
+        Some(T1),
+    );
+    assert_eq!(
+        with_caps(origin, &caps, false),
+        ("feat/cap".to_owned(), BranchBasis::Captured)
+    );
+}
+
+#[test]
+fn a_real_stamp_is_never_replaced_by_a_capture() {
+    let caps = [cap("s", CaptureKind::SessionStart, "feat/cap", T0)];
+    let r = at(rec("s", Some("feat/stamped"), None), Some(T1));
+    assert_eq!(
+        with_caps(r, &caps, false),
+        ("feat/stamped".to_owned(), BranchBasis::Stamped)
+    );
+}
+
+#[test]
+fn strict_ignores_captures() {
+    let caps = [cap("s", CaptureKind::SessionStart, "feat/cap", T0)];
+    let r = at(rec("s", None, None), Some(T1));
+    assert_eq!(
+        with_caps(r, &caps, true),
+        ("(none)".to_owned(), BranchBasis::Stamped)
+    );
+}
+
+#[test]
+fn disagreeing_brackets_are_not_guessed() {
+    let caps = [
+        cap("s", CaptureKind::SessionStart, "main", T0),
+        cap("s", CaptureKind::Stop, "feat/cap", T2),
+    ];
+    let r = at(rec("s", Some("worktree-agent-abc"), None), Some(T1));
+    // Falls back to the existing worktree recovery.
+    assert_eq!(
+        with_caps(r, &caps, false),
+        ("feat/real".to_owned(), BranchBasis::WorktreeRecovered)
+    );
+    let none = at(rec("s", None, None), Some(T1));
+    assert_eq!(
+        with_caps(none, &caps, false),
+        ("(none)".to_owned(), BranchBasis::Stamped)
+    );
+}
+
+#[test]
+fn a_record_without_a_usable_timestamp_is_not_guessed() {
+    let caps = [cap("s", CaptureKind::SessionStart, "feat/cap", T0)];
+    for ts in [None, Some("not a time")] {
+        let r = at(rec("s", None, None), ts);
+        assert_eq!(
+            with_caps(r, &caps, false),
+            ("(none)".to_owned(), BranchBasis::Stamped)
+        );
+    }
+}
+
+#[test]
+fn one_sided_captures_do_not_recover_a_record() {
+    // SessionStart on feat/cap only: the user may have switched branches since, and nothing
+    // after the record says otherwise. Not Captured; the existing recovery leaves it uncertain.
+    let before_only = [cap("s", CaptureKind::SessionStart, "feat/cap", T0)];
+    let r = at(rec("s", None, None), Some(T1));
+    assert_eq!(
+        with_caps(r, &before_only, false),
+        ("(none)".to_owned(), BranchBasis::Stamped)
+    );
+    // Captures only after the record, all agreeing: still one-sided.
+    let early = at(rec("s", None, None), Some("2026-11-01T09:00:00Z"));
+    let after_only = [
+        cap("s", CaptureKind::SessionStart, "feat/cap", T1),
+        cap("s", CaptureKind::Stop, "feat/cap", T2),
+    ];
+    assert_eq!(
+        with_caps(early, &after_only, false),
+        ("(none)".to_owned(), BranchBasis::Stamped)
+    );
+}
+
+#[test]
+fn captures_of_other_sessions_and_unusable_branches_are_ignored() {
+    let other = [cap("other", CaptureKind::SessionStart, "feat/cap", T0)];
+    let r = at(rec("s", None, None), Some(T1));
+    assert_eq!(
+        with_caps(r.clone(), &other, false),
+        ("(none)".to_owned(), BranchBasis::Stamped)
+    );
+    let detached = [cap("s", CaptureKind::SessionStart, "HEAD", T0)];
+    assert_eq!(
+        with_caps(r, &detached, false),
+        ("(none)".to_owned(), BranchBasis::Stamped)
+    );
+}
+
+#[test]
+fn captured_branches_feed_the_claim() {
+    let caps = [
+        cap("s", CaptureKind::SessionStart, "feat/cap", T0),
+        cap("s", CaptureKind::Stop, "feat/cap", T2),
+    ];
+    let rs = attribute_with_captures(
+        [
+            at(rec("s", None, None), Some(T1)),
+            at(rec("s", Some("main"), None), Some(T1)),
+        ],
+        &[],
+        &caps,
+        &map(),
+        false,
+    );
+    assert_eq!(select(rs, "feat/cap", false).len(), 2);
+}
+
+#[test]
+fn subagent_rollup_is_kept_and_its_workspace_tag_needs_no_worktree_list() {
+    // The worktree is absent from the map (removed), yet the tag comes from the cwd and the
+    // record still rolls up to its dispatcher, with captures present.
+    let caps = [cap("orch", CaptureKind::SessionStart, "feat/cap", T0)];
+    let r = sub(
+        "abc",
+        Some("worktree-agent-gone"),
+        Some(&format!(r"{WT_BACKSLASH}\agent-gone")),
+    );
+    let a = attribute_with_captures(
+        [r],
+        &[dispatch("abc", Some("feat/dispatcher"))],
+        &caps,
+        &WorktreeMap::default(),
+        false,
+    )
+    .remove(0);
+    assert_eq!(a.branch, "feat/dispatcher");
+    assert_eq!(a.basis, BranchBasis::DispatcherRolledUp);
+    let tags = a.subagent.expect("subagent tags");
+    assert!(matches!(tags.workspace, Workspace::Worktree(n) if n == "agent-gone"));
+}

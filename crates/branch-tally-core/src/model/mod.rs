@@ -11,11 +11,13 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 mod attributed;
+mod capture;
 mod costs;
 mod subagent;
 mod summary;
 
 pub use attributed::{AttributedRecord, BranchBasis, SelectedRecord, Selection};
+pub use capture::{CAPTURE_SCHEMA_VERSION, CaptureEvent, CaptureKind};
 pub use costs::{Costs, PriceTableInfo, PriceTableSource, RowCost};
 pub use subagent::{Dispatch, SubagentRow, SubagentSummary, SubagentTags, Workspace};
 pub use summary::{

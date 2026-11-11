@@ -28,6 +28,9 @@ pub struct Report {
     pub worktrees_unavailable: Option<GitError>,
     /// Set by [`run_from_ledger`]: where the numbers came from. `None` for a live report.
     pub ledger: Option<LedgerReport>,
+    /// What reading `.tally/captures.jsonl` counted. All zeros when there is no captures file.
+    /// Bad lines are counted here and never dropped silently.
+    pub capture_stats: crate::ledger::CaptureReadStats,
 }
 
 /// Whether the repository-wide counts (`unattributed`, and the full ambiguous set) were seen.
@@ -77,6 +80,8 @@ pub struct Recorded {
     pub read_stats: ReadStats,
     /// As on [`Report`].
     pub worktrees_unavailable: Option<GitError>,
+    /// What reading `.tally/captures.jsonl` counted, as on [`Report`].
+    pub capture_stats: crate::ledger::CaptureReadStats,
 }
 
 /// Why no report was produced.
@@ -297,6 +302,7 @@ struct Picked {
 fn select_for(
     records: Vec<Record>,
     dispatches: &[Dispatch],
+    captures: &[crate::model::CaptureEvent],
     main_checkout: &Path,
     worktrees: &[Worktree],
     branch: &str,
@@ -316,7 +322,7 @@ fn select_for(
         work_rule = Some(rule);
         crate::attribution::attribute_timeline(records, dispatches, &map, &*is_work)
     } else {
-        crate::attribution::attribute(records, dispatches, &map, strict)
+        crate::attribution::attribute_with_captures(records, dispatches, captures, &map, strict)
     };
     let unattributed = crate::model::SubagentSummary::count_unattributed(&attributed);
     let all = attributed.clone();
@@ -362,6 +368,7 @@ fn finish(
         read_stats,
         worktrees_unavailable: None,
         ledger: None,
+        capture_stats: crate::ledger::CaptureReadStats::default(),
     }
 }
 
@@ -395,9 +402,46 @@ pub fn build(
     options: &Options<'_>,
     table: &PriceTable,
 ) -> Result<Report, ReportError> {
+    build_with_captures(
+        records,
+        dispatches,
+        &[],
+        read_stats,
+        main_checkout,
+        worktrees,
+        branch,
+        options,
+        table,
+    )
+}
+
+/// [`build`] plus hook captures (#13), which [`crate::attribution::attribute_with_captures`]
+/// treats as authoritative over `worktrees` for records whose stamp is missing or
+/// `worktree-agent-<id>`. Pure: the caller read `captures` from `.tally/captures.jsonl` and keeps
+/// their read stats. The summary's captured heuristic count says when they were used.
+///
+/// # Errors
+///
+/// [`ReportError::NoRecords`] when nothing is selected.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a pure pipeline entry point; each input is a distinct stage input"
+)]
+pub fn build_with_captures(
+    records: Vec<Record>,
+    dispatches: &[Dispatch],
+    captures: &[crate::model::CaptureEvent],
+    read_stats: ReadStats,
+    main_checkout: &Path,
+    worktrees: &[Worktree],
+    branch: &str,
+    options: &Options<'_>,
+    table: &PriceTable,
+) -> Result<Report, ReportError> {
     let sel = select_for(
         records,
         dispatches,
+        captures,
         main_checkout,
         worktrees,
         branch,
@@ -416,6 +460,8 @@ pub fn build(
 struct Live {
     records: Vec<Record>,
     dispatches: Vec<Dispatch>,
+    /// Hook captures from the main checkout's `.tally/captures.jsonl`; empty when there is none.
+    captures: crate::ledger::Captures,
     stats: ReadStats,
     main_checkout: PathBuf,
     worktrees: Vec<Worktree>,
@@ -441,9 +487,12 @@ fn read_live(
         Ok(w) => (w, None),
         Err(e) => (Vec::new(), Some(e)),
     };
+    // A missing file is no captures; an unreadable one is an error, as an unreadable ledger is.
+    let captures = crate::ledger::read_captures(&main_checkout)?;
     Ok(Live {
         records,
         dispatches,
+        captures,
         stats,
         main_checkout,
         worktrees,
@@ -503,9 +552,10 @@ pub fn run(
     let live = read_live(git, source, projects_root, repo_dir)?;
     let mut storage = None;
     let options = resolve_options(git, &live.main_checkout, options, &mut storage);
-    let mut report = build(
+    let mut report = build_with_captures(
         live.records,
         &live.dispatches,
+        live.captures.events(),
         live.stats,
         &live.main_checkout,
         &live.worktrees,
@@ -514,6 +564,7 @@ pub fn run(
         table,
     )?;
     report.worktrees_unavailable = live.unavailable;
+    report.capture_stats = live.captures.stats().clone();
     Ok(report)
 }
 
@@ -548,6 +599,7 @@ pub fn record(
     let sel = select_for(
         live.records,
         &live.dispatches,
+        live.captures.events(),
         &live.main_checkout,
         &live.worktrees,
         &branch,
@@ -568,6 +620,7 @@ pub fn record(
         selected: sel.selected.len() as u64,
         read_stats: live.stats,
         worktrees_unavailable: live.unavailable,
+        capture_stats: live.captures.stats().clone(),
     })
 }
 
@@ -622,6 +675,7 @@ pub fn run_from_ledger(
         live_read_stats: None,
     };
     let mut unavailable = None;
+    let mut capture_stats = crate::ledger::CaptureReadStats::default();
     let mut storage = None;
     let (sel, read_stats) = if let Some(source) = source {
         let live = read_live(git, source, projects_root, repo_dir)?;
@@ -629,12 +683,14 @@ pub fn run_from_ledger(
         let live_sel = select_for(
             live.records,
             &live.dispatches,
+            live.captures.events(),
             &live.main_checkout,
             &live.worktrees,
             &branch,
             live_options,
         );
         unavailable = live.unavailable;
+        capture_stats = live.captures.stats().clone();
         // The ledger's copy wins on overlap.
         let union = crate::ledger::union(&ledger, &live_sel.selected, Some(&main_checkout));
         let records = union.records;
@@ -681,6 +737,7 @@ pub fn run_from_ledger(
     }
     let mut report = finish(&branch, options, sel, read_stats, table);
     report.worktrees_unavailable = unavailable;
+    report.capture_stats = capture_stats;
     report.ledger = Some(info);
     Ok(report)
 }

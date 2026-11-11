@@ -9,6 +9,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
+mod capture;
 mod cli;
 mod config;
 mod prices;
@@ -20,6 +21,7 @@ fn main() -> ExitCode {
     let result = match args.command {
         cli::Command::Report(args) => report::run(&args),
         cli::Command::Record(args) => report::record(&args),
+        cli::Command::Capture => capture::run(),
         cli::Command::Prices(command) => prices::run(&command).map(|text| {
             // Verbatim UTF-8 with LF, whatever the console codepage.
             let mut out = std::io::stdout().lock();

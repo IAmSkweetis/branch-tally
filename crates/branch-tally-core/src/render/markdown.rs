@@ -96,6 +96,7 @@ fn heuristic_note(h: &HeuristicBreakdown) -> String {
     let parts: Vec<String> = [
         ("session claim", h.session_claim),
         ("worktree recovery", h.worktree_recovery),
+        ("captured hook data", h.captured),
         ("origin recovery", h.origin_recovery),
         ("dispatcher roll-up", h.dispatcher_roll_up),
         ("timeline forward", h.timeline_forward),

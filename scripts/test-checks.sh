@@ -84,8 +84,16 @@ mkinst() {
   : >"$d/install.ps1"
   : >"$d/tests/install/install_test.sh"
   : >"$d/tests/install/install_test.ps1"
-  ln -s "$(command -v dirname)" "$d/bin/dirname"
-  ln -s "$posix_sh" "$d/bin/sh"
+  # Wrappers, not symlinks: Git Bash without symlink privilege turns `ln -s` into a copy, and a
+  # copied MSYS binary can't load msys-2.0.dll once PATH holds only this dir. Exec'ing the real
+  # binary by absolute path keeps its DLLs beside it on every platform.
+  wrap "$d/bin/dirname" "$(command -v dirname)"
+  wrap "$d/bin/sh" "$posix_sh"
+}
+wrap() {
+  # wrap <path> <real-binary>: a stand-in that runs the real binary with the same arguments.
+  printf '#!%s\nexec "%s" "$@"\n' "$posix_sh" "$2" >"$1"
+  chmod +x "$1"
 }
 fake() {
   # fake <case> <tool> <exit>: a stand-in tool that exits with the given status.
