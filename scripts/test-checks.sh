@@ -191,5 +191,36 @@ fakeuname linux-shfail Linux
 fake linux-shfail pwsh 0
 inst linux-shfail test-install.sh reject
 
+# ci-detect.sh: only the exact string "false" (a docs-only PR, from the `changes` job) skips the
+# Rust checks. Empty (a push, or `changes` failed) and "true" must run them, or a failed filter
+# would pass a PR unchecked.
+detect_sh=$(cd "$dir" && pwd)/ci-detect.sh
+mkdir "$scratch/detect"
+printf '[workspace.package]\nrust-version = "1.99.1"\n' >"$scratch/detect/Cargo.toml"
+: >"$scratch/detect/deny.toml"
+detect() {
+  # detect <CODE_CHANGED value|unset> <expected rust=> : runs in a repo that has a Cargo.toml.
+  total=$((total + 1))
+  if [ "$1" = unset ]; then
+    got=$(cd "$scratch/detect" && env -u CODE_CHANGED GITHUB_OUTPUT=/dev/stdout sh "$detect_sh" 2>&1)
+  else
+    got=$(cd "$scratch/detect" && CODE_CHANGED=$1 GITHUB_OUTPUT=/dev/stdout sh "$detect_sh" 2>&1)
+  fi
+  case $got in
+    *"rust=$2"*) ;;
+    *) wrong=$((wrong + 1)); echo "WRONG: ci-detect CODE_CHANGED=$1: expected rust=$2: $got" >&2 ;;
+  esac
+}
+detect false false
+detect true true
+detect "" true
+detect unset true
+detect FALSE true
+total=$((total + 1))
+case $(cd "$scratch/detect" && CODE_CHANGED=false GITHUB_OUTPUT=/dev/stdout sh "$detect_sh" 2>&1) in
+  *"::notice title=Rust checks skipped"*) ;;
+  *) wrong=$((wrong + 1)); echo "WRONG: ci-detect skipped without a notice" >&2 ;;
+esac
+
 echo "check scripts: $total cases, $wrong wrong"
 [ "$wrong" -eq 0 ]

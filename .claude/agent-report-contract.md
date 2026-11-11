@@ -25,6 +25,9 @@ contains it.
     { "method": "cargo_test", "expectation": "green", "command": "just test",             "exit_code": 0,   "tests_run": 128, "evidence": null }
   ],
   "escalations": [],
+  "user_facing_changes": [
+    { "kind": "flag", "name": "--work-branch", "detail": "new; regex naming the branches that count as work branches (timeline mode only)" }
+  ],
   "notes": null
 }
 ```
@@ -40,6 +43,12 @@ contains it.
 - `tests_run` is REQUIRED on every `cargo_test` entry. `exit_code: 0` with `tests_run: 0` is a false
   green (see `docs/references/testing.md`), and requiring both numbers turns that trap into a
   detectable lie. For a green entry, `command` must be the full suite (`just test`), not a filter.
+- `user_facing_changes` is **optional**: omit it, or leave it `[]`, when nothing a user can see
+  changed. An agent that implements something users can see lists it here, so the Docs Author has an
+  input to work from instead of reading the diff. Each entry has `kind` (`flag`, `config_key`,
+  `install_option`, `output` or `other`), `name` (the flag, key, option or output field as the user
+  types or reads it) and `detail` (one line: what it does, its default, and whether it is new,
+  changed or removed). Never include transcript content. A report without the field stays valid.
 - Evidence never contains transcript content, home-directory paths or secrets (Governance III). Use
   counts, ids and file names.
 - Commits MUST follow Conventional Commits, and `branch` MUST follow Conventional Branch

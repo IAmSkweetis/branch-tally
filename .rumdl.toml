@@ -7,6 +7,7 @@ flavor = "gfm"
 exclude = [
     ".claude/worktrees",
     "target",
+    "docs/manual/book",
 ]
 
 # The PR template is pasted into a PR body under GitHub's own title, so it starts at level 2.
