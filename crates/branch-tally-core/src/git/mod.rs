@@ -62,6 +62,17 @@ pub trait Git {
     /// [`GitError`] when the tool cannot run or `dir` is not in a repository.
     fn current_branch(&self, dir: &Path) -> Result<String, GitError>;
 
+    /// The top-level directory of the checkout containing `dir` (`git rev-parse --show-toplevel`).
+    ///
+    /// Inside a linked worktree this is that worktree's own root, not the main checkout's. The
+    /// path is normalised like the other methods' (no Windows verbatim prefix).
+    ///
+    /// # Errors
+    ///
+    /// [`GitError`] when the tool cannot run, `dir` is not in a repository, or `dir` is inside a
+    /// bare repository or `.git` directory (no work tree, so no top level).
+    fn toplevel(&self, dir: &Path) -> Result<PathBuf, GitError>;
+
     /// The main checkout that owns `dir`'s repository: the parent of the resolved git common
     /// directory. Falls back to `dir` itself when git fails or prints nothing, as the
     /// reference does, so this is infallible.
@@ -191,6 +202,18 @@ impl Git for SystemGit {
         Ok(out.trim().to_owned())
     }
 
+    fn toplevel(&self, dir: &Path) -> Result<PathBuf, GitError> {
+        const SUBCOMMAND: &str = "rev-parse --show-toplevel";
+        let out = Self::run(dir, SUBCOMMAND, &["rev-parse", "--show-toplevel"])?;
+        let top = out.trim_end_matches(['\n', '\r']);
+        if top.is_empty() {
+            return Err(GitError::UnexpectedOutput {
+                subcommand: SUBCOMMAND,
+            });
+        }
+        Ok(normalize_path(Path::new(top)))
+    }
+
     fn main_checkout(&self, dir: &Path) -> PathBuf {
         let common = Self::run(
             dir,
@@ -249,6 +272,7 @@ impl Git for SystemGit {
 pub struct FakeGit {
     branches: BTreeMap<PathBuf, String>,
     mains: BTreeMap<PathBuf, PathBuf>,
+    toplevels: BTreeMap<PathBuf, PathBuf>,
     worktrees: BTreeMap<PathBuf, Vec<Worktree>>,
     default_branches: BTreeMap<PathBuf, String>,
     init_default_branches: BTreeMap<PathBuf, String>,
@@ -265,6 +289,13 @@ impl FakeGit {
     #[must_use]
     pub fn with_branch(mut self, dir: impl Into<PathBuf>, branch: impl Into<String>) -> Self {
         self.branches.insert(dir.into(), branch.into());
+        self
+    }
+
+    /// Script `toplevel(dir)`.
+    #[must_use]
+    pub fn with_toplevel(mut self, dir: impl Into<PathBuf>, top: impl Into<PathBuf>) -> Self {
+        self.toplevels.insert(dir.into(), top.into());
         self
     }
 
@@ -310,6 +341,13 @@ impl Git for FakeGit {
     fn current_branch(&self, dir: &Path) -> Result<String, GitError> {
         self.branches.get(dir).cloned().ok_or(GitError::Failed {
             subcommand: "rev-parse --abbrev-ref HEAD",
+            code: Some(128),
+        })
+    }
+
+    fn toplevel(&self, dir: &Path) -> Result<PathBuf, GitError> {
+        self.toplevels.get(dir).cloned().ok_or(GitError::Failed {
+            subcommand: "rev-parse --show-toplevel",
             code: Some(128),
         })
     }
@@ -457,6 +495,16 @@ mod tests {
     fn nonexistent_path_is_kept_not_an_error() {
         let p = Path::new("definitely/not/a/real/dir-xyz");
         assert_eq!(normalize_path(p), p);
+    }
+
+    #[test]
+    fn fake_toplevel_scripted_and_unscripted() {
+        let f = FakeGit::new().with_toplevel("/r/sub", "/r");
+        assert_eq!(
+            f.toplevel(Path::new("/r/sub")).unwrap(),
+            PathBuf::from("/r")
+        );
+        assert!(f.toplevel(Path::new("/other")).is_err());
     }
 
     #[test]
