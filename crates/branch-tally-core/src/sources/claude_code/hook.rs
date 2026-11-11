@@ -1,5 +1,4 @@
 //! Claude Code hook stdin payloads (#13).
-
 //!
 //! Only `session_id`, `hook_event_name`, `cwd`, `agent_id` and `agent_type` are deserialized.
 //! `cwd` is carried so the caller can resolve a branch with git; it must not be persisted.
@@ -25,7 +24,7 @@ pub enum HookEventKind {
 }
 
 /// A parsed hook payload.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct HookPayload {
     /// The event.
     pub event: HookEventKind,
@@ -37,6 +36,23 @@ pub struct HookPayload {
     pub agent_type: Option<String>,
     /// Cwd.
     pub cwd: Option<String>,
+}
+
+/// Manual `Debug`: the working directory's value is never printed (Governance III), only whether
+/// it was present.
+impl std::fmt::Debug for HookPayload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HookPayload")
+            .field("event", &self.event)
+            .field("session_id", &self.session_id)
+            .field("agent_id", &self.agent_id)
+            .field("agent_type", &self.agent_type)
+            .field(
+                "cwd",
+                &self.cwd.as_ref().map(|_| format_args!("<redacted>")),
+            )
+            .finish()
+    }
 }
 
 /// Why a payload was rejected.

@@ -735,4 +735,15 @@ mod hook_payloads {
             assert!(!shown.contains("SECRET"), "{shown}");
         }
     }
+
+    #[test]
+    fn debug_output_never_shows_cwd() {
+        let input = br#"{"session_id":"s1","hook_event_name":"Stop","cwd":"/fake/CWDMARKER"}"#;
+        let p = parse_hook_payload(input).unwrap();
+        let shown = format!("{p:?} {p:#?}");
+        assert!(!shown.contains("CWDMARKER"), "{shown}");
+        assert!(shown.contains("cwd: Some(<redacted>)"), "{shown}");
+        let none = parse_hook_payload(br#"{"session_id":"s1","hook_event_name":"Stop"}"#).unwrap();
+        assert!(format!("{none:?}").contains("cwd: None"));
+    }
 }
