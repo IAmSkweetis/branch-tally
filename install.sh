@@ -114,7 +114,10 @@ case $os in
       *) die "unsupported architecture '$arch' on $os" ;;
     esac
     ;;
-  *) die "unsupported operating system '$os' (Windows: use install.ps1)" ;;
+  MINGW* | MSYS* | CYGWIN*)
+    die "this is a Windows shell ($os); install from PowerShell instead: irm https://github.com/$REPO/releases/latest/download/install.ps1 | iex"
+    ;;
+  *) die "unsupported operating system '$os'" ;;
 esac
 
 # Tools.
