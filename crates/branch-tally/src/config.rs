@@ -106,6 +106,16 @@ fn render(settings: &Settings) -> String {
             &settings.cost.value.to_string(),
             settings.cost.source,
         ),
+        line(
+            "redact",
+            &settings.redact.value.to_string(),
+            settings.redact.source,
+        ),
+        line(
+            "redact-names",
+            &settings.redact_names.value.to_string(),
+            settings.redact_names.source,
+        ),
     ];
     format!("{}\n", lines.join("\n"))
 }
