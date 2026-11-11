@@ -1,0 +1,8 @@
+{
+  "name": "branch-tally-capture",
+  "displayName": "branch-tally capture hooks",
+  "description": "Runs `branch-tally capture` on SessionStart, SubagentStop and Stop so branch attribution is snapshotted before transcripts are purged. Needs the branch-tally binary on PATH; does nothing without it.",
+  "homepage": "https://github.com/IAmSkweetis/branch-tally",
+  "author": { "name": "branch-tally contributors" },
+  "license": "MIT"
+}

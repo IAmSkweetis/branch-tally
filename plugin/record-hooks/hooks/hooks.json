@@ -1,0 +1,12 @@
+{
+  "description": "Fill the ledger with `branch-tally record` when a session ends. Never blocks.",
+  "hooks": {
+    "SessionEnd": [
+      {
+        "hooks": [
+          { "type": "command", "command": "branch-tally record; exit 0", "timeout": 30 }
+        ]
+      }
+    ]
+  }
+}

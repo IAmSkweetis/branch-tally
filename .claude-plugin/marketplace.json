@@ -1,0 +1,19 @@
+{
+  "name": "branch-tally",
+  "description": "Report what a git branch or pull request cost in AI-agent tokens",
+  "owner": {
+    "name": "branch-tally contributors"
+  },
+  "plugins": [
+    {
+      "name": "branch-tally-capture",
+      "source": "./plugin/capture-hooks",
+      "description": "Optional hooks that run `branch-tally capture` so attribution survives transcript purges"
+    },
+    {
+      "name": "branch-tally-record",
+      "source": "./plugin/record-hooks",
+      "description": "Optional hook that runs `branch-tally record` when a session ends, filling the ledger"
+    }
+  ]
+}

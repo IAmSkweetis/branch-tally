@@ -1,0 +1,26 @@
+{
+  "description": "Snapshot branch attribution with `branch-tally capture`. Never blocks the session.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "branch-tally capture; exit 0", "timeout": 30 }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "branch-tally capture; exit 0", "timeout": 30 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "branch-tally capture; exit 0", "timeout": 30 }
+        ]
+      }
+    ]
+  }
+}
