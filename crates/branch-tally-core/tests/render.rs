@@ -1356,3 +1356,41 @@ fn hostile_names_markdown_is_pinned() {
     insta::assert_snapshot!("markdown_hostile_names_cost", markdown(&s, &c, true));
     insta::assert_snapshot!("markdown_hostile_names_no_cost", markdown(&s, &c, false));
 }
+
+#[test]
+fn footnote_names_captured_hook_data_only_when_used() {
+    let (mut s, c) = sample();
+    assert!(!markdown(&s, &c, false).contains("captured"));
+    s.footnote.heuristics = HeuristicBreakdown {
+        captured: hc(4, 800),
+        ..HeuristicBreakdown::default()
+    };
+    let md = markdown(&s, &c, false);
+    assert!(
+        footnote_line(&md)
+            .contains("attributed by heuristic: captured hook data 4 call(s) / 800 tokens"),
+        "{md}"
+    );
+}
+
+#[test]
+fn json_carries_captured_only_when_used() {
+    use serde_json::Value;
+    let (mut s, c) = sample();
+    s.footnote.heuristics = HeuristicBreakdown {
+        session_claim: hc(2, 10),
+        ..HeuristicBreakdown::default()
+    };
+    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    assert!(
+        v["heuristics"].get("captured").is_none(),
+        "zero stays absent"
+    );
+    s.footnote.heuristics = HeuristicBreakdown {
+        captured: hc(4, 800),
+        ..HeuristicBreakdown::default()
+    };
+    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    assert_eq!(v["heuristics"]["captured"]["calls"], 4);
+    assert_eq!(v["heuristics"]["captured"]["tokens"], 800);
+}
