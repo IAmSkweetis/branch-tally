@@ -31,6 +31,9 @@ pub(crate) enum Command {
     /// Report Claude Code token usage for a git branch.
     Report(ReportArgs),
 
+    /// Append this branch's attributed usage to the repository ledger (write only).
+    Record(RecordArgs),
+
     /// Manage the model price table.
     #[command(subcommand)]
     Prices(PricesCommand),
@@ -199,19 +202,78 @@ pub(crate) struct ReportArgs {
     /// Read this config file instead of the default location (it must exist).
     #[arg(long, value_name = "PATH")]
     pub(crate) config: Option<PathBuf>,
+
+    /// Report from the ledger instead of the live transcripts (works with no transcripts).
+    #[arg(long)]
+    pub(crate) from_ledger: bool,
+
+    /// With --from-ledger, also union in this machine's live transcripts (the ledger wins on
+    /// overlap, so nothing is counted twice).
+    #[arg(long, requires = "from_ledger")]
+    pub(crate) with_live: bool,
+
+    /// The ledger file (default: .tally/ledger.jsonl at the root of the current checkout).
+    #[arg(long, value_name = "PATH")]
+    pub(crate) ledger: Option<PathBuf>,
+}
+
+/// `record`: the same selection flags as `report`, then append to the ledger.
+#[derive(Debug, Args)]
+pub(crate) struct RecordArgs {
+    /// Branch to record (default: current branch).
+    pub(crate) branch: Option<String>,
+
+    /// Repository path (default: cwd).
+    #[arg(long, default_value = ".", value_name = "PATH")]
+    pub(crate) repo: PathBuf,
+
+    /// Attribution mode: claim (default), strict or timeline.
+    #[arg(long, value_enum, conflicts_with_all = ["strict", "timeline"])]
+    pub(crate) mode: Option<ModeArg>,
+
+    /// Same as --mode strict.
+    #[arg(long)]
+    pub(crate) strict: bool,
+
+    /// Same as --mode timeline.
+    #[arg(long, conflicts_with = "strict")]
+    pub(crate) timeline: bool,
+
+    /// With timeline mode, a regex naming the work branches (see `report --help`).
+    #[arg(long, value_name = "REGEX", value_parser = parse_work_branch)]
+    pub(crate) work_branch: Option<WorkBranchPattern>,
+
+    /// Read this config file instead of the default location (it must exist).
+    #[arg(long, value_name = "PATH")]
+    pub(crate) config: Option<PathBuf>,
+
+    /// The ledger file (default: .tally/ledger.jsonl at the root of the current checkout).
+    #[arg(long, value_name = "PATH")]
+    pub(crate) ledger: Option<PathBuf>,
+}
+
+impl RecordArgs {
+    /// The mode a flag chose, or `None`.
+    pub(crate) fn mode_flag(&self) -> Option<Mode> {
+        mode_from(self.mode, self.strict, self.timeline)
+    }
+}
+
+fn mode_from(mode: Option<ModeArg>, strict: bool, timeline: bool) -> Option<Mode> {
+    match mode {
+        Some(ModeArg::Claim) => Some(Mode::Claim),
+        Some(ModeArg::Strict) => Some(Mode::Strict),
+        Some(ModeArg::Timeline) => Some(Mode::Timeline),
+        None if strict => Some(Mode::Strict),
+        None if timeline => Some(Mode::Timeline),
+        None => None,
+    }
 }
 
 impl ReportArgs {
     /// The mode a flag chose (`--mode`, `--strict` or `--timeline`), or `None` when none did.
     pub(crate) fn mode_flag(&self) -> Option<Mode> {
-        match self.mode {
-            Some(ModeArg::Claim) => Some(Mode::Claim),
-            Some(ModeArg::Strict) => Some(Mode::Strict),
-            Some(ModeArg::Timeline) => Some(Mode::Timeline),
-            None if self.strict => Some(Mode::Strict),
-            None if self.timeline => Some(Mode::Timeline),
-            None => None,
-        }
+        mode_from(self.mode, self.strict, self.timeline)
     }
 
     /// The format a flag chose (`--format`, `--md` or `--json`), or `None` when none did.
