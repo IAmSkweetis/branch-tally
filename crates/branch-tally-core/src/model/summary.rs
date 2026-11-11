@@ -250,6 +250,9 @@ pub struct Summary {
     /// Absent in older serialized data.
     #[serde(default)]
     pub work_branch: Option<WorkBranchRule>,
+    /// `true` when `redact` replaced identifying detail. Absent in older serialized data.
+    #[serde(default)]
+    pub redacted: bool,
 }
 
 #[cfg(test)]
@@ -330,6 +333,14 @@ mod tests {
         assert_eq!(f.worktree_sessions, 3);
         let back: Footnote = serde_json::from_str(&serde_json::to_string(&f).unwrap()).unwrap();
         assert_eq!(back, f);
+    }
+
+    #[test]
+    fn summary_without_redacted_loads_as_not_redacted() {
+        let json = r#"{"branch":"b","mode":"claim","total":{"input":0,"cache_write_5m":0,"cache_write_1h":0,"cache_read":0,"output":0,"thinking":0,"calls":0},"footnote":{"subagent_calls":0,"off_branch_tokens":0,"worktree_sessions":0},"by_model":[],"by_attribution":[],"sessions":[]}"#;
+        let s: Summary = serde_json::from_str(json).unwrap();
+        assert!(!s.redacted);
+        assert!(!Summary::default().redacted);
     }
 
     #[test]

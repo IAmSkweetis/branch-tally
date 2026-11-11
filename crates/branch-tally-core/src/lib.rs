@@ -11,6 +11,7 @@ pub mod model;
 pub mod paths;
 pub mod pr;
 pub mod pricing;
+pub mod redact;
 pub mod render;
 pub mod report;
 pub mod sources;

@@ -179,6 +179,7 @@ pub fn summarize(
         sessions,
         subagents,
         work_branch: None,
+        redacted: false,
     }
 }
 
