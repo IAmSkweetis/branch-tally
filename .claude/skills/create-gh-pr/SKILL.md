@@ -122,14 +122,23 @@ If that fails with a scope error, the PR is fine. Tell the user to run
 
 ## Step 5: Token usage
 
-Run this immediately once the PR exists, **while every agent worktree still exists**:
+Run this immediately once the PR exists, **while every agent worktree still exists**. It records
+the branch's usage into the committed ledger, then fills the PR table from that ledger:
 
 ```bash
-just token-report --pr      # runs the installed `branch-tally report --pr`
+just token-record                    # runs the installed `branch-tally record`
+git add .tally/ledger.jsonl          # and .tally/captures.jsonl too, if it exists
+git commit -m "chore: record token usage for this branch"
+git push
+just token-report --pr --from-ledger # runs the installed `branch-tally report --pr --from-ledger`
 ```
 
+Only add the `.tally/` files that changed. If `record` changed nothing, skip the commit and push.
+Push only this branch, never an agent's worktree branch. The commit must be a valid Conventional
+Commit (`chore:`), because the `commit-messages` check runs on it.
+
 It uses the **installed release binary**, not `cargo run` on this branch. If `branch-tally` isn't
-on `PATH`, the recipe stops with an install hint. Tell the user to install the latest
+on `PATH`, the recipes stop with an install hint. Tell the user to install the latest
 [release](https://github.com/IAmSkweetis/branch-tally/releases/latest) archive, and leave the
 placeholder until they have. Don't install it yourself, and don't fall back to
 `reference/token_report.py`: it is only the goldens' parity oracle now. Don't paste a number from
@@ -144,8 +153,8 @@ When reading the output:
   under-counted. Say "at least $X". Where the number looks wrong to the user, that's a finding:
   offer to open an issue for it.
 
-If the script fails, report what it said and move on. A missing table is worth reporting, never
-worth failing the PR over.
+If `record` or `report` fails, report what it said and move on. A missing table is worth reporting,
+never worth failing the PR over.
 
 ## Notes
 
