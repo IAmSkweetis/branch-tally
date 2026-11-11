@@ -29,7 +29,8 @@ The ledger is **append-only JSON Lines** at `.tally/ledger.jsonl`.
 - **Only what the report needs.** Usage numbers, model, timestamp, branch, session and agent ids,
   plus what the report needs to render the same tables as a live run: the attribution basis (how
   certain the branch is), the selection that kept the record, the skill and agent names, and the
-  subagent tags. Never message content, and never `cwd`.
+  subagent tags. Each line also carries `recorded_at`, the time it was written. Never message
+  content, and never `cwd`.
 - **Redaction.** Every ledger write passes through a redaction step. Until #9 lands it is the
   identity; #9 supplies the policy.
 
@@ -47,7 +48,9 @@ The ledger is **append-only JSON Lines** at `.tally/ledger.jsonl`.
 
 - The file only grows. Size is bounded by the number of API calls, a few hundred bytes each.
 - A union merge can't detect two lines with the same `requestId` and different data. The reader
-  has to choose one deterministically and count the disagreement, never hide it.
+  counts the disagreement, never hides it, and keeps the line with the latest `recorded_at`. A tie
+  or a missing `recorded_at` falls back to the line that sorts first, so the choice never depends
+  on line order. Lines that differ only in `recorded_at` are duplicates, not conflicts.
 - Other backends stay possible. The service container (later) can import the JSONL into SQLite,
   and a different backend can sit behind the same ledger API if a need appears. Neither needs this
   decision reopened.
