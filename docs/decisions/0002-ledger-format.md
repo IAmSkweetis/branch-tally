@@ -31,9 +31,10 @@ The ledger is **append-only JSON Lines** at `.tally/ledger.jsonl`.
   keys the ledger doesn't already hold.
 - **Only what the report needs.** Usage numbers, model, timestamp, branch, session and agent ids,
   plus what the report needs to render the same tables as a live run: the attribution basis (how
-  certain the branch is), the selection that kept the record, the skill and agent names, and the
-  subagent tags. Each line also carries `recorded_at`, the time it was written. Never message
-  content, and never `cwd`.
+  certain the branch is), the selection that kept the record, the skill and agent names, the
+  subagent tags, and the session's origin (the main checkout or a worktree's name, never its
+  path). Each line also carries `recorded_at`, the time it was written. Never message content,
+  and never `cwd`.
 - **Redaction.** Every ledger write passes through a redaction step. Until #9 lands it is the
   identity; #9 supplies the policy.
 
