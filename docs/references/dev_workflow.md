@@ -203,6 +203,7 @@ same `just` recipes and `scripts/check-*.sh`.
 | Gate scripts | — | `scripts`: `just test-scripts` (so the commit and branch checks, the packaging script and the installer gates, can't silently stop rejecting) and `just test-py` (the scrubber and goldens generator) |
 | Installers | — | `lint-install` and `test-install (<os>)` (workflow `Installers`), only when an installer, its tests or the workflow change ([release.md](release.md#proving-an-install-works)) |
 | User manual | — | `docs` (workflow `Docs`): `just docs`, only when `docs/manual/`, the justfile or the workflow change. Not a required check, for the same reason as `zizmor` ([The user manual](#the-user-manual)) |
+| Rust path filter | — | `changes` (workflow `CI`): `dorny/paths-filter` decides whether a PR touches Rust-relevant files and the Rust jobs skip their steps when it doesn't ([Path filtering](#path-filtering)) |
 | Dependencies | — | `deny`: `cargo deny check` (licences, advisories, duplicates), once `deny.toml` exists |
 | New vulnerable dependencies | — | `dependency-review`: fails a PR that adds a dependency with a known vulnerability of moderate severity or worse |
 | Edit-time lint | Claude Code `PostToolUse` hook: `rustfmt --check` on a `.rs` file, `rumdl check` on a `.md` file | — |
@@ -231,6 +232,36 @@ checks this.
 
 Don't pass `--no-verify`. If a hook fails, fix what it found. A tool missing from `PATH` makes the
 hook fail with an install hint. It never silently skips the check.
+
+### Path filtering
+
+A PR that changes only docs, Markdown, `.claude/` or another workflow doesn't need the Rust suite.
+The `changes` job in `ci.yml` runs [`dorny/paths-filter`](https://github.com/dorny/paths-filter)
+(pinned, `contents: read` and `pull-requests: read`, no checkout) and publishes `code`, true when
+the PR touches any of:
+
+- `crates/**` (which holds the Rust sources, the tests under `crates/*/tests/` and the bundled
+  data), `tests/**`, `Cargo.toml` (root or any crate), `Cargo.lock`, `rust-toolchain.toml`;
+- `rustfmt.toml`, `clippy.toml`, `.config/nextest.toml`, `deny.toml`, `.cargo/**`;
+- `justfile`, `scripts/ci-detect.sh`, `scripts/ci-install-rust.sh` and `ci.yml` itself, because a
+  change to the gate must exercise the gate.
+
+Anything else (`docs/**`, `*.md`, `.claude/**`, the other workflows, the other `scripts/**`) is not
+code. The filter list is in `ci.yml`; change it there.
+
+**The jobs still run, and skip their steps.** `lint`, `test (<os>)`, `msrv` and `deny` are
+required checks. A matrix job skipped by a job-level `if:` reports one check under its unexpanded
+name, so `test (ubuntu-latest)` would never report and the PR would wait forever. So these jobs
+always start (`if: ${{ !cancelled() }}`), and `scripts/ci-detect.sh` turns `rust=false` when
+`CODE_CHANGED=false`, with a `::notice::` ("Rust checks skipped"), the same path as before the
+workspace existed (#3). Each Rust step is gated on that output. `scripts/test-checks.sh` proves the
+script skips only on the exact string `false`.
+
+**What always runs:** `lint-md`, `scripts`, `secret-scan`, the commit, branch and PR-title checks,
+`dependency-review`, `zizmor` (when `.github/` changes) and `docs` (when the manual changes). On a
+push to `main` the filter step is skipped, `code` is empty, and everything runs. If `changes` itself
+fails, `code` is empty too and everything runs: only a definite `false` skips, so a broken filter
+fails safe, never green.
 
 ### Writing workflows that pass zizmor
 
