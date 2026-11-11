@@ -75,6 +75,8 @@ orchestrator does when a human directs it. The change lands before the work that
 | `reference/**` | nobody: immutable. The original `token_report.py`, run only by the golden generator as the parity oracle, never edited and never added to |
 | `.claude/agents/**`, `.claude/settings.json` | nobody: a scope boundary an agent can edit is not a boundary |
 | `docs/references/**` | whichever agent changed what the page describes, in the same commit |
+| `docs/manual/book.toml` and the manual's build assets | Repository Tooling Steward |
+| `docs/manual/src/**` | whichever agent changed what the page describes, in the same commit ([0003](../decisions/0003-user-manual.md)) |
 | `docs/decisions/**` | the orchestrator, recording a decision the user made |
 | `AGENTS.md` | the orchestrator, at the user's direction |
 
