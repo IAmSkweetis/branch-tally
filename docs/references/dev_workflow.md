@@ -163,6 +163,7 @@ its own lists the recipes.
 | `just next-version` | the version the next release would get, from the commits since the last tag (needs git-cliff at the pin) | `git-cliff --config cliff.toml --bumped-version` |
 | `just release-notes [version]` | preview the notes for the unreleased commits; writes nothing | `git-cliff --config cliff.toml --unreleased --bump` |
 | `just package <vX.Y.Z> <target> [binary]` | package a built binary as a release archive in `dist/` ([release.md](release.md#targets)) | `sh scripts/package.sh …` |
+| `just token-record [args…]` | appends this branch's usage to `.tally/ledger.jsonl` with the installed release binary ([Token usage](#token-usage)) | `branch-tally record` |
 | `just token-report [args…]` | this repo's own PR token report, from the installed release binary ([Token usage](#token-usage)) | `branch-tally report` |
 
 Recipes run under PowerShell 7 on Windows and `sh` elsewhere, so a recipe line must be a plain tool
@@ -381,8 +382,19 @@ reviewer something. A falsely ticked one is a lie they can't see.
 This project measures its own PRs with branch-tally itself (#41):
 
 ```bash
-just token-report --pr      # branch-tally report --pr
+just token-record                     # branch-tally record: append to .tally/ledger.jsonl
+just token-report --pr --from-ledger  # branch-tally report: fill the PR table from the ledger
 ```
+
+`/create-gh-pr` runs `record`, commits `.tally/ledger.jsonl` (and `.tally/captures.jsonl` if
+present) to the PR branch, pushes, then fills the table from the ledger. Both ledger files merge
+with `merge=union` (`.gitattributes`). `just token-report --pr` still works and reads the live
+transcripts directly. The [ledger chapter](../manual/src/ledger.md) describes the files.
+
+This repository enables the published `branch-tally-capture` and `branch-tally-record` plugins in
+`.claude/settings.json`, so sessions here capture attribution and record on SessionEnd. The
+SessionEnd hook gets only 1.5 seconds by default; raise `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS`
+as [plugin/README.md](../../plugin/README.md#sessionend-time-limit) describes.
 
 It runs the **installed release binary**, not `cargo run`, so the report comes from a published
 build rather than the branch under review. Install the latest
