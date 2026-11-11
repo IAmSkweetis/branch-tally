@@ -278,6 +278,10 @@ pub fn json(summary: &Summary, costs: &Costs) -> String {
     o.push_str("{\n");
     let _ = writeln!(o, "  \"branch\": {},", string(&summary.branch));
     let _ = writeln!(o, "  \"mode\": {},", string(summary.mode.as_str()));
+    // Not in the reference (#9): present only when `redact` ran, so plain reports keep its shape.
+    if summary.redacted {
+        o.push_str("  \"redacted\": true,\n");
+    }
     let _ = writeln!(o, "  \"totalCalls\": {},", summary.total.calls);
     let _ = writeln!(o, "  \"totalCostUSD\": {},", float(costs.total));
     // Not in the reference (#5): a partial total is flagged, and the table that priced it named.
