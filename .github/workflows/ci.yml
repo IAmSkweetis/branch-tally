@@ -59,6 +59,8 @@ jobs:
               - "deny.toml"
               - ".cargo/**"
               - "justfile"
+              - "plugin/**"
+              - ".claude-plugin/**"
               - "scripts/ci-detect.sh"
               - "scripts/ci-install-rust.sh"
               - ".github/workflows/ci.yml"
@@ -156,6 +158,36 @@ jobs:
       # `test` recipe and docs/references/testing.md#false-greens.
       - if: steps.detect.outputs.rust == 'true'
         run: just test
+
+  # Builds the binary and checks the shipped plugin and marketplace against it: manifests parse,
+  # every hook ends in `; exit 0`, every hook names a real subcommand. The runner has no `claude`
+  # CLI, so `claude plugin validate` is a printed SKIP there; the rest runs.
+  plugin:
+    name: plugin
+    needs: changes
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: detect
+        env:
+          CODE_CHANGED: ${{ needs.changes.outputs.code }}
+        run: sh scripts/ci-detect.sh
+      - if: steps.detect.outputs.rust == 'true'
+        run: sh scripts/ci-install-rust.sh
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: just@1.59.0
+      - if: steps.detect.outputs.rust == 'true'
+        run: just check-plugin
 
   msrv:
     name: msrv
