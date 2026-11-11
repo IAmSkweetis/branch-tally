@@ -95,13 +95,23 @@ fn do_record(
     ledger: &Path,
     at: &'static str,
 ) -> branch_tally_core::report::Recorded {
+    do_record_in(source, branch, &Options::default(), ledger, at)
+}
+
+fn do_record_in(
+    source: &dyn Source,
+    branch: &str,
+    options: &Options<'_>,
+    ledger: &Path,
+    at: &'static str,
+) -> branch_tally_core::report::Recorded {
     record(
         &git(),
         source,
         Path::new("/projects"),
         Path::new("/repo"),
         Some(branch),
-        &Options::default(),
+        options,
         ledger,
         &Identity,
         &FixedClock(at),
@@ -114,13 +124,22 @@ fn from_ledger(
     branch: &str,
     ledger: &Path,
 ) -> Result<Report, ReportError> {
+    from_ledger_in(source, branch, &Options::default(), ledger)
+}
+
+fn from_ledger_in(
+    source: Option<&dyn Source>,
+    branch: &str,
+    options: &Options<'_>,
+    ledger: &Path,
+) -> Result<Report, ReportError> {
     run_from_ledger(
         &git(),
         source,
         Path::new("/projects"),
         Path::new("/repo"),
         Some(branch),
-        &Options::default(),
+        options,
         ledger,
         table(),
     )
@@ -419,4 +438,111 @@ fn strict_mode_keeps_its_meaning_on_a_ledger_report() {
     )
     .unwrap();
     assert_eq!(report.summary.mode, Mode::Strict);
+}
+
+fn live_in(source: &dyn Source, branch: &str, options: &Options<'_>) -> Report {
+    run(
+        &git(),
+        source,
+        Path::new("/projects"),
+        Path::new("/repo"),
+        Some(branch),
+        options,
+        table(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn two_branches_claiming_each_others_requests_both_report_correctly_from_one_ledger() {
+    // `m` is stamped `main` in a session whose only feature branch is `feat/a`: `feat/a` claims
+    // it and `main` owns it. One request, two branches, so it is kept once per branch.
+    let source = FakeSource(vec![
+        rec("s1", "a", "feat/a", 1),
+        rec("s1", "m", "main", 4),
+        rec("s2", "c", "main", 8),
+    ]);
+    let dir = tempfile::tempdir().unwrap();
+    let path = ledger_path(&dir);
+    let calls_a = live(&source, "feat/a").summary.total.calls;
+    let calls_b = live(&source, "main").summary.total.calls;
+    assert_eq!(
+        (calls_a, calls_b),
+        (2, 2),
+        "the fixture must overlap on `m`"
+    );
+    let first = do_record(&source, "feat/a", &path, "2026-01-01T00:00:00Z");
+    let second = do_record(&source, "main", &path, "2026-01-01T00:00:00Z");
+    assert_eq!(
+        (first.outcome.appended, second.outcome.appended),
+        (calls_a, calls_b)
+    );
+    let lines = std::fs::read_to_string(&path).unwrap().lines().count();
+    assert_eq!(lines as u64, calls_a + calls_b);
+    for branch in ["feat/a", "main"] {
+        let want = live(&source, branch);
+        let got = from_ledger(None, branch, &path).unwrap();
+        assert_eq!(got.summary.total, want.summary.total, "{branch}");
+        assert_eq!(got.summary.footnote, want.summary.footnote, "{branch}");
+        assert_eq!(got.costs.total, want.costs.total, "{branch}");
+    }
+    // Re-recording either appends nothing.
+    assert_eq!(do_record(&source, "feat/a", &path, "x").outcome.appended, 0);
+    assert_eq!(do_record(&source, "main", &path, "x").outcome.appended, 0);
+}
+
+fn stamped(session: &str, request: &str, branch: &str, ts: &str, output: u64) -> Record {
+    let mut r = rec(session, request, branch, output);
+    r.ts = Some(ts.to_owned());
+    r
+}
+
+#[test]
+fn timeline_mode_ledger_totals_equal_live_totals_for_each_branch() {
+    let source = FakeSource(vec![
+        stamped("s1", "a", "feat/a", "2026-01-01T00:00:01Z", 1),
+        stamped("s1", "b", "main", "2026-01-01T00:00:02Z", 2),
+        stamped("s1", "c", "feat/b", "2026-01-01T00:00:03Z", 4),
+        stamped("s1", "d", "main", "2026-01-01T00:00:04Z", 8),
+    ]);
+    let opts = Options::new(Mode::Timeline);
+    let dir = tempfile::tempdir().unwrap();
+    let path = ledger_path(&dir);
+    for branch in ["feat/a", "feat/b"] {
+        do_record_in(&source, branch, &opts, &path, "2026-01-01T00:00:00Z");
+    }
+    for branch in ["feat/a", "feat/b"] {
+        let want = live_in(&source, branch, &opts);
+        let got = from_ledger_in(None, branch, &opts, &path).unwrap();
+        assert!(want.summary.total.calls > 0, "{branch}");
+        assert_eq!(got.summary.total, want.summary.total, "{branch}");
+        assert_eq!(got.summary.footnote, want.summary.footnote, "{branch}");
+        assert_eq!(got.ledger.unwrap().modes, vec![Mode::Timeline]);
+    }
+}
+
+#[test]
+fn entries_recorded_under_more_than_one_mode_are_counted_on_the_report() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = ledger_path(&dir);
+    do_record_in(
+        &FakeSource(vec![rec("s1", "a", "feat/x", 1)]),
+        "feat/x",
+        &Options::new(Mode::Strict),
+        &path,
+        "2026-01-01T00:00:00Z",
+    );
+    do_record_in(
+        &FakeSource(vec![rec("s1", "b", "feat/x", 2)]),
+        "feat/x",
+        &Options::default(),
+        &path,
+        "2026-01-02T00:00:00Z",
+    );
+    let report = from_ledger(None, "feat/x", &path).unwrap();
+    assert_eq!(report.summary.total.calls, 2);
+    assert_eq!(
+        report.ledger.unwrap().modes,
+        vec![Mode::Strict, Mode::Claim]
+    );
 }

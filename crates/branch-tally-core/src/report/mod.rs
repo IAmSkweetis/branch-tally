@@ -52,6 +52,9 @@ pub struct LedgerReport {
     pub live_only: u64,
     /// Request ids both held; the ledger's copy was used.
     pub in_both: u64,
+    /// The distinct modes this branch's entries were recorded under. More than one means the
+    /// numbers mix modes; the caller says so.
+    pub modes: Vec<Mode>,
     /// Whether live transcripts were read and unioned.
     pub live_included: bool,
     /// Whether the repository-wide counts were seen.
@@ -530,7 +533,14 @@ pub fn record(
         &branch,
         options,
     );
-    let outcome = crate::ledger::append(ledger_path, &sel.selected, redact, clock)?;
+    let outcome = crate::ledger::append(
+        ledger_path,
+        &sel.selected,
+        &branch,
+        options.mode,
+        redact,
+        clock,
+    )?;
     Ok(Recorded {
         branch,
         outcome,
@@ -538,33 +548,6 @@ pub fn record(
         read_stats: live.stats,
         worktrees_unavailable: live.unavailable,
     })
-}
-
-/// The ledger entries that belong to `branch`: those assigned to it, plus session-claimed entries
-/// (assigned elsewhere, kept by the session-claim heuristic) from a session that has an exact
-/// entry for `branch`. That is the rule claim mode applies to live records, reconstructed from
-/// what the ledger stores. The ledger keeps the assigned branch, not the branch it was reported
-/// for, so this is the closest faithful filter.
-fn entries_for_branch(
-    ledger: &crate::ledger::Ledger,
-    branch: &str,
-) -> Vec<crate::model::SelectedRecord> {
-    use crate::model::Selection;
-    let claimed: std::collections::HashSet<&crate::model::SessionId> = ledger
-        .entries()
-        .iter()
-        .filter(|e| e.branch == branch && e.kept_by == Selection::Exact)
-        .map(|e| &e.session_id)
-        .collect();
-    ledger
-        .entries()
-        .iter()
-        .filter(|e| {
-            e.branch == branch
-                || (e.kept_by == Selection::SessionClaim && claimed.contains(&e.session_id))
-        })
-        .map(crate::ledger::LedgerEntry::to_selected)
-        .collect()
 }
 
 /// Reports from the ledger at `ledger_path`, optionally unioned with the live transcripts of
@@ -602,13 +585,16 @@ pub fn run_from_ledger(
             path: ledger_path.to_owned(),
         });
     }
-    let ledger = crate::ledger::read(ledger_path)?;
-    let ledger_records = entries_for_branch(&ledger, &branch);
+    let read = crate::ledger::read(ledger_path)?;
+    // Exactly the entries `record` wrote for this branch; the ledger keys on (request, branch).
+    let ledger = read.for_branch(&branch);
+    let ledger_records = ledger.to_selected();
     let mut info = LedgerReport {
-        ledger_stats: ledger.stats().clone(),
+        ledger_stats: read.stats().clone(),
         ledger_only: ledger_records.len() as u64,
         live_only: 0,
         in_both: 0,
+        modes: ledger.modes(),
         live_included: source.is_some(),
         full_set: FullSetCounts::Unavailable,
         live_read_stats: None,
@@ -627,23 +613,12 @@ pub fn run_from_ledger(
             live_options,
         );
         unavailable = live.unavailable;
-        // The ledger's copy wins: live records the ledger already holds are dropped.
-        let held: std::collections::HashSet<_> = ledger_records
-            .iter()
-            .map(|r| r.attributed.record.request_id.clone())
-            .collect();
-        let mut seen = held.clone();
-        let mut records = ledger_records;
-        for rec in live_sel.selected {
-            let id = rec.attributed.record.request_id.clone();
-            if held.contains(&id) {
-                info.in_both += 1;
-            } else if seen.insert(id) {
-                info.live_only += 1;
-                records.push(rec);
-            }
-        }
-        info.ledger_only = held.len() as u64 - info.in_both;
+        // The ledger's copy wins on overlap.
+        let union = crate::ledger::union(&ledger, &live_sel.selected);
+        let records = union.records;
+        info.ledger_only = union.ledger_only;
+        info.live_only = union.live_only;
+        info.in_both = union.in_both;
         // Repository-wide counts: the live full set, plus ledger entries live no longer holds.
         let mut all = live_sel.attributed;
         let live_ids: std::collections::HashSet<_> =
