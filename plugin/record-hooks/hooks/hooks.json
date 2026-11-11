@@ -4,7 +4,7 @@
     "SessionEnd": [
       {
         "hooks": [
-          { "type": "command", "command": "branch-tally record; exit 0", "timeout": 30 }
+          { "type": "command", "command": "branch-tally record; exit 0" }
         ]
       }
     ]
