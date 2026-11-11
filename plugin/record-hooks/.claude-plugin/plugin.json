@@ -1,0 +1,8 @@
+{
+  "name": "branch-tally-record",
+  "displayName": "branch-tally record hook",
+  "description": "Runs `branch-tally record` on SessionEnd so the repository ledger fills itself before transcripts are purged. Needs the branch-tally binary on PATH; does nothing without it.",
+  "homepage": "https://github.com/IAmSkweetis/branch-tally",
+  "author": { "name": "branch-tally contributors" },
+  "license": "MIT"
+}
