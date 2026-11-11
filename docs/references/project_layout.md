@@ -19,6 +19,8 @@ places a new file belongs in**.
 | `data/` | Data shipped with the binary, such as the bundled price table | The bundled price table lives in `crates/branch-tally-core/data/prices.toml` so the crate packages it (#5). Tuned, not coded. |
 | `plugin/` | The **shipped** Claude Code plugin: manifest and the skill users install | *planned* (#11). Not this repository's own skills. |
 | `action.yml` | The **shipped** GitHub Action | *planned* (#12). Must sit at the root for `uses: IAmSkweetis/branch-tally@v1`. |
+| `install.sh`, `install.ps1` | The **shipped** one-line installers, also attached to each release as assets (#46) | POSIX sh and PowerShell. Tested by `tests/install/`. Only tools a stock OS has; no `gh`. |
+| `tests/install/` | `install_test.sh` and `install_test.ps1`: run the installers against a fake `file://` release | Plain scripts, no framework; each prints its case count. |
 | `docs/references/` | Reference pages | This page lives here. |
 | `docs/decisions/` | Architecture decision records, `NNNN-title.md` | Append-only. Supersede; don't rewrite. |
 | `scripts/` | Repository tooling that is not a `just` one-liner: the commit-subject and branch-name checks (shared by the hooks and CI), their self-test, CI helpers, release packaging and smoke test (`package.sh`, `smoke-test.sh`), and **every Python script** the project writes (such as the fixture scrubber and golden generator, #2) | Run through `just`, a hook or a workflow. Python runs with `uv`, never a system interpreter. |

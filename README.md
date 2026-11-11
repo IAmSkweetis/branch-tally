@@ -38,6 +38,37 @@ putting off, too. We'll see where we get.
   content never leaves your machine, and a redaction toggle hides identifiers on request.
 - **Ships as** a CLI, a Claude Code plugin and skill, and a GitHub Action.
 
+## Install
+
+Linux (x86_64, aarch64) and macOS (Intel, Apple silicon):
+
+```sh
+curl -fsSL https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install.ps1 | iex
+```
+
+The binary goes to `~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows). The installers never edit
+your shell startup files or the Windows user PATH; if the directory is not on `PATH` they print the
+line to add. They use only tools a stock system has (curl or wget, `sha256sum` or `shasum`, `tar`;
+built-in PowerShell on Windows), and verify the archive against the release's `SHA256SUMS` before
+installing anything. A checksum mismatch, or an archive missing from `SHA256SUMS`, is a hard
+failure. Provenance attestations are not checked by the installers; to verify one by hand, see
+[release.md](docs/references/release.md#verifying-a-download).
+
+| | `install.sh` | `install.ps1` |
+| - | ------------ | ------------- |
+| Version | `--version vX.Y.Z` or `BRANCH_TALLY_INSTALL_VERSION` | `-Version` or the same variable |
+| Directory | `--to <dir>` or `BRANCH_TALLY_INSTALL_DIR` | `-To` or the same variable |
+| Mirror | `BRANCH_TALLY_INSTALL_BASE_URL` | the same variable |
+
+A flag overrides its variable. The default version is the latest release. To pin one through a
+pipe: `curl -fsSL <url> | sh -s -- --version v0.4.0`, or set the variable.
+
 ## Config file
 
 Default values for `report`'s flags can live in a TOML file. Precedence is flag, then config file,
