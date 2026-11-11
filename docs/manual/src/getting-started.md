@@ -118,4 +118,5 @@ dispatch link. When some calls could not be assigned to a branch with certainty,
 - Choose how calls are assigned to branches with `--mode` (see
   [Attribution modes](cli.md#attribution-modes)).
 - Save your preferred defaults in a [config file](config.md).
-- Keep the numbers after transcripts are purged with the [ledger](ledger.md).
+- Keep the numbers after transcripts are purged with the [ledger](ledger.md), and let the
+  optional [Claude Code plugins](integration.md) record it for you at the end of each session.

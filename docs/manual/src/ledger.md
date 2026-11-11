@@ -41,6 +41,9 @@ two branches that both recorded will conflict when merged.
 
 If you use a different path with `--ledger`, put that path in `.gitattributes` instead.
 
+If you commit the [hook captures](captures.md) file too, give it the same treatment:
+`.tally/captures.jsonl merge=union`.
+
 ## Record
 
 ```sh
@@ -71,6 +74,27 @@ Run `record` on every machine that did work on the branch, **before** its transc
 and while any worktrees the work used still exist. Then commit and push the ledger.
 
 The full option list is in the [CLI reference](cli.md#branch-tally-record).
+
+## Record automatically when a session ends
+
+Remembering to run `record` before `cleanupPeriodDays` runs out is easy to get wrong. The optional
+`branch-tally-record` Claude Code plugin does it for you: its `SessionEnd` hook runs
+`branch-tally record` every time a session in the repository ends.
+
+```text
+/plugin marketplace add IAmSkweetis/branch-tally
+/plugin install branch-tally-record@branch-tally
+```
+
+The hook records the branch the session's directory has checked out when the session ends, with
+the `mode` and `work-branch` from your [config file](config.md). It is the same command as above,
+so the same rules hold: it only writes the file, a second run appends nothing new, and you still
+commit and push the ledger yourself. It needs `branch-tally` on your `PATH`, and it never blocks
+the session, even when `record` fails.
+
+A branch worked on from several sessions, or with sessions that ended on another branch, may
+still need a `record` by hand for the branches the hook did not see. Installing the plugin, and
+the companion `branch-tally-capture` plugin, is covered in [Integration](integration.md).
 
 ## Report from the ledger
 
@@ -135,7 +159,7 @@ One JSON object per line, append-only. A line holds:
 | `recorded_for` | The branch `record` was run for. |
 | `mode` | The attribution mode: `claim`, `strict` or `timeline`. |
 | `branch` | The branch attribution assigned to the call. |
-| `basis` | How that branch was decided, such as stamped by the transcript or rolled up from a subagent's dispatcher. |
+| `basis` | How that branch was decided, such as stamped by the transcript, rolled up from a subagent's dispatcher, or `captured` from [hook captures](captures.md). |
 | `kept_by` | Why the call was kept for the branch: its own branch matched, or its session was claimed. |
 | `skill`, `agent` | The skill and named agent that made the call, if any. |
 | `subagent` | The subagent's workspace and ids, for subagent calls. |

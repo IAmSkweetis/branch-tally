@@ -67,6 +67,22 @@ branch-tally report --pr     # write the table into the branch's pull request
 [Getting Started](https://iamskweetis.github.io/branch-tally/getting-started.html) walks through
 the first report and how to read it.
 
+### Optional Claude Code plugins
+
+This repository is also a Claude Code plugin marketplace with two optional plugins. Both need the
+`branch-tally` binary on your `PATH`, and neither can block a session.
+
+```text
+/plugin marketplace add IAmSkweetis/branch-tally
+/plugin install branch-tally-capture@branch-tally   # hooks note each session's branch
+/plugin install branch-tally-record@branch-tally    # SessionEnd hook runs branch-tally record
+```
+
+`branch-tally-capture` writes an id-only `.tally/captures.jsonl` that lets reports place calls
+whose transcript carries no branch. `branch-tally-record` fills the ledger before Claude Code purges
+transcripts. The manual's [Integration](https://iamskweetis.github.io/branch-tally/integration.html)
+page covers both.
+
 ## Documentation
 
 The user manual is at **<https://iamskweetis.github.io/branch-tally/>**:
@@ -76,6 +92,7 @@ The user manual is at **<https://iamskweetis.github.io/branch-tally/>**:
 | [CLI reference](https://iamskweetis.github.io/branch-tally/cli.html) | Every command and flag, attribution modes, output formats, redaction, exit codes |
 | [Config reference](https://iamskweetis.github.io/branch-tally/config.html) | The config file: location, precedence, every key, `config show` and `config init` |
 | [Persisting the Ledger](https://iamskweetis.github.io/branch-tally/ledger.html) | `record` and `report --from-ledger`, to keep usage after transcripts are purged |
+| [Integration](https://iamskweetis.github.io/branch-tally/integration.html) | The optional Claude Code plugins: install, what their hooks do, and the captures file |
 | [Workflow Examples](https://iamskweetis.github.io/branch-tally/workflows/) | How this repository publishes each PR's token cost |
 
 ## Price table
