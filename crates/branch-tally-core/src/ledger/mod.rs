@@ -65,9 +65,70 @@ pub struct LedgerEntry {
     pub subagent: Option<SubagentTags>,
     /// Token counts.
     pub usage: Usage,
+    /// When the line was written (RFC 3339 UTC), stamped by [`append`] from its [`Clock`].
+    /// Absent on a line written without one, which reads as the oldest. It is bookkeeping, not
+    /// usage data: comparing entries for duplicates and conflicts ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recorded_at: Option<String>,
+}
+
+/// The clock [`append`] stamps `recorded_at` from. Behind a trait so tests inject a fixed time.
+pub trait Clock {
+    /// The current time as an RFC 3339 UTC string, `YYYY-MM-DDTHH:MM:SSZ`.
+    fn now(&self) -> String;
+}
+
+/// The real clock.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now(&self) -> String {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        format_rfc3339_utc(secs)
+    }
+}
+
+/// Seconds since the Unix epoch as `YYYY-MM-DDTHH:MM:SSZ` (civil-from-days, no dependency).
+fn format_rfc3339_utc(secs: u64) -> String {
+    let (days, rem) = (secs / 86_400, secs % 86_400);
+    let z = i64::try_from(days).unwrap_or(0) + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        rem / 3_600,
+        rem % 3_600 / 60,
+        rem % 60
+    )
 }
 
 impl LedgerEntry {
+    /// Whether the two entries hold the same data, ignoring `recorded_at`.
+    fn same_data(&self, other: &Self) -> bool {
+        let mut a = self.clone();
+        a.recorded_at.clone_from(&other.recorded_at);
+        a == *other
+    }
+
+    /// Whether `self` should replace `held` for the same request id: the later `recorded_at`
+    /// wins (a missing one is the oldest); a tie falls back to the smaller serialized line.
+    fn wins_over(&self, held: &Self) -> bool {
+        match self.recorded_at.cmp(&held.recorded_at) {
+            std::cmp::Ordering::Greater => true,
+            std::cmp::Ordering::Less => false,
+            std::cmp::Ordering::Equal => line_text(self) < line_text(held),
+        }
+    }
+
     /// The entry for a selected record. Content, cwd and the raw branch stamp are not carried.
     #[must_use]
     pub fn from_selected(selected: &SelectedRecord) -> Self {
@@ -88,6 +149,7 @@ impl LedgerEntry {
             agent: r.attribution.agent.clone(),
             subagent: a.subagent.clone(),
             usage: r.usage,
+            recorded_at: None,
         }
     }
 
@@ -143,10 +205,10 @@ pub struct ReadStats {
     pub lines: u64,
     /// Distinct request ids kept.
     pub entries: u64,
-    /// Lines dropped because their request id was already held with identical data.
+    /// Lines whose request id was already held with the same data (`recorded_at` aside).
     pub duplicates: u64,
-    /// Request ids that appeared with different data; one entry was kept deterministically
-    /// (the one whose serialized line sorts first).
+    /// Request ids that appeared with different data; one entry was kept deterministically: the
+    /// latest `recorded_at` (a missing one is oldest), then the smallest serialized line.
     pub conflicts: u64,
     /// Lines that are not a valid entry (bad UTF-8, bad JSON, missing fields).
     pub malformed: u64,
@@ -280,15 +342,13 @@ pub fn read(path: &Path) -> Result<Ledger, LedgerError> {
             }
             Some(&at) => {
                 let held = &mut ledger.entries[at];
-                if *held == entry {
+                if held.same_data(&entry) {
                     ledger.stats.duplicates += 1;
-                } else {
-                    if conflicted.insert(entry.request_id.clone()) {
-                        ledger.stats.conflicts += 1;
-                    }
-                    if line_text(&entry) < line_text(held) {
-                        *held = entry;
-                    }
+                } else if conflicted.insert(entry.request_id.clone()) {
+                    ledger.stats.conflicts += 1;
+                }
+                if entry.wins_over(held) {
+                    *held = entry;
                 }
             }
         }
@@ -316,6 +376,7 @@ pub fn append(
     path: &Path,
     records: &[SelectedRecord],
     redact: &dyn Redact,
+    clock: &dyn Clock,
 ) -> Result<AppendOutcome, LedgerError> {
     use std::io::Write;
 
@@ -329,10 +390,12 @@ pub fn append(
         .iter()
         .map(|e| e.request_id.clone())
         .collect();
+    let recorded_at = clock.now();
     let mut out = AppendOutcome::default();
     let mut buf = String::new();
     for rec in records {
-        let entry = redact.redact(LedgerEntry::from_selected(rec));
+        let mut entry = redact.redact(LedgerEntry::from_selected(rec));
+        entry.recorded_at = Some(recorded_at.clone());
         if !seen.insert(entry.request_id.clone()) {
             out.skipped += 1;
             continue;

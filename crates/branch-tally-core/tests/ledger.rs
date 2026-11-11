@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use branch_tally_core::ledger::{self, Identity, LEDGER_PATH};
+use branch_tally_core::ledger::{self, Clock, Identity, LEDGER_PATH};
 use branch_tally_core::model::{
     AgentId, AttributedRecord, Attribution, BranchBasis, Harness, Record, RequestId,
     SelectedRecord, Selection, SessionId, Usage,
@@ -72,7 +72,13 @@ fn two_worktrees_record_concurrently_and_merge_without_conflicts_or_double_count
     .unwrap();
     // A shared base record so both branches append to a non-empty file.
     let ledger_path = root.join(LEDGER_PATH);
-    ledger::append(&ledger_path, &[selected("base", "feat/x", 1)], &Identity).unwrap();
+    ledger::append(
+        &ledger_path,
+        &[selected("base", "feat/x", 1)],
+        &Identity,
+        &CLOCK,
+    )
+    .unwrap();
     git_ok(root, &["add", "-A"]);
     git_ok(root, &["commit", "-q", "-m", "base"]);
 
@@ -81,7 +87,7 @@ fn two_worktrees_record_concurrently_and_merge_without_conflicts_or_double_count
         selected("shared", "feat/x", 10),
         selected("only-a", "feat/x", 100),
     ];
-    ledger::append(&ledger_path, &a, &Identity).unwrap();
+    ledger::append(&ledger_path, &a, &Identity, &CLOCK).unwrap();
     git_ok(root, &["commit", "-q", "-am", "a"]);
 
     git_ok(root, &["checkout", "-q", "main"]);
@@ -90,7 +96,7 @@ fn two_worktrees_record_concurrently_and_merge_without_conflicts_or_double_count
         selected("shared", "feat/x", 10),
         selected("only-b", "feat/x", 1000),
     ];
-    ledger::append(&ledger_path, &b, &Identity).unwrap();
+    ledger::append(&ledger_path, &b, &Identity, &CLOCK).unwrap();
     git_ok(root, &["commit", "-q", "-am", "b"]);
 
     git_ok(root, &["checkout", "-q", "main"]);
@@ -112,9 +118,66 @@ fn two_worktrees_record_concurrently_and_merge_without_conflicts_or_double_count
     let stats = merged.stats();
     assert_eq!(stats.malformed, 0);
     assert_eq!(stats.conflicts, 0);
-    // Git may or may not keep the identical `shared` line from both sides; either way the reader
-    // has collapsed it, which the id and total assertions above prove.
-    assert!(stats.duplicates <= 1, "unexpected duplicates: {stats:?}");
+    // Both branches wrote a byte-identical `shared` line (same fixed clock), and git's merge
+    // keeps one copy of an identical added line, so the reader sees no duplicate.
+    assert_eq!(stats.duplicates, 0, "{stats:?}");
+}
+
+struct Fixed(&'static str);
+impl Clock for Fixed {
+    fn now(&self) -> String {
+        self.0.to_owned()
+    }
+}
+
+const CLOCK: Fixed = Fixed("2026-01-01T00:00:00Z");
+
+#[test]
+fn the_same_id_recorded_at_different_times_survives_the_merge_as_one_duplicate() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    git_ok(root, &["init", "-q", "-b", "main"]);
+    std::fs::write(
+        root.join(".gitattributes"),
+        format!("{LEDGER_PATH} merge=union\n"),
+    )
+    .unwrap();
+    let p = root.join(LEDGER_PATH);
+    ledger::append(&p, &[selected("base", "feat/x", 1)], &Identity, &CLOCK).unwrap();
+    git_ok(root, &["add", "-A"]);
+    git_ok(root, &["commit", "-q", "-m", "base"]);
+
+    git_ok(root, &["checkout", "-q", "-b", "agent-a"]);
+    let early = Fixed("2026-01-02T00:00:00Z");
+    ledger::append(&p, &[selected("dup", "feat/x", 10)], &Identity, &early).unwrap();
+    git_ok(root, &["commit", "-q", "-am", "a"]);
+
+    git_ok(root, &["checkout", "-q", "main"]);
+    git_ok(root, &["checkout", "-q", "-b", "agent-b"]);
+    let late = Fixed("2026-01-03T00:00:00Z");
+    ledger::append(&p, &[selected("dup", "feat/x", 10)], &Identity, &late).unwrap();
+    git_ok(root, &["commit", "-q", "-am", "b"]);
+
+    git_ok(root, &["checkout", "-q", "main"]);
+    git_ok(root, &["checkout", "-q", "-b", "feat/x"]);
+    git_ok(root, &["merge", "-q", "--no-edit", "agent-a"]);
+    let (ok, text) = git(root, &["merge", "--no-edit", "agent-b"]);
+    assert!(ok, "merge conflicted: {text}");
+
+    let merged = ledger::read(&p).unwrap();
+    let stats = merged.stats();
+    assert_eq!(
+        (
+            stats.lines,
+            stats.entries,
+            stats.duplicates,
+            stats.conflicts
+        ),
+        (3, 2, 1, 0),
+        "{stats:?}"
+    );
+    let total: u64 = merged.entries().iter().map(|e| e.usage.output).sum();
+    assert_eq!(total, 11);
 }
 
 #[test]
@@ -132,7 +195,7 @@ fn a_written_line_carries_no_cwd_content_or_raw_stamp() {
             agent: None,
         };
     }
-    ledger::append(&p, &[s], &Identity).unwrap();
+    ledger::append(&p, &[s], &Identity, &CLOCK).unwrap();
     let text = std::fs::read_to_string(&p).unwrap();
     assert!(!text.contains("secret-user"), "cwd leaked");
     assert!(
@@ -155,6 +218,7 @@ fn a_written_line_carries_no_cwd_content_or_raw_stamp() {
         "harness",
         "kept_by",
         "model",
+        "recorded_at",
         "request_id",
         "session_id",
         "skill",
