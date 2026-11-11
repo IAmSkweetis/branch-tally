@@ -32,9 +32,11 @@ The ledger is **append-only JSON Lines** at `.tally/ledger.jsonl`.
 - **Only what the report needs.** Usage numbers, model, timestamp, branch, session and agent ids,
   plus what the report needs to render the same tables as a live run: the attribution basis (how
   certain the branch is), the selection that kept the record, the skill and agent names, the
-  subagent tags, and the session's origin (the main checkout or a worktree's name, never its
-  path). Each line also carries `recorded_at`, the time it was written. Never message content,
-  and never `cwd`.
+  subagent tags, and the session's origin. A worktree's transcript slug encodes its full path, so
+  the ledger stores only the part after the main checkout's slug, and a reader puts the local
+  prefix back. A worktree outside the main checkout is stored without a name, and counted. Each
+  line also carries `recorded_at`, the time it was written. Never message content, never `cwd`,
+  and never a path or anything that encodes one.
 - **Redaction.** Every ledger write passes through a redaction step. Until #9 lands it is the
   identity; #9 supplies the policy.
 
