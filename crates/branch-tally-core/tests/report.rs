@@ -7,9 +7,10 @@ use std::path::{Path, PathBuf};
 
 use branch_tally_core::git::{FakeGit, Worktree};
 use branch_tally_core::model::{
-    Dispatch, Harness, Mode, Origin, PriceTableSource, Record, RequestId, SessionId, Usage,
+    AgentId, Dispatch, Harness, Mode, Origin, PriceTableSource, Record, RequestId, SessionId, Usage,
 };
 use branch_tally_core::pricing::PriceTable;
+use branch_tally_core::redact::RedactOptions;
 use branch_tally_core::report::{Options, ReportError, build, run};
 use branch_tally_core::sources::{
     ReadStats, RepoIdentity, RootKind, Source, SourceError, TranscriptRoot,
@@ -92,6 +93,97 @@ impl Source for FakeSource {
 
 fn bundled() -> &'static PriceTable {
     PriceTable::bundled()
+}
+
+/// A main-checkout session with a skill, plus a worktree subagent dispatched from it.
+fn redaction_input() -> (Vec<Record>, Vec<Dispatch>) {
+    let mut main = rec("sess-main-secret", "a", Some("feat/x"));
+    main.attribution.skill = Some("skill-secret".to_owned());
+    main.ts = Some("2026-01-02T03:04:05Z".to_owned());
+    let mut sub = rec("sess-sub-secret", "b", None);
+    sub.agent_id = Some(AgentId::new("agentid-secret"));
+    sub.is_sidechain = true;
+    sub.parent_session = Some(SessionId::new("sess-main-secret"));
+    sub.attribution.agent = Some("agent-secret".to_owned());
+    sub.cwd = Some("/repo/.claude/worktrees/wt-secret".to_owned());
+    sub.origin = Some(Origin::Worktree("wt-secret".to_owned()));
+    sub.ts = Some("2026-01-02T03:05:05Z".to_owned());
+    let dispatch = Dispatch {
+        session_id: SessionId::new("sess-main-secret"),
+        agent_id: AgentId::new("agentid-secret"),
+        git_branch: Some("feat/x".to_owned()),
+        ts: None,
+    };
+    (vec![main, sub], vec![dispatch])
+}
+
+fn build_with(options: &Options<'_>) -> branch_tally_core::report::Report {
+    let (records, dispatches) = redaction_input();
+    match build(
+        records,
+        &dispatches,
+        stats(),
+        Path::new("/repo"),
+        &[],
+        "feat/x",
+        options,
+        bundled(),
+    ) {
+        Ok(report) => report,
+        Err(e) => panic!("fixture must build: {e}"),
+    }
+}
+
+const SECRETS: [&str; 5] = [
+    "sess-main-secret",
+    "sess-sub-secret",
+    "agentid-secret",
+    "wt-secret",
+    "2026-01-02T03",
+];
+
+#[test]
+fn build_without_redaction_is_not_redacted_and_keeps_names() {
+    let report = build_with(&Options::default());
+    assert!(!report.summary.redacted);
+    let dump = format!("{:?}", report.summary);
+    assert!(dump.contains("sess-main-secret"));
+    assert!(dump.contains("wt-secret"));
+}
+
+#[test]
+fn build_with_redaction_hides_ids_and_names_but_not_costs() {
+    let plain = build_with(&Options::default());
+    assert!(
+        !plain.summary.subagents.rows.is_empty(),
+        "fixture must yield subagent rows"
+    );
+    let report = build_with(&Options::default().with_redaction(RedactOptions::default()));
+    assert!(report.summary.redacted);
+    let dump = format!("{:?}", report.summary);
+    for secret in SECRETS.iter().chain(&["skill-secret", "agent-secret"]) {
+        assert!(!dump.contains(secret), "{secret} leaked");
+    }
+    assert_eq!(report.costs, plain.costs);
+    assert_eq!(report.summary.total, plain.summary.total);
+    assert_eq!(
+        report.summary.subagents.rows.len(),
+        plain.summary.subagents.rows.len()
+    );
+}
+
+#[test]
+fn build_with_redaction_keeping_names_hides_ids_only() {
+    let plain = build_with(&Options::default());
+    let report = build_with(&Options::default().with_redaction(RedactOptions { names: false }));
+    assert!(report.summary.redacted);
+    let dump = format!("{:?}", report.summary);
+    for secret in SECRETS {
+        assert!(!dump.contains(secret), "{secret} leaked");
+    }
+    assert!(dump.contains("skill-secret"));
+    assert!(dump.contains("agent-secret"));
+    assert_eq!(report.costs, plain.costs);
 }
 
 fn stats() -> ReadStats {

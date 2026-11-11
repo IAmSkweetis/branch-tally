@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use crate::git::{Git, GitError, Worktree};
 use crate::model::{Costs, DefaultBranchSource, Dispatch, Mode, Record, Summary, WorkBranchRule};
 use crate::pricing::PriceTable;
+use crate::redact::RedactOptions;
 use crate::sources::{ReadStats, RepoIdentity, Source, SourceError};
 
 /// A finished report: what the renderers take, plus what the read skipped.
@@ -125,6 +126,9 @@ pub struct Options<'a> {
     /// Timeline with [`WorkBranch::Default`] only: the resolved default branch. [`run`] resolves
     /// it from git when this is `None`; [`build`] (pure, no git) assumes `main` and says so.
     pub default_branch: Option<DefaultBranch>,
+    /// Redact the summary after it is built and before it is priced (#9). `None`, the default,
+    /// leaves the report untouched.
+    pub redaction: Option<RedactOptions>,
 }
 
 impl Default for Options<'_> {
@@ -141,7 +145,15 @@ impl<'a> Options<'a> {
             mode,
             work_branch: WorkBranch::Default,
             default_branch: None,
+            redaction: None,
         }
+    }
+
+    /// Redact identifying detail from the summary. Costs are unchanged.
+    #[must_use]
+    pub fn with_redaction(mut self, redaction: RedactOptions) -> Self {
+        self.redaction = Some(redaction);
+        self
     }
 
     /// Use a custom work-branch rule (timeline mode).
@@ -272,6 +284,9 @@ pub fn build(
     }
     let mut summary = crate::summary::summarize(branch, mode, &selected, unattributed, ambiguous);
     summary.work_branch = work_rule.take();
+    if let Some(redaction) = options.redaction {
+        summary = crate::redact::redact(summary, redaction);
+    }
     let costs = crate::pricing::price(&summary, table);
     Ok(Report {
         branch: branch.to_owned(),
