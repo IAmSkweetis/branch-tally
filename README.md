@@ -55,7 +55,7 @@ irm https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install
 The binary goes to `~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows), after the archive is
 checked against the release's `SHA256SUMS`. The installers never edit your `PATH`; they print the
 line to add. Their options, verifying a download by hand and building from source are in the
-manual's [Installation](https://iamskweetis.github.io/branch-tally/installation/) chapter.
+manual's [Installation](https://branch-tally.io/installation/) chapter.
 
 Then, inside a repository where you have worked with Claude Code:
 
@@ -64,8 +64,8 @@ branch-tally report          # the current branch's token usage and estimated co
 branch-tally report --pr     # write the table into the branch's pull request
 ```
 
-[Getting Started](https://iamskweetis.github.io/branch-tally/getting-started.html) walks through
-the first report and how to read it.
+[Getting Started](https://branch-tally.io/getting-started.html) walks through the first report and
+how to read it.
 
 ### Optional Claude Code plugins
 
@@ -80,28 +80,27 @@ This repository is also a Claude Code plugin marketplace with two optional plugi
 
 `branch-tally-capture` writes an id-only `.tally/captures.jsonl` that lets reports place calls
 whose transcript carries no branch. `branch-tally-record` fills the ledger before Claude Code purges
-transcripts. The manual's [Integration](https://iamskweetis.github.io/branch-tally/integration.html)
-page covers both.
+transcripts. The manual's [Integration](https://branch-tally.io/integration.html) page covers both.
 
 ## Documentation
 
-The user manual is at **<https://iamskweetis.github.io/branch-tally/>**:
+The user manual is at **<https://branch-tally.io/>**:
 
 | Page | Covers |
 | ---- | ------ |
-| [CLI reference](https://iamskweetis.github.io/branch-tally/cli.html) | Every command and flag, attribution modes, output formats, redaction, exit codes |
-| [Config reference](https://iamskweetis.github.io/branch-tally/config.html) | The config file: location, precedence, every key, `config show` and `config init` |
-| [Persisting the Ledger](https://iamskweetis.github.io/branch-tally/ledger.html) | `record` and `report --from-ledger`, to keep usage after transcripts are purged |
-| [Integration](https://iamskweetis.github.io/branch-tally/integration.html) | The optional Claude Code plugins: install, what their hooks do, and the captures file |
-| [Workflow Examples](https://iamskweetis.github.io/branch-tally/workflows/) | How this repository publishes each PR's token cost |
+| [CLI reference](https://branch-tally.io/cli.html) | Every command and flag, attribution modes, output formats, redaction, exit codes |
+| [Config reference](https://branch-tally.io/config.html) | The config file: location, precedence, every key, `config show` and `config init` |
+| [Persisting the Ledger](https://branch-tally.io/ledger.html) | `record` and `report --from-ledger`, to keep usage after transcripts are purged |
+| [Integration](https://branch-tally.io/integration.html) | The optional Claude Code plugins: install, what their hooks do, and the captures file |
+| [Workflow Examples](https://branch-tally.io/workflows/) | How this repository publishes each PR's token cost |
 
 ## Price table
 
 Estimated costs come from a price table, never from numbers in the code. Every report states the
 table's date and where it came from, and a model with no price is named on stderr and makes the
 total an "at least" floor. The manual's
-[`prices` reference](https://iamskweetis.github.io/branch-tally/cli.html#branch-tally-prices-update)
-covers the same ground.
+[`prices` reference](https://branch-tally.io/cli.html#branch-tally-prices-update) covers the same
+ground.
 
 The table is chosen by the first of these that exists, and that one is used whole, with no
 per-model merging:

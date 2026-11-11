@@ -1,0 +1,26 @@
+# Local dev convenience: `mise install` sets up a machine with the tools this repository pins.
+# It is NOT the authority. The justfile (*_version), .github/workflows/*.yml and
+# rust-toolchain.toml are, and `just check-pins` (part of `just ci`) fails if this file drifts
+# from them. Change a version there first, then here. See docs/references/dev_workflow.md.
+#
+# Not listed because nothing pins them: uv (and so uvx), git, sh, ShellCheck, PSScriptAnalyzer.
+
+[tools]
+# rustup reads rust-toolchain.toml itself; this pins the same channel so `mise install` fetches the
+# toolchain without a second source of truth. Components and profile stay in rust-toolchain.toml.
+rust = "1.99.1"
+
+just = "1.59.0"
+# nextest and cargo-deny are pinned in ci.yml. The cargo: backend compiles from source unless
+# cargo-binstall is installed (mise uses it when present).
+"cargo:cargo-nextest" = "0.9.151"
+cargo-deny = "0.20.2"
+
+# Pinned in the justfile.
+gitleaks = "8.30.1"
+git-cliff = "2.13.1"
+rumdl = "0.3.2"
+zizmor = "1.31.1"
+mdbook = "0.5.4"
+# No aqua registry entry; the github backend takes the release binaries.
+"github:badboy/mdbook-mermaid" = "0.17.1"
