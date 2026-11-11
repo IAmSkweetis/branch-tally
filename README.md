@@ -53,16 +53,29 @@ mode = "timeline"              # "claim" (default), "strict" or "timeline"
 work-branch = "^(feat|fix)/"   # regex; used only when the effective mode is timeline
 format = "json"                # "md" (default) or "json"
 cost = false                   # true (default) or false; `--cost` undoes it for one run
+redact = true                  # false (default) or true; `--no-redact` undoes it for one run
+redact-names = false           # true (default) or false; `--redact-names` undoes it for one run
 ```
 
-All four keys are optional. An unknown key, a bad value, invalid TOML or a `work-branch` that is
+All keys are optional. An unknown key, a bad value, invalid TOML or a `work-branch` that is
 not a valid regex stops the run with exit 1 and a message naming the file and the key; the message
 never quotes the file's content.
 
 The command line has matching options: `--mode claim|strict|timeline`, `--format md|json`,
-`--cost` and `--no-cost`. `--strict`, `--timeline`, `--md` and `--json` remain as shorthands. A
-shorthand and its long form cannot be combined, even when they agree (exit 2), and `--cost` and
-`--no-cost` conflict.
+`--cost` and `--no-cost`, `--redact` and `--no-redact`, `--keep-names` and `--redact-names`.
+`--strict`, `--timeline`, `--md` and `--json` remain as shorthands. A shorthand and its long form
+cannot be combined, even when they agree (exit 2), and each on/off pair conflicts.
+
+### Redaction
+
+`--redact` (or `redact = true`) hides identifiers in the report, for the PR table and JSON alike:
+session ids become `s1`, `s2`, and so on, agent and skill names become generic labels, worktree
+names become `worktree-N`, and timestamps are reduced to dates (the table header then reads
+`Span (UTC date)`). The output says so: an `identifiers redacted` footnote, and
+`"redacted": true` in JSON. Costs stay visible; `--no-cost` is a separate switch. `--keep-names`
+(or `redact-names = false`) keeps real agent and skill names while ids, worktrees and times stay
+hidden; it has no effect when redaction is off. `branch-tally config show` prints the effective
+`redact` and `redact-names` with their source.
 
 ```bash
 branch-tally config init [--path <path>]
