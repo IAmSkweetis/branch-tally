@@ -6,6 +6,9 @@ tests/fixtures/** -text
 # The ledger is append-only JSONL; union keeps both sides' lines so parallel branches merge cleanly.
 .tally/ledger.jsonl merge=union
 
+# Hook-written capture events are append-only, id-only JSONL too; same union merge as the ledger.
+.tally/captures.jsonl merge=union
+
 # Vendored by `mdbook-mermaid install`; keep byte for byte, and out of diffs and language stats.
 docs/manual/mermaid.min.js -text -diff linguist-vendored
 docs/manual/mermaid-init.js -text linguist-vendored
