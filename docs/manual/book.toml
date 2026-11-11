@@ -1,0 +1,23 @@
+# The user manual. Built with mdBook plus the mdbook-mermaid preprocessor; the pinned versions are
+# in the justfile (mdbook_version, mdbook_mermaid_version) and must stay mutually compatible.
+# mermaid.min.js and mermaid-init.js are the assets `mdbook-mermaid install` writes for that
+# pinned version. Refresh them with it when the pin moves. See docs/references/dev_workflow.md.
+
+[book]
+title = "branch-tally"
+description = "What a branch or pull request cost in AI-agent tokens."
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+# A SUMMARY.md entry that points at a missing page fails the build rather than creating an empty one.
+create-missing = false
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
+[output.html]
+site-url = "/branch-tally/"
+git-repository-url = "https://github.com/IAmSkweetis/branch-tally"
+additional-js = ["mermaid.min.js", "mermaid-init.js"]

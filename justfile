@@ -11,11 +11,15 @@ set shell := ["pwsh.exe", "-NoLogo", "-NoProfile", "-Command"]
 
 # Pinned tool versions. CI reads them back with `just --evaluate <name>`, so local and CI agree.
 # Bump one here and nowhere else (gitleaks is installed from a release archive whose sha256 is
-# pinned in .github/workflows/ci.yml, so bump that checksum with it).
+# pinned in .github/workflows/ci.yml, so bump that checksum with it; mdbook and mdbook-mermaid are
+# the same, with their checksums in .github/workflows/docs.yml and pages.yml, and the two must stay
+# compatible: mdbook-mermaid 0.17 is built against the mdBook 0.5 preprocessor API).
 rumdl_version := "0.3.2"
 zizmor_version := "1.31.1"
 gitleaks_version := "8.30.1"
 cliff_version := "2.13.1"
+mdbook_version := "0.5.4"
+mdbook_mermaid_version := "0.17.1"
 
 # Rust checks run only once the workspace exists (#3). Until then they say so and exit 0.
 has_cargo := path_exists(justfile_directory() / "Cargo.toml")
@@ -26,7 +30,7 @@ default:
     @{{ just_executable() }} --list
 
 # Every gate CI runs (everything except fmt and audit-workflows).
-ci: lint lint-md test test-scripts test-py lint-install test-install secret-scan
+ci: lint lint-md test test-scripts test-py lint-install test-install docs secret-scan
 
 # Prove the commit-message and branch-name checks reject what they must and accept what they should.
 [unix]
@@ -58,6 +62,14 @@ test-install: (_require "sh" "install a POSIX sh")
 [windows]
 test-install: (_require "git" "install Git for Windows: https://gitforwindows.org")
     @$sh = (Get-Command sh -ErrorAction SilentlyContinue).Source; if (-not $sh) { $sh = Join-Path (git --exec-path) '../../../bin/sh.exe' }; if (-not (Test-Path $sh)) { [Console]::Error.WriteLine('error: sh not found on PATH or beside git; install Git for Windows: https://gitforwindows.org'); exit 1 }; & $sh scripts/test-install.sh; exit $LASTEXITCODE
+
+# Build the user manual (docs/manual) into docs/manual/book. Fails on a SUMMARY.md entry with no page.
+docs: (_require "mdbook" ("install it: https://github.com/rust-lang/mdBook/releases/tag/v" + mdbook_version + " or cargo install mdbook --version " + mdbook_version + " --locked")) (_require "mdbook-mermaid" ("install it: https://github.com/badboy/mdbook-mermaid/releases/tag/v" + mdbook_mermaid_version + " or cargo install mdbook-mermaid --version " + mdbook_mermaid_version + " --locked"))
+    mdbook build docs/manual
+
+# Serve the user manual locally and rebuild on change (http://localhost:3000).
+docs-serve: (_require "mdbook" ("install it: https://github.com/rust-lang/mdBook/releases/tag/v" + mdbook_version + " or cargo install mdbook --version " + mdbook_version + " --locked")) (_require "mdbook-mermaid" ("install it: https://github.com/badboy/mdbook-mermaid/releases/tag/v" + mdbook_mermaid_version + " or cargo install mdbook-mermaid --version " + mdbook_mermaid_version + " --locked"))
+    mdbook serve docs/manual
 
 # nextest over the workspace, then doctests (nextest does not run them). Zero tests is a failure.
 test filter="": (_require-rust "cargo-nextest" "install it: cargo install cargo-nextest --locked")
