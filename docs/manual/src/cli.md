@@ -105,8 +105,9 @@ assigns calls to branches.
 **`claim` (the default).** Starts from each call's stamp, then:
 
 - places a session's own call that has no stamp, or a `worktree-agent-…` stamp, on the branch the
-  session's [hook captures](captures.md) agree on around that call (*captured hook data*). This
-  needs the capture plugin, and wins over the worktree and origin recovery below;
+  session's [hook captures](captures.md) name both before and after that call (*captured hook
+  data*). A call with captures on one side only is not placed this way. This needs the capture
+  plugin, and wins over the worktree and origin recovery below;
 - recovers the branch of a subagent call stamped `worktree-agent-…` from the worktree it ran in
   (*worktree recovery*), and of an unstamped call read from a worktree's transcripts from that
   worktree (*origin recovery*), using `git worktree list`, so the worktree must still exist;

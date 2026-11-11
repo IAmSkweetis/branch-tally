@@ -95,11 +95,11 @@ In claim mode a capture can place a call only when all of these hold:
   branch of the session that dispatched them (*dispatcher roll-up*);
 - the call's transcript stamp is missing or a `worktree-agent-…` branch. A real branch stamp is
   never overridden;
-- the session's captures **agree** around the call's time.
+- the session's captures **bracket** the call's time and agree on one branch.
 
-"Agree" means: take the session's last capture at or before the call and its first capture at or
-after it. If every one of those names the same branch, the call gets that branch. If the call has
-captures on one side only, every capture in the session must name the same branch. A capture of a
+"Bracket" means: take the session's last capture at or before the call and its first capture at
+or after it (every capture sharing that instant, on each side). **Both sides are required.** If
+every one of those names the same branch, the call gets that branch. A capture of a
 `worktree-agent-…` branch, a detached `HEAD` or an empty branch never counts as agreement.
 
 ```mermaid
@@ -111,6 +111,19 @@ flowchart LR
 
 Had the `stop` at 10:30 named `main`, the captures would disagree and the call would get nothing
 from them.
+
+A call with captures on **one side only** gets nothing from them either. Say a session starts on
+`feat/x`, you check out `feat/y`, and the agent makes a call. If the report runs before the next
+`stop` capture is written, or that capture failed, only the 10:00 `feat/x` capture comes before the
+call, and nothing comes after it to confirm the branch had not changed. So the captures don't
+vouch for the call, even if every capture in the session names `feat/x`.
+
+A bracket still can't see everything between its two captures. If both sides name `feat/x`, the
+session could have switched to `feat/y` and back to `feat/x` in between, and the call would still
+count toward `feat/x`. The `stop` hook fires at the end of every turn, so the window is usually a
+single turn, and longer only when a capture failed. A call placed this way is a close inference,
+not a certainty, and that is why the report lists it as a heuristic (see
+[What the report says](#what-the-report-says)).
 
 When the captures don't settle a call, nothing is guessed. The call goes through the same recovery
 as it would without captures (worktree recovery and origin recovery from `git worktree list`), and

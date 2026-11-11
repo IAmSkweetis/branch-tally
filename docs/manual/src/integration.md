@@ -79,8 +79,43 @@ branch's attributed usage to `.tally/ledger.jsonl`, exactly as running `record` 
 Every hook command ends in `; exit 0`, for example `branch-tally capture; exit 0`. That works in
 both Bash and PowerShell, and it means a hook always exits 0, whatever happened: a missing binary,
 a directory that is not a repository, a detached HEAD, a branch with no usage yet, or a usage
-error. Claude Code never sees a failure and never blocks `Stop` or `SubagentStop`. Each hook has a
-30-second timeout.
+error. Claude Code never sees a failure and never blocks `Stop` or `SubagentStop`.
+
+The three capture hooks each set a 30-second `timeout`. The record hook sets none, because a
+plugin can't change how long `SessionEnd` gets. That limit is covered next.
+
+## SessionEnd time limit
+
+Claude Code gives `SessionEnd` hooks 1.5 seconds by default. A `timeout` on a hook that a plugin
+provides does not raise that budget. Only a `timeout` in your own settings files, or an environment
+variable, does. `branch-tally record` reads all of the repository's transcripts, so a long history
+can take longer than 1.5 seconds. To give it more time, do one of these:
+
+- Set `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS`, in milliseconds, before you start Claude Code. For
+  example, `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS=10000 claude` allows 10 seconds. This needs
+  Claude Code v2.1.268 or later. Before that, the variable raised only the overall budget, and a
+  hook with no `timeout` of its own, like the record plugin's, was still stopped after 1.5 seconds.
+- Add your own `SessionEnd` hook that runs `branch-tally record; exit 0` with a `timeout` (up to 60
+  seconds) in your settings file, instead of installing the record plugin.
+
+These rules belong to Claude Code, not branch-tally. Check the `SessionEnd` section of the
+[Claude Code hooks reference](https://code.claude.com/docs/en/hooks) for the current behaviour.
+
+If Claude Code stops `record` before it finishes, the usage it missed can still be recorded.
+`record` appends only the calls the ledger does not already hold, so the next `SessionEnd`, or a
+`branch-tally record` you run by hand, writes the rest, provided it runs before the transcripts are
+purged. If the stop cut the ledger's last line short, reports skip that
+line, count it as malformed in a `note: skipped N ledger line(s)` message on stderr, and carry on.
+The next `record` starts on a fresh line and writes the cut entry again whole. Until it does, a
+report from the ledger is missing that call. The total is then lower than the real cost, but the
+report does not label it "at least" for this reason: the stderr note is the signal.
+
+## Which shell runs the hooks
+
+Claude Code runs each hook command through a shell: `sh -c` on macOS and Linux, Git Bash on
+Windows, or PowerShell on Windows when Git Bash is not installed. `; exit 0` works in all of them.
+If you copy a hook into your own settings, its `shell` field (`"bash"` or `"powershell"`) picks one
+explicitly.
 
 An error can still print a line on stderr. `branch-tally capture` prints one short fixed message
 and never echoes the payload or the working directory.
