@@ -10,6 +10,7 @@ use branch_tally_core::git::{Git, SystemGit, normalize_path};
 use branch_tally_core::ledger::{Identity, SystemClock};
 use branch_tally_core::model::Mode;
 use branch_tally_core::pr::{PrError, PrOutcome, SystemGh, update_pr};
+use branch_tally_core::redact::RedactOptions;
 use branch_tally_core::render;
 use branch_tally_core::report::{
     FullSetCounts, LedgerReport, Options, Report, ReportError, WorkBranch,
@@ -95,6 +96,8 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), String> {
             work_branch: args.work_branch.as_ref().map(|p| p.text.clone()),
             format: args.format_flag(),
             cost: args.cost_flag(),
+            redact: args.redact_flag(),
+            redact_names: args.redact_names_flag(),
         },
         args.work_branch.as_ref(),
     )?;
@@ -103,7 +106,14 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), String> {
     let table = prices::resolve_table(&prices::Locations::for_repo(&cwd))?;
 
     let matches = |branch: &str| args.work_branch.as_ref().is_some_and(|p| p.matches(branch));
-    let options = options(mode, pattern.as_ref(), &matches);
+    let options = options(
+        mode,
+        pattern.as_ref(),
+        &matches,
+        settings.redact.value.then_some(RedactOptions {
+            names: settings.redact_names.value,
+        }),
+    );
     let result = if args.from_ledger {
         let source: Option<&dyn Source> = args.with_live.then_some(&ClaudeCode as &dyn Source);
         branch_tally_core::report::run_from_ledger(
@@ -185,6 +195,8 @@ pub(crate) fn record(args: &RecordArgs) -> Result<(), String> {
             work_branch: args.work_branch.as_ref().map(|p| p.text.clone()),
             format: None,
             cost: None,
+            redact: None,
+            redact_names: None,
         },
         args.work_branch.as_ref(),
     )?;
@@ -195,7 +207,7 @@ pub(crate) fn record(args: &RecordArgs) -> Result<(), String> {
         &projects,
         &cwd,
         args.branch.as_deref(),
-        &options(settings.mode.value, pattern.as_ref(), &matches),
+        &options(settings.mode.value, pattern.as_ref(), &matches, None),
         &ledger_path(args.ledger.as_deref(), &cwd)?,
         &Identity,
         &SystemClock,
@@ -236,8 +248,12 @@ fn options<'a>(
     mode: Mode,
     pattern: Option<&'a WorkBranchPattern>,
     matches: &'a dyn Fn(&str) -> bool,
+    redaction: Option<RedactOptions>,
 ) -> Options<'a> {
-    let options = Options::new(mode);
+    let mut options = Options::new(mode);
+    if let Some(redaction) = redaction {
+        options = options.with_redaction(redaction);
+    }
     match (mode, pattern) {
         (Mode::Timeline, Some(p)) => options.with_work_branch(WorkBranch::Custom {
             pattern: &p.text,

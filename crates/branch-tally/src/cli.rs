@@ -180,6 +180,25 @@ pub(crate) struct ReportArgs {
     #[arg(long)]
     pub(crate) cost: bool,
 
+    /// Hide identifiers in the output: session ids become s1, s2, ..., agent and skill names
+    /// become generic labels, and timestamps are reduced to dates. Costs stay visible.
+    #[arg(long, conflicts_with = "no_redact")]
+    pub(crate) redact: bool,
+
+    /// Show identifiers (the default); undoes `redact = true` in the config file.
+    #[arg(long)]
+    pub(crate) no_redact: bool,
+
+    /// With redaction, keep real agent and skill names; ids and times are still hidden. Has no
+    /// effect when redaction is off.
+    #[arg(long, conflicts_with = "redact_names")]
+    pub(crate) keep_names: bool,
+
+    /// With redaction, replace agent and skill names with generic labels (the default); undoes
+    /// `redact-names = false` in the config file.
+    #[arg(long)]
+    pub(crate) redact_names: bool,
+
     /// Read this config file instead of the default location (it must exist).
     #[arg(long, value_name = "PATH")]
     pub(crate) config: Option<PathBuf>,
@@ -271,6 +290,24 @@ impl ReportArgs {
     /// `--cost` or `--no-cost`, or `None` when neither was given.
     pub(crate) fn cost_flag(&self) -> Option<bool> {
         match (self.cost, self.no_cost) {
+            (true, _) => Some(true),
+            (_, true) => Some(false),
+            _ => None,
+        }
+    }
+
+    /// `--redact` or `--no-redact`, or `None` when neither was given.
+    pub(crate) fn redact_flag(&self) -> Option<bool> {
+        match (self.redact, self.no_redact) {
+            (true, _) => Some(true),
+            (_, true) => Some(false),
+            _ => None,
+        }
+    }
+
+    /// `--redact-names` (true) or `--keep-names` (false), or `None` when neither was given.
+    pub(crate) fn redact_names_flag(&self) -> Option<bool> {
+        match (self.redact_names, self.keep_names) {
             (true, _) => Some(true),
             (_, true) => Some(false),
             _ => None,

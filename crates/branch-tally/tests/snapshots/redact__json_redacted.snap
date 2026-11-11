@@ -1,0 +1,87 @@
+---
+source: crates/branch-tally/tests/redact.rs
+expression: text
+---
+{
+  "branch": "feat/x",
+  "mode": "claim",
+  "redacted": true,
+  "totalCalls": 3,
+  "totalCostUSD": 0.0,
+  "totalCostIsFloor": true,
+  "unpricedModels": [
+    "claude-test-1"
+  ],
+  "priceTable": {
+    "asOf": "2026-11-09",
+    "source": "bundled"
+  },
+  "heuristics": {
+    "sessionClaim": { "calls": 0, "tokens": 0 },
+    "worktreeRecovery": { "calls": 0, "tokens": 0 },
+    "originRecovery": { "calls": 0, "tokens": 0 },
+    "dispatcherRollUp": { "calls": 2, "tokens": 120 },
+    "timelineForward": { "calls": 0, "tokens": 0 },
+    "timelineCarried": { "calls": 0, "tokens": 0 },
+    "ambiguous": { "calls": 0, "tokens": 0 },
+    "isFloor": false
+  },
+  "subagents": {
+    "calls": 2,
+    "tokens": 120,
+    "dispatched": 1,
+    "workspaces": 1,
+    "worktrees": 0,
+    "unattributedCalls": 0,
+    "unattributedTokens": 0,
+    "unlinkedInTotalCalls": 0,
+    "unlinkedInTotalTokens": 0,
+    "costUSD": null,
+    "costIsFloor": false,
+    "rows": [
+      {
+        "workspace": "unknown",
+        "workspaceKind": "unknown",
+        "isWorktree": false,
+        "subagent": "a1",
+        "model": "claude-test-1",
+        "calls": 2,
+        "tokens": 120,
+        "agents": 1,
+        "input": 20,
+        "cacheWrite5m": 0,
+        "cacheWrite1h": 0,
+        "cacheRead": 60,
+        "output": 40,
+        "thinking": 0,
+        "costUSD": null,
+        "costIsFloor": false
+      }
+    ]
+  },
+  "sessions": [
+    {
+      "id": "s1",
+      "origin": "main",
+      "first": "2026-01-01",
+      "last": "2026-01-01",
+      "calls": 3,
+      "tokens": 180,
+      "agents": [
+        "agent-1"
+      ]
+    }
+  ],
+  "models": {
+    "claude-test-1": {
+      "calls": 3,
+      "input": 30,
+      "cacheWrite5m": 0,
+      "cacheWrite1h": 0,
+      "cacheRead": 90,
+      "output": 60,
+      "thinking": 0,
+      "costUSD": null
+    }
+  }
+}

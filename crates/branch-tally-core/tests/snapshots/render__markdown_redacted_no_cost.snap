@@ -1,0 +1,27 @@
+---
+source: crates/branch-tally-core/tests/render.rs
+expression: "markdown(&s, &c, false)"
+---
+| Model | Calls | Input | Cache write | Cache read | Output | (thinking) |
+|---|--:|--:|--:|--:|--:|--:|
+| `claude-b` | 1 | 5 | 0 | 0 | 300 | 0 |
+| `claude-a` | 2 | 1,000 | 250 | 3,000 | 100 | 10 |
+| **Total** | **3** | **1,005** | **250** | **3,000** | **400** | **10** |
+
+| Session | Where | Agents | Span (UTC date) | Calls | Tokens |
+|---|---|---|---|--:|--:|
+| `s3` | main checkout | — |  →  | 1 | 0.0M |
+| `s1` | worktree | agent-1 | 2026-01-01 → 2026-01-01 | 1 | 0.1M |
+| `s2` | main checkout | — | 2026-01-02 → 2026-01-03 | 2 | 1.2M |
+
+<sub>Branch `feat/x` · 3 session(s), 1 in a worktree · 1,234 of 3 calls from subagents · identifiers redacted</sub>
+
+<details><summary>Breakdown by skill / agent</summary>
+
+| Attribution | Calls | Tokens |
+|---|--:|--:|
+| agent:x | 1 | 90 |
+| main | 2 | 10 |
+| skill | 1 | 10 |
+
+</details>

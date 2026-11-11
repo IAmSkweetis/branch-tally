@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use crate::git::{Git, GitError, Worktree};
 use crate::model::{Costs, DefaultBranchSource, Dispatch, Mode, Record, Summary, WorkBranchRule};
 use crate::pricing::PriceTable;
+use crate::redact::RedactOptions;
 use crate::sources::{ReadStats, RepoIdentity, Source, SourceError};
 
 /// A finished report: what the renderers take, plus what the read skipped.
@@ -185,6 +186,9 @@ pub struct Options<'a> {
     /// Timeline with [`WorkBranch::Default`] only: the resolved default branch. [`run`] resolves
     /// it from git when this is `None`; [`build`] (pure, no git) assumes `main` and says so.
     pub default_branch: Option<DefaultBranch>,
+    /// Redact the summary after it is built and before it is priced (#9). `None`, the default,
+    /// leaves the report untouched.
+    pub redaction: Option<RedactOptions>,
 }
 
 impl Default for Options<'_> {
@@ -201,7 +205,15 @@ impl<'a> Options<'a> {
             mode,
             work_branch: WorkBranch::Default,
             default_branch: None,
+            redaction: None,
         }
+    }
+
+    /// Redact identifying detail from the summary. Costs are unchanged.
+    #[must_use]
+    pub fn with_redaction(mut self, redaction: RedactOptions) -> Self {
+        self.redaction = Some(redaction);
+        self
     }
 
     /// Use a custom work-branch rule (timeline mode).
@@ -326,14 +338,22 @@ fn select_for(
 /// Summarizes and prices a selection.
 fn finish(
     branch: &str,
-    mode: Mode,
+    options: &Options<'_>,
     sel: Picked,
     read_stats: ReadStats,
     table: &PriceTable,
 ) -> Report {
-    let mut summary =
-        crate::summary::summarize(branch, mode, &sel.selected, sel.unattributed, sel.ambiguous);
+    let mut summary = crate::summary::summarize(
+        branch,
+        options.mode,
+        &sel.selected,
+        sel.unattributed,
+        sel.ambiguous,
+    );
     summary.work_branch = sel.work_rule;
+    if let Some(redaction) = options.redaction {
+        summary = crate::redact::redact(summary, redaction);
+    }
     let costs = crate::pricing::price(&summary, table);
     Report {
         branch: branch.to_owned(),
@@ -389,7 +409,7 @@ pub fn build(
             read_stats,
         });
     }
-    Ok(finish(branch, options.mode, sel, read_stats, table))
+    Ok(finish(branch, options, sel, read_stats, table))
 }
 
 /// Everything read from live transcripts, before attribution.
@@ -659,7 +679,7 @@ pub fn run_from_ledger(
     if sel.selected.is_empty() {
         return Err(ReportError::NoRecords { branch, read_stats });
     }
-    let mut report = finish(&branch, options.mode, sel, read_stats, table);
+    let mut report = finish(&branch, options, sel, read_stats, table);
     report.worktrees_unavailable = unavailable;
     report.ledger = Some(info);
     Ok(report)

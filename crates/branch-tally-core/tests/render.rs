@@ -93,6 +93,7 @@ fn sample() -> (Summary, Costs) {
         ],
         subagents: branch_tally_core::model::SubagentSummary::default(),
         work_branch: None,
+        redacted: false,
     };
     // 0.125 and 2.675 are ties for two decimals: 0.125 is exact (half-even gives 0.12), 2.675 is
     // 2.67499999... in binary (gives 2.67).
@@ -1144,4 +1145,214 @@ fn json_states_the_work_branch_rule_only_when_there_is_one() {
     let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
     assert_eq!(v["workBranch"]["kind"], "custom");
     assert_eq!(v["workBranch"]["pattern"], "^f\"x");
+}
+
+// ---- redacted output (#9) -------------------------------------------------------------------
+// `redact` is a core stage that runs before render; these summaries are built by hand the way it
+// leaves them: generic ids and names, dates instead of timestamps, `redacted` set.
+
+fn redacted_sample() -> (Summary, Costs) {
+    let (mut s, c) = sample();
+    s.redacted = true;
+    s.sessions = vec![
+        (
+            SessionId::new("s1"),
+            session(
+                "2026-01-01",
+                "2026-01-01",
+                "worktree-1",
+                50_000,
+                1,
+                &["agent-1"],
+            ),
+        ),
+        (
+            SessionId::new("s2"),
+            session("2026-01-02", "2026-01-03", "main", 1_234_567, 2, &[]),
+        ),
+        (SessionId::new("s3"), session("", "", "main", 10, 1, &[])),
+    ];
+    (s, c)
+}
+
+#[test]
+fn redacted_markdown_with_cost_is_pinned() {
+    let (s, c) = redacted_sample();
+    insta::assert_snapshot!("markdown_redacted_cost", markdown(&s, &c, true));
+}
+
+#[test]
+fn redacted_markdown_without_cost_is_pinned() {
+    let (s, c) = redacted_sample();
+    insta::assert_snapshot!("markdown_redacted_no_cost", markdown(&s, &c, false));
+}
+
+#[test]
+fn redacted_json_is_pinned() {
+    let (s, c) = redacted_sample();
+    insta::assert_snapshot!("json_redacted", json(&s, &c));
+}
+
+#[test]
+fn redacted_output_says_so_and_prints_dates_whole() {
+    let (s, c) = redacted_sample();
+    for show_cost in [true, false] {
+        let md = markdown(&s, &c, show_cost);
+        let note = footnote_line(&md);
+        assert!(note.contains(" \u{b7} identifiers redacted"), "{note}");
+        assert!(md.contains("| Span (UTC date) |"), "{md}");
+        assert!(md.contains("| 2026-01-02 \u{2192} 2026-01-03 |"), "{md}");
+        // An empty date stays empty, as the clock span does today.
+        assert!(md.contains("|  \u{2192}  |"), "{md}");
+    }
+    assert!(json(&s, &c).contains("\n  \"redacted\": true,\n"));
+}
+
+#[test]
+fn unredacted_json_has_no_redacted_key() {
+    let (s, c) = sample();
+    assert!(!json(&s, &c).contains("redacted"));
+}
+
+#[test]
+fn unredacted_markdown_has_no_redaction_note_and_keeps_the_clock_span() {
+    let (s, c) = sample();
+    let md = markdown(&s, &c, true);
+    assert!(!md.contains("redacted"));
+    assert!(md.contains("| Span (UTC) |"));
+}
+
+// ---- escaping transcript-derived strings (#39) ----------------------------------------------
+// Model ids, the branch, session ids, agent, attribution, worktree and subagent names come from
+// transcripts. A `|`, a backtick, `<`/`>`, `&`, a backslash before a pipe or a newline in any of
+// them must not end a cell, open a code span or put raw HTML into the PR body.
+
+/// The cells of a GFM table row as cmark-gfm splits them: a backslash escapes the next character,
+/// so only an unescaped `|` is a delimiter. Returns the number of delimiters.
+fn unescaped_pipes(line: &str) -> usize {
+    let mut count = 0;
+    let mut chars = line.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => {
+                chars.next();
+            }
+            '|' => count += 1,
+            _ => {}
+        }
+    }
+    count
+}
+
+fn hostile_sample() -> (Summary, Costs) {
+    let (mut s, mut c) = sample();
+    "feat/`x`|<b>".clone_into(&mut s.branch);
+    s.by_model = vec![
+        ("m|pipe".to_owned(), bucket(1, 0, 0, 0, 50, 0, 1)),
+        ("`tick".to_owned(), bucket(1, 0, 0, 0, 40, 0, 1)),
+        ("m<b>&".to_owned(), bucket(1, 0, 0, 0, 30, 0, 1)),
+        (r"m\|bs".to_owned(), bucket(1, 0, 0, 0, 20, 0, 1)),
+        ("m\nnl".to_owned(), bucket(1, 0, 0, 0, 10, 0, 1)),
+    ];
+    c.by_model = s.by_model.iter().map(|(m, _)| (m.clone(), None)).collect();
+    s.by_attribution = vec![
+        ("agent:<x>|y".to_owned(), bucket(0, 0, 0, 0, 30, 0, 1)),
+        ("skill:`z`".to_owned(), bucket(0, 0, 0, 0, 20, 0, 1)),
+        (r"back\slash|".to_owned(), bucket(0, 0, 0, 0, 10, 0, 1)),
+    ];
+    s.sessions = vec![(
+        SessionId::new("ab|`<x"),
+        session(
+            "2026-01-01T10:00:00Z",
+            "2026-01-01T10:30:00Z",
+            "main",
+            10,
+            1,
+            &["a|b", "`c`", "<d>", "e&f"],
+        ),
+    )];
+    s.subagents = SubagentSummary {
+        rows: vec![sub_row(
+            Workspace::worktree("`wt|"),
+            "<img src=x>|`",
+            1,
+            1,
+            &["x"],
+        )],
+        ..SubagentSummary::default()
+    };
+    (s, c)
+}
+
+#[test]
+fn every_table_row_keeps_its_column_count_whatever_the_names_contain() {
+    let (s, c) = hostile_sample();
+    for show_cost in [true, false] {
+        let md = markdown(&s, &c, show_cost);
+        let mut columns = None;
+        for line in md.lines() {
+            if !line.starts_with('|') {
+                columns = None;
+                continue;
+            }
+            let pipes = unescaped_pipes(line);
+            let expected = *columns.get_or_insert(pipes);
+            assert_eq!(
+                pipes, expected,
+                "row splits differently from its header: {line}\n{md}"
+            );
+        }
+    }
+}
+
+#[test]
+fn code_span_cells_escape_pipes_and_fence_past_backticks() {
+    let (s, c) = hostile_sample();
+    let md = markdown(&s, &c, false);
+    for cell in [
+        r"| `m\|pipe` |",
+        "| `` `tick `` |",
+        "| `m<b>&` |",
+        r"| `m\\\|bs` |",
+        "| `m nl` |",
+        r"| ``ab\|`<x`` |",
+        r"| worktree `` `wt\| `` |",
+    ] {
+        assert!(md.contains(cell), "missing {cell}\n{md}");
+    }
+}
+
+#[test]
+fn text_cells_escape_pipes_backticks_angle_brackets_and_ampersands() {
+    let (s, c) = hostile_sample();
+    let md = markdown(&s, &c, false);
+    for cell in [
+        r"| &lt;d&gt;, \`c\`, a\|b, e&amp;f |",
+        r"| agent:&lt;x&gt;\|y |",
+        r"| skill:\`z\` |",
+        r"| back\\slash\| |",
+        r"| &lt;img src=x&gt;\|\` |",
+    ] {
+        assert!(md.contains(cell), "missing {cell}\n{md}");
+    }
+    assert!(!md.contains("<img"), "{md}");
+    assert!(!md.contains("<d>"), "{md}");
+}
+
+#[test]
+fn the_branch_is_a_code_span_in_the_footnote_and_the_subagent_heading() {
+    let (s, c) = hostile_sample();
+    let md = markdown(&s, &c, false);
+    assert!(md.contains("<sub>Branch ``feat/`x`|<b>`` \u{b7}"), "{md}");
+    assert!(
+        md.contains("### Subagent usage (rolled up to ``feat/`x`|<b>``)"),
+        "{md}"
+    );
+}
+
+#[test]
+fn hostile_names_markdown_is_pinned() {
+    let (s, c) = hostile_sample();
+    insta::assert_snapshot!("markdown_hostile_names_cost", markdown(&s, &c, true));
+    insta::assert_snapshot!("markdown_hostile_names_no_cost", markdown(&s, &c, false));
 }
