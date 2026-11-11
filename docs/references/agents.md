@@ -68,7 +68,7 @@ orchestrator does when a human directs it. The change lands before the work that
 | `crates/branch-tally-core/tests/<module>.rs` | whoever owns that module |
 | `tests/fixtures/<harness>/**` | Harness Source Author for that harness |
 | `crates/branch-tally/**` (except `Cargo.toml`) | CLI Builder |
-| `plugin/**`, `action.yml`, `action/**`, `examples/**` | Integration Author |
+| `plugin/**`, `action.yml`, `action/**`, `examples/**`, `install.sh`, `install.ps1`, `tests/install/**` | Integration Author |
 | `data/**` | Core Implementer holding the `pricing` slice |
 | every `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `deny.toml`, `cliff.toml` | Workspace Config Steward |
 | `justfile`, `scripts/**` (including every Python script), `.githooks/**`, `.github/**`, `.claude/skills/**`, lint, format and runner config | Repository Tooling Steward |
