@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use branch_tally_core::config::{self, Flags, Format};
 use branch_tally_core::git::{Git, SystemGit, normalize_path};
-use branch_tally_core::ledger::{Identity, SystemClock};
+use branch_tally_core::ledger::{CAPTURES_PATH, CaptureReadStats, Identity, SystemClock};
 use branch_tally_core::model::Mode;
 use branch_tally_core::pr::{PrError, PrOutcome, SystemGh, update_pr};
 use branch_tally_core::redact::RedactOptions;
@@ -148,6 +148,7 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), String> {
         note_ledger(ledger);
     }
     note_skipped(&report.read_stats);
+    note_captures(&report.capture_stats);
     for (model, _) in report
         .costs
         .by_model
@@ -219,6 +220,7 @@ pub(crate) fn record(args: &RecordArgs) -> Result<(), String> {
         describe(&e, false)
     })?;
     note_skipped(&recorded.read_stats);
+    note_captures(&recorded.capture_stats);
     if recorded.worktrees_unavailable.is_some() {
         stderr("note: git worktree list was unavailable, so worktree recovery was skipped");
     }
@@ -340,6 +342,30 @@ fn note_skipped(stats: &ReadStats) {
         .collect();
     stderr(&format!(
         "note: skipped {total} transcript record(s): {}",
+        detail.join(", ")
+    ));
+}
+
+/// Governance II for the hook captures: lines of `.tally/captures.jsonl` that could not be used.
+/// Counts and the file's name only, never line content. Duplicates are left out: racing hooks and
+/// union merges make them routine, and the reader already collapsed them.
+fn note_captures(stats: &CaptureReadStats) {
+    let skipped = [
+        (stats.malformed, "malformed"),
+        (stats.unsupported_version, "unsupported version"),
+        (stats.unknown_kind, "unknown kind"),
+    ];
+    let total: u64 = skipped.iter().map(|(n, _)| n).sum();
+    if total == 0 {
+        return;
+    }
+    let detail: Vec<String> = skipped
+        .iter()
+        .filter(|(n, _)| *n > 0)
+        .map(|(n, what)| format!("{n} {what}"))
+        .collect();
+    stderr(&format!(
+        "note: skipped {total} capture line(s) in {CAPTURES_PATH}: {}",
         detail.join(", ")
     ));
 }

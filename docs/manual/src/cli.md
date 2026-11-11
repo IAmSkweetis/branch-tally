@@ -273,6 +273,7 @@ identifiers.
 | ------- | ------- |
 | `warning: no price for <model> in the price table (as of <date>); the total is a floor` | A model has no price. Its tokens are counted, its cost is `—`, and the total is "at least". |
 | `note: skipped N transcript record(s): …` | Transcript lines that could not be used: malformed lines, records without a request id, or synthetic records. Counted, not hidden. |
+| `note: skipped N capture line(s) in .tally/captures.jsonl: …` | Hook capture lines that were malformed, written by an unsupported version, or of an unknown kind. Counted, not hidden. Printed by `report` and `record`. |
 | `note: git worktree list was unavailable, so worktree recovery was skipped` | `git worktree list` failed, so subagent calls in worktrees could not be recovered. |
 | The ledger notes | See [Report from the ledger](ledger.md#report-from-the-ledger). |
 
