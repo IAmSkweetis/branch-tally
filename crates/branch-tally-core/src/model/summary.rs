@@ -152,6 +152,9 @@ pub struct HeuristicBreakdown {
     pub timeline_forward: HeuristicCount,
     /// [`super::BranchBasis::TimelineCarried`].
     pub timeline_carried: HeuristicCount,
+    /// [`super::BranchBasis::Captured`]: placed by a captured hook event.
+    #[serde(default)]
+    pub captured: HeuristicCount,
     /// [`super::BranchBasis::TimelineAmbiguous`] plus [`super::BranchBasis::SubagentUnlinked`]:
     /// records that could not be placed with certainty. Any call here makes the total a floor.
     pub ambiguous: HeuristicCount,

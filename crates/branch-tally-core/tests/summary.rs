@@ -578,6 +578,22 @@ fn heuristics_count_each_selected_record_under_exactly_one_field() {
 }
 
 #[test]
+fn captured_records_are_counted_under_the_captured_heuristic() {
+    let b = |n, kept| {
+        based(
+            rec("s", "feat/x").usage(tok(n), None),
+            BranchBasis::Captured,
+            kept,
+        )
+    };
+    let recs = vec![b(3, Selection::Exact), b(4, Selection::Exact)];
+    let h = run_h(recs, Mode::Claim, hc(0, 0)).footnote.heuristics;
+    assert_eq!(h.captured, hc(2, 7));
+    assert_eq!(h.session_claim, hc(0, 0));
+    assert!(!h.any_ambiguous());
+}
+
+#[test]
 fn ambiguous_comes_from_the_argument_and_is_not_double_counted() {
     let recs = vec![based(
         rec("s", "feat/x").usage(tok(5), None),

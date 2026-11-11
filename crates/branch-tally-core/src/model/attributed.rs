@@ -35,11 +35,24 @@ pub enum BranchBasis {
     /// parseable timestamp, or same-timestamp records on conflicting work branches). It keeps
     /// its raw stamp and is **counted as ambiguous**, never guessed.
     TimelineAmbiguous,
+    /// The branch came from a captured hook event (`.tally/captures.jsonl`) rather than from the
+    /// transcript stamp or `git worktree list`: a captured session or subagent-stop event
+    /// recovered a missing or `worktree-agent-<id>` stamp. Captured data is authoritative, but
+    /// the report must say it was used (Governance II).
+    Captured,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn captured_basis_serializes_kebab_case() {
+        assert_eq!(
+            serde_json::to_string(&BranchBasis::Captured).unwrap(),
+            "\"captured\""
+        );
+    }
 
     #[test]
     fn timeline_bases_serialize_kebab_case() {
