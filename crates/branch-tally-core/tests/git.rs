@@ -73,6 +73,32 @@ fn main_checkout_from_worktree_is_the_main_repo() {
 }
 
 #[test]
+fn toplevel_from_a_subdirectory_of_the_main_checkout_is_its_root() {
+    let f = fixture();
+    let sub = f.main.join("a").join("b");
+    std::fs::create_dir_all(&sub).expect("mkdir");
+    assert_eq!(SystemGit.toplevel(&sub).expect("toplevel"), f.main);
+    assert_eq!(SystemGit.toplevel(&f.main).expect("root"), f.main);
+}
+
+#[test]
+fn toplevel_from_a_subdirectory_of_a_linked_worktree_is_the_worktree_root() {
+    let f = fixture();
+    let sub = f.wt.join("deep").join("er");
+    std::fs::create_dir_all(&sub).expect("mkdir");
+    let got = SystemGit.toplevel(&sub).expect("toplevel");
+    assert_eq!(got, f.wt);
+    assert_ne!(got, f.main);
+}
+
+#[test]
+fn toplevel_outside_a_repo_is_a_typed_error() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let err = SystemGit.toplevel(tmp.path()).expect_err("not a repo");
+    assert!(matches!(err, GitError::Failed { .. }), "got {err:?}");
+}
+
+#[test]
 fn main_checkout_falls_back_outside_a_repo() {
     let tmp = tempfile::tempdir().expect("tempdir");
     assert_eq!(SystemGit.main_checkout(tmp.path()), tmp.path());
