@@ -22,7 +22,7 @@ plugin or extension for different harnesses that are specific to a branch. But n
 how I think most folks are using AI in their workflows. And there is definitely a gap on a
 larger project calculation.
 
-So I had created a [python script](reference/token_report.py) and added some instructions to a skill
+So I had created a python script and added some instructions to a skill
 to include the usage costs into my PRs.
 
 The goal with branch-tally is to expand on this idea. And honestly, fix some bugs that I've been

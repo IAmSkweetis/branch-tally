@@ -353,13 +353,13 @@ The default is every branch except the repository's default branch and `worktree
 The same choices are `--mode claim|strict|timeline` and `--format md|json`; `--strict`,
 `--timeline`, `--md` and `--json` stay as shorthands, and a shorthand cannot be combined with its
 long form, even when they agree (exit 2). `--cost` pairs with `--no-cost`, `--redact` with
-`--no-redact` and `--keep-names` with `--redact-names` (#9; the README's "Redaction" section
-describes them). `--work-branch` is a
-usage error unless the *effective* mode is timeline, whether that came from `--mode timeline`,
-`--timeline` or a config `mode = "timeline"`; a work-branch set only in the config file is ignored
-outside timeline mode. Defaults live in a user config file (flag > file > default); the README's
-"Config file" section has its location and keys, `branch-tally config init` writes a starter file,
-and `branch-tally config show` prints what applies.
+`--no-redact` and `--keep-names` with `--redact-names` (#9; the manual's
+[CLI reference](../manual/src/cli.md#redaction) describes them). `--work-branch` is a usage error
+unless the *effective* mode is timeline, whether that came from `--mode timeline`, `--timeline` or a
+config `mode = "timeline"`; a work-branch set only in the config file is ignored outside timeline
+mode. Defaults live in a user config file (flag > file > default); the manual's
+[Config reference](../manual/src/config.md) has its location and keys, `branch-tally config init`
+writes a starter file, and `branch-tally config show` prints what applies.
 
 It must run on the machine that did the work, and **while every agent worktree still exists**
 until issue #6 removes that dependency. Report the number as a floor ("at least $X").
