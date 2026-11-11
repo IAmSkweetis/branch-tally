@@ -149,9 +149,13 @@ When reading the output:
 - **It must run on the machine that did the work**, within `cleanupPeriodDays` (default 30).
 - **The session's cwd must have been this repository.** Work started from another directory is
   filed under that directory's transcripts and is invisible here.
-- **It's a floor.** Until #6 and #7 land, worktree subagents and multi-branch sessions are
-  under-counted. Say "at least $X". Where the number looks wrong to the user, that's a finding:
-  offer to open an issue for it.
+- **Read the label as printed.** The total says "at least $X" only when some calls can't be
+  attributed with certainty or a model is unpriced. A ledger missing entries can understate the
+  total without that label, so don't present an unlabelled number as complete. `report
+  --from-ledger` also prints `note: unattributed counts unavailable from the ledger`, because the
+  ledger holds only this branch's calls (see the manual's
+  [ledger chapter](../../../docs/manual/src/ledger.md)).
+  Where the number looks wrong to the user, that's a finding: offer to open an issue for it.
 
 If `record` or `report` fails, report what it said and move on. A missing table is worth reporting,
 never worth failing the PR over.
