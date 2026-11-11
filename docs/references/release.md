@@ -3,8 +3,9 @@
 How a version of branch-tally gets from `main` to users.
 
 > **Status:** GitHub Releases ship six prebuilt binaries with release notes, `SHA256SUMS` and build
-> provenance attestations (#10). Not built yet, each a follow-up issue: publishing to crates.io and
-> `cargo binstall`, Homebrew, npm, shell and PowerShell installers, and the GitHub Action's
+> provenance attestations (#10), plus one-line shell and PowerShell installers (#46), proven on
+> clean Linux, macOS and Windows runners after every release. Not built yet, each a follow-up
+> issue: publishing to crates.io and `cargo binstall`, Homebrew, npm, and the GitHub Action's
 > floating major tag (`v1`).
 
 ## Principles (decided)
@@ -72,11 +73,19 @@ Every release builds. There is no label or input to turn that off.
 | release | `version` | Checks the commit is releasable, works out the version, writes the release notes (also to the run summary) | A dispatch is off `main` or the commit has no green CI push run, no commits since the last tag (dispatch), a malformed version, or the tag exists |
 | release | `release` | Creates the tag on the exact commit through the API, then a **draft** GitHub release with the notes | The tag exists on a different commit |
 | build | `build` (x6) | Installs the pinned toolchain and the target, builds with `--locked`, smoke-tests the binary, packages it | Compilation fails, `--version` is not `branch-tally X.Y.Z`, `report` fails on the fixtures, or packaging fails |
-| release | `publish` | Downloads the six archives, writes `SHA256SUMS`, attests every archive, uploads them to the draft, then publishes it as **latest** | Fewer than six archives, or an upload or attestation error |
+| release | `publish` | Downloads the six archives, fetches `install.sh` and `install.ps1` from the tagged commit, writes `SHA256SUMS`, attests the archives and installers, uploads them to the draft, then publishes it as **latest** | Fewer than six archives, an installer missing at the tagged commit, or an upload or attestation error |
+| install-check | `resolve`, `check` (x6) | After a successful `Release` run, resolves the released tag and runs the real one-liners from `releases/latest/download` on a clean runner of each target ([Installing](#installing)) | The installed binary's `--version` is not the released tag, the default directory was not used, or the latest release has no installer |
 
 The order is deliberate. The tag exists before the build, so a failed build leaves a draft release
 and a tag, and the next release still bumps from that tag. A draft is invisible and never "latest",
 so **latest always has binaries**.
+
+`install-check.yml` is a separate workflow started by `workflow_run` when `Release` completes (the
+same trigger and guards as `release.yml`: this repository only, successful runs only, no checkout,
+no artifacts read). It also takes a `workflow_dispatch` with an optional `version`, to re-check a
+release by hand. If the `Release` run succeeded without publishing (a newer run released past its
+commit), it says so in a notice and checks whatever is latest; a latest release that predates the
+installers is skipped with a notice, never failed.
 
 ### Superseded runs
 
@@ -167,6 +176,59 @@ runs on a **pull request** that changes `build.yml`, `release.yml`, `scripts/pac
 matrix with the dummy version `v0.0.0` and uploads nothing to any release. The lockfile is on the
 list because a dependency can break one target only: `ring` (rustls's crypto, added in #53)
 compiles C, and nothing outside the release build compiles for musl.
+
+## Installing
+
+Two installers, `install.sh` and `install.ps1`, live at the repository root and are attached to
+every release (checksummed in `SHA256SUMS` and attested, like the archives). The one-liners:
+
+```bash
+curl -LsSf https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install.sh | sh
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install.ps1 | iex"
+```
+
+| Flag (`install.sh`) | Parameter (`install.ps1`) | Environment variable | Meaning |
+| ------------------- | ------------------------- | -------------------- | ------- |
+| `--version <vX.Y.Z>` | `-Version` | `BRANCH_TALLY_INSTALL_VERSION` | Install that release instead of the latest |
+| `--to <dir>` | `-To` | `BRANCH_TALLY_INSTALL_DIR` | Install directory |
+| none | none | `BRANCH_TALLY_INSTALL_BASE_URL` | Releases URL, default `https://github.com/IAmSkweetis/branch-tally/releases`. The tests point it at a `file://` fake release |
+
+With nothing set, the binary goes to `~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows). The
+installer **never edits PATH**: when the directory is not on it, it prints a hint. On success it
+prints the installed path and the binary's `--version`. With options, use the flags
+(`curl ... | sh -s -- --version v0.1.0 --to ~/bin`). `irm | iex` cannot pass parameters, so on
+Windows use the environment variables.
+
+**Verification.** The installer downloads the archive for the platform and checks it against the
+release's `SHA256SUMS`, and stops on a mismatch. That is the whole of it: no dependency beyond
+`curl` or `wget`, `sha256sum` or `shasum`, and `tar` on Linux and macOS, and none beyond built-in
+PowerShell on Windows (Windows PowerShell 5.1 and PowerShell 7 both work). In particular it does
+not use the `gh` CLI. A checksum from the same release only catches a corrupt or truncated
+download; for provenance, run `gh attestation verify` by hand
+([Verifying a download](#verifying-a-download)).
+
+### Proving an install works
+
+Two layers. `installers.yml` runs on a pull request or push to `main` that changes `install.sh`,
+`install.ps1`, `tests/install/**`, the `scripts/lint-install.*` and `scripts/test-install.sh`
+helpers or the workflow itself: ShellCheck on the shell files, PSScriptAnalyzer (pinned, warnings
+fail) on the PowerShell files, and the two offline test scripts (`sh tests/install/install_test.sh`,
+`pwsh -NoProfile -File tests/install/install_test.ps1`) on Ubuntu, macOS and Windows. It is
+path-filtered like `workflow-audit.yml` and none of its jobs are required checks, so a pull request
+that touches none of those paths is not left waiting. Locally: `just lint-install` and
+`just test-install`, which print a skip when `shellcheck` or `pwsh` is absent and fail when `CI` is
+set.
+
+Then `install-check.yml` proves the published thing, on six runners (`ubuntu-24.04`,
+`ubuntu-24.04-arm`, `macos-15`, `macos-15-intel`, `windows-latest`, `windows-11-arm`), none of
+which checks out the repository. Each asserts the default directory is empty, runs the real
+one-liner, checks the binary landed in the default directory and that `--version` equals the tag
+just released, then repeats with `--version` and a custom directory. Windows does the default
+install twice, under Windows PowerShell 5.1 and under PowerShell 7. A failure here comes after the
+release is public: fix forward with a new release.
 
 ## Verifying a download
 

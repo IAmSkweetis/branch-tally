@@ -26,7 +26,7 @@ default:
     @{{ just_executable() }} --list
 
 # Every gate CI runs (everything except fmt and audit-workflows).
-ci: lint lint-md test test-scripts test-py secret-scan
+ci: lint lint-md test test-scripts test-py lint-install test-install secret-scan
 
 # Prove the commit-message and branch-name checks reject what they must and accept what they should.
 [unix]
@@ -38,6 +38,26 @@ test-scripts: (_require "sh" "install a POSIX sh")
 [windows]
 test-scripts: (_require "git" "install Git for Windows: https://gitforwindows.org")
     @$sh = (Get-Command sh -ErrorAction SilentlyContinue).Source; if (-not $sh) { $sh = Join-Path (git --exec-path) '../../../bin/sh.exe' }; if (-not (Test-Path $sh)) { [Console]::Error.WriteLine('error: sh not found on PATH or beside git; install Git for Windows: https://gitforwindows.org'); exit 1 }; & $sh scripts/test-checks.sh; exit $LASTEXITCODE
+
+# ShellCheck on install.sh and its test, PSScriptAnalyzer on the .ps1 files. A missing tool is a printed skip locally and an error when CI is set.
+[unix]
+lint-install: (_require "sh" "install a POSIX sh")
+    sh scripts/lint-install.sh
+
+# Same sh lookup as test-scripts.
+[windows]
+lint-install: (_require "git" "install Git for Windows: https://gitforwindows.org")
+    @$sh = (Get-Command sh -ErrorAction SilentlyContinue).Source; if (-not $sh) { $sh = Join-Path (git --exec-path) '../../../bin/sh.exe' }; if (-not (Test-Path $sh)) { [Console]::Error.WriteLine('error: sh not found on PATH or beside git; install Git for Windows: https://gitforwindows.org'); exit 1 }; & $sh scripts/lint-install.sh; exit $LASTEXITCODE
+
+# Run the installers' offline tests under sh and pwsh. A missing pwsh is a printed skip locally and an error when CI is set.
+[unix]
+test-install: (_require "sh" "install a POSIX sh")
+    sh scripts/test-install.sh
+
+# Same sh lookup as test-scripts.
+[windows]
+test-install: (_require "git" "install Git for Windows: https://gitforwindows.org")
+    @$sh = (Get-Command sh -ErrorAction SilentlyContinue).Source; if (-not $sh) { $sh = Join-Path (git --exec-path) '../../../bin/sh.exe' }; if (-not (Test-Path $sh)) { [Console]::Error.WriteLine('error: sh not found on PATH or beside git; install Git for Windows: https://gitforwindows.org'); exit 1 }; & $sh scripts/test-install.sh; exit $LASTEXITCODE
 
 # nextest over the workspace, then doctests (nextest does not run them). Zero tests is a failure.
 test filter="": (_require-rust "cargo-nextest" "install it: cargo install cargo-nextest --locked")

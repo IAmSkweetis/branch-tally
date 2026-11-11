@@ -1,0 +1,177 @@
+name: Install check
+
+# Proof that the one-line installers work on a clean machine. After a release is published, every
+# supported runner runs the real one-liner from releases/latest/download, then a pinned install into
+# a custom directory, and asserts the installed binary is the release just made. No checkout: a
+# checkout would put the repository's own copy of the installer on the machine. See
+# docs/references/release.md#installing.
+
+on:
+  # zizmor: ignore[dangerous-triggers] -- workflow_run is the only way to start after the release
+  # finishes. It is safe here because the jobs run only for a successful run of this repository's
+  # own Release workflow, check out nothing, read no artifacts from it, and only ever run what the
+  # published release serves.
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release to check (e.g. v1.0.0). Leave empty to check the latest release."
+        required: false
+        default: ""
+
+permissions: {}
+
+concurrency:
+  group: install-check
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Resolve the release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository)
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      EVENT: ${{ github.event_name }}
+      REQUESTED: ${{ inputs.version }}
+      RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Find the release to check
+        id: tag
+        run: |
+          set -euo pipefail
+          if [ -n "$REQUESTED" ]; then
+            tag="$REQUESTED"
+            gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName > /dev/null
+          else
+            tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          fi
+          assets=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          if [ "$EVENT" = "workflow_run" ]; then
+            # The Release run succeeds without publishing when a newer run already released past its
+            # commit. Then "latest" is not from this run: say so, and still check it if it can be.
+            tag_sha=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${tag}" --jq .sha)
+            if [ "$tag_sha" != "$RUN_SHA" ]; then
+              echo "::notice title=Nothing new published::The Release run did not publish ${RUN_SHA}; latest is ${tag}, so that is what is checked."
+            fi
+            if ! printf '%s\n' "$assets" | grep -qx 'install.sh'; then
+              if [ "$tag_sha" != "$RUN_SHA" ]; then
+                echo "::notice title=Nothing to check::${tag} predates the installers; skipping."
+                echo "tag=" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              echo "::error::${tag} was just published without install.sh."
+              exit 1
+            fi
+          elif ! printf '%s\n' "$assets" | grep -qx 'install.sh'; then
+            echo "::error::${tag} has no install.sh asset."
+            exit 1
+          fi
+          echo "Checking ${tag}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+  check:
+    name: install (${{ matrix.os }})
+    needs: resolve
+    if: needs.resolve.outputs.tag != ''
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+          - macos-15
+          - macos-15-intel
+          - windows-latest
+          - windows-11-arm
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ needs.resolve.outputs.tag }}
+      BASE: https://github.com/${{ github.repository }}/releases
+    steps:
+      # ---- Linux and macOS ----------------------------------------------------------------
+      - name: One-liner into the default directory
+        if: runner.os != 'Windows'
+        shell: sh -e {0}
+        run: |
+          bin="$HOME/.local/bin/branch-tally"
+          if [ -e "$bin" ]; then echo "not a clean machine: $bin exists" >&2; exit 1; fi
+          curl -LsSf "${BASE}/latest/download/install.sh" | sh
+          [ -x "$bin" ] || { echo "default location not used: $bin missing" >&2; exit 1; }
+          got=$("$bin" --version)
+          want="branch-tally ${TAG#v}"
+          [ "$got" = "$want" ] || { echo "got '$got', want '$want'" >&2; exit 1; }
+          echo "ok: $got"
+
+      - name: Pinned version into a custom directory
+        if: runner.os != 'Windows'
+        shell: sh -e {0}
+        run: |
+          dir="$RUNNER_TEMP/custom bin"
+          curl -LsSf "${BASE}/download/${TAG}/install.sh" | sh -s -- --version "$TAG" --to "$dir"
+          got=$("$dir/branch-tally" --version)
+          want="branch-tally ${TAG#v}"
+          [ "$got" = "$want" ] || { echo "got '$got', want '$want'" >&2; exit 1; }
+          echo "ok: $got"
+
+      # ---- Windows: the one-liner under Windows PowerShell 5.1, then under PowerShell 7 --------
+      - name: One-liner under Windows PowerShell 5.1
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bin = Join-Path $env:USERPROFILE '.local\bin\branch-tally.exe'
+          if (Test-Path $bin) { throw "not a clean machine: $bin exists" }
+          powershell -NoProfile -ExecutionPolicy Bypass -c "irm $env:BASE/latest/download/install.ps1 | iex"
+          if ($LASTEXITCODE -ne 0) { throw "installer exited $LASTEXITCODE" }
+          if (-not (Test-Path $bin)) { throw "default location not used: $bin missing" }
+          $got = (& $bin --version) -join ''
+          $want = "branch-tally $($env:TAG.TrimStart('v'))"
+          if ($got -ne $want) { throw "got '$got', want '$want'" }
+          Write-Output "ok: $got"
+          Remove-Item $bin
+
+      - name: One-liner under PowerShell 7
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bin = Join-Path $env:USERPROFILE '.local\bin\branch-tally.exe'
+          if (Test-Path $bin) { throw "$bin was not removed by the previous step" }
+          pwsh -NoProfile -ExecutionPolicy Bypass -c "irm $env:BASE/latest/download/install.ps1 | iex"
+          if ($LASTEXITCODE -ne 0) { throw "installer exited $LASTEXITCODE" }
+          if (-not (Test-Path $bin)) { throw "default location not used: $bin missing" }
+          $got = (& $bin --version) -join ''
+          $want = "branch-tally $($env:TAG.TrimStart('v'))"
+          if ($got -ne $want) { throw "got '$got', want '$want'" }
+          Write-Output "ok: $got"
+
+      # irm | iex cannot pass parameters, so the pinned install takes its inputs from the
+      # environment, which is the documented way to use the one-liner with options.
+      - name: Pinned version into a custom directory
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:RUNNER_TEMP 'custom bin'
+          $env:BRANCH_TALLY_INSTALL_VERSION = $env:TAG
+          $env:BRANCH_TALLY_INSTALL_DIR = $dir
+          powershell -NoProfile -ExecutionPolicy Bypass -c "irm $env:BASE/download/$env:TAG/install.ps1 | iex"
+          if ($LASTEXITCODE -ne 0) { throw "installer exited $LASTEXITCODE" }
+          $got = (& (Join-Path $dir 'branch-tally.exe') --version) -join ''
+          $want = "branch-tally $($env:TAG.TrimStart('v'))"
+          if ($got -ne $want) { throw "got '$got', want '$want'" }
+          Write-Output "ok: $got"

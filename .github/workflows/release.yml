@@ -211,6 +211,7 @@ jobs:
       attestations: write # store them
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      SHA: ${{ needs.version.outputs.sha }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Download the archives
@@ -220,6 +221,22 @@ jobs:
           merge-multiple: true
           path: dist
 
+      # The installers ship as assets too, so the one-liners in docs/references/release.md resolve
+      # through releases/latest/download. They are fetched from the tagged commit through the API
+      # (no checkout needed) and must exist there: a release without them fails loudly.
+      - name: Fetch the installers from the tagged commit
+        run: |
+          set -euo pipefail
+          for f in install.sh install.ps1; do
+            gh api -H "Accept: application/vnd.github.raw" \
+              "repos/${GITHUB_REPOSITORY}/contents/${f}?ref=${SHA}" > "dist/${f}"
+            if [ ! -s "dist/${f}" ]; then
+              echo "::error::${f} is missing or empty at ${SHA}."
+              exit 1
+            fi
+          done
+
+      # The count is of archives only: the installers are not archives and never match.
       - name: Checksum
         working-directory: dist
         run: |
@@ -230,7 +247,8 @@ jobs:
             ls
             exit 1
           fi
-          sha256sum -- *.tar.gz *.zip > SHA256SUMS
+          # The installers are checksummed too: SHA256SUMS then covers every asset a user fetches.
+          sha256sum -- *.tar.gz *.zip install.sh install.ps1 > SHA256SUMS
           cat SHA256SUMS
 
       - name: Attest build provenance
@@ -239,6 +257,8 @@ jobs:
           subject-path: |
             dist/*.tar.gz
             dist/*.zip
+            dist/install.sh
+            dist/install.ps1
 
       - name: Upload to the draft release
         run: gh release upload "$VERSION" dist/* --repo "$GITHUB_REPOSITORY" --clobber
