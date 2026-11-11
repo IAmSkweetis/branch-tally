@@ -109,9 +109,22 @@ run_install() {
   rc=$?
 }
 
+# Platform fakes are plain shell variables (not per-command assignments, which a function call may
+# leave set in some shells, such as macOS's bash 3.2 running as sh). plat resets them afterwards.
+FAKE_UNAME_S=Linux
+FAKE_UNAME_M=x86_64
+FAKE_PROC_TRANSLATED=0
+
 X=x86_64-unknown-linux-musl
 # sh_run <installer args...>
 sh_run() { run_install "$shell_under_test" "$installer" "$@"; }
+# plat <uname -s> <uname -m> <proc_translated> <installer args...>: sh_run on a faked platform.
+plat() {
+  FAKE_UNAME_S=$1 FAKE_UNAME_M=$2 FAKE_PROC_TRANSLATED=$3
+  shift 3
+  sh_run "$@"
+  FAKE_UNAME_S=Linux FAKE_UNAME_M=x86_64 FAKE_PROC_TRANSLATED=0
+}
 
 # 1. Happy path: latest, custom dir.
 fresh happy
@@ -235,12 +248,21 @@ check "default dir is HOME/.local/bin" test -x "$S/home/.local/bin/branch-tally"
 fresh badplat
 mk_release "$R" v2.0.0 $X 2.0.0
 mk_latest "$R" v2.0.0
-FAKE_UNAME_S=FreeBSD sh_run --to "$D"
+plat FreeBSD x86_64 0 --to "$D"
 check "unsupported OS exits non-zero" test "$rc" -ne 0
 check "unsupported OS names the OS" contains "$err" "FreeBSD"
-FAKE_UNAME_M=riscv64 sh_run --to "$D"
+plat Linux riscv64 0 --to "$D"
 check "unsupported arch exits non-zero" test "$rc" -ne 0
 check "unsupported arch names the arch" contains "$err" "riscv64"
+
+# 8b. Git Bash, MSYS and Cygwin report a Windows uname: point at install.ps1.
+for win_uname in MINGW64_NT-10.0-26100 MSYS_NT-10.0-26100 CYGWIN_NT-10.0-26100; do
+  plat "$win_uname" x86_64 0 --to "$D"
+  check "$win_uname exits non-zero" test "$rc" -ne 0
+  check "$win_uname points at install.ps1" contains "$err" "install.ps1"
+  check "$win_uname gives the PowerShell one-liner" contains "$err" "irm https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install.ps1 | iex"
+  check "$win_uname installs nothing" test ! -e "$D/branch-tally"
+done
 
 # 9. Platform mapping: Linux arm64, macOS arm64, macOS Intel under Rosetta, native macOS Intel.
 fresh plat
@@ -249,7 +271,7 @@ while read -r p_os p_arch p_translated p_target; do
   mkdir -p "$R"
   mk_release "$R" v2.0.0 "$p_target" 2.0.0
   mk_latest "$R" v2.0.0
-  FAKE_UNAME_S=$p_os FAKE_UNAME_M=$p_arch FAKE_PROC_TRANSLATED=$p_translated sh_run --to "$D"
+  plat "$p_os" "$p_arch" "$p_translated" --to "$D"
   check "platform $p_os/$p_arch (translated=$p_translated) selects $p_target" test "$rc" -eq 0
 done <<'SPECS'
 Linux aarch64 0 aarch64-unknown-linux-musl
