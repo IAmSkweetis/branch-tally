@@ -7,6 +7,7 @@
 pub mod attribution;
 pub mod config;
 pub mod git;
+pub mod ledger;
 pub mod model;
 pub mod paths;
 pub mod pr;

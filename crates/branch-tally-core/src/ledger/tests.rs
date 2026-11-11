@@ -1,0 +1,233 @@
+use super::*;
+use crate::model::{Origin, Workspace};
+
+fn selected(id: &str, branch: &str, output: u64) -> SelectedRecord {
+    let mut r = Record::new(
+        Harness::ClaudeCode,
+        SessionId::new("sess-1"),
+        RequestId::new(id),
+        Usage {
+            input: 1,
+            cache_write_5m: 2,
+            cache_write_1h: 3,
+            cache_read: 4,
+            output,
+            thinking: Some(1),
+        },
+    );
+    r.agent_id = Some(AgentId::new("agent-1"));
+    r.ts = Some("2026-01-01T00:00:00Z".to_owned());
+    r.model = Some("claude-x".to_owned());
+    r.cwd = Some("/secret/cwd".to_owned());
+    r.git_branch = Some("raw-stamp".to_owned());
+    r.origin = Some(Origin::Main);
+    r.attribution = Attribution {
+        skill: Some("sk".to_owned()),
+        agent: Some("ag".to_owned()),
+    };
+    SelectedRecord {
+        attributed: AttributedRecord {
+            record: r,
+            branch: branch.to_owned(),
+            basis: BranchBasis::DispatcherRolledUp,
+            subagent: Some(SubagentTags {
+                workspace: Workspace::worktree("wt"),
+                subagent: "ag".to_owned(),
+                agent_id: AgentId::new("agent-1"),
+            }),
+        },
+        kept_by: Selection::SessionClaim,
+    }
+}
+
+fn path(dir: &tempfile::TempDir) -> PathBuf {
+    dir.path().join(".tally").join("ledger.jsonl")
+}
+
+#[test]
+fn entry_round_trips_stored_fields_and_drops_the_rest() {
+    let s = selected("r1", "feat/a", 5);
+    let back = LedgerEntry::from_selected(&s).to_selected();
+    let (a, b) = (&s.attributed, &back.attributed);
+    assert_eq!(b.branch, "feat/a");
+    assert_eq!(b.basis, a.basis);
+    assert_eq!(b.subagent, a.subagent);
+    assert_eq!(back.kept_by, s.kept_by);
+    assert_eq!(b.record.usage, a.record.usage);
+    assert_eq!(b.record.request_id, a.record.request_id);
+    assert_eq!(b.record.session_id, a.record.session_id);
+    assert_eq!(b.record.agent_id, a.record.agent_id);
+    assert_eq!(b.record.ts, a.record.ts);
+    assert_eq!(b.record.model, a.record.model);
+    assert_eq!(b.record.attribution, a.record.attribution);
+    assert_eq!(b.record.cwd, None);
+    assert_eq!(b.record.git_branch, None);
+    assert_eq!(b.record.origin, None);
+}
+
+#[test]
+fn missing_file_is_an_empty_ledger() {
+    let dir = tempfile::tempdir().unwrap();
+    let l = read(&path(&dir)).unwrap();
+    assert!(l.is_empty());
+    assert_eq!(*l.stats(), ReadStats::default());
+}
+
+#[test]
+fn append_creates_dir_writes_lf_lines_and_is_idempotent() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = path(&dir);
+    let recs = [selected("r1", "b", 1), selected("r2", "b", 2)];
+    let out = append(&p, &recs, &Identity).unwrap();
+    assert_eq!(
+        out,
+        AppendOutcome {
+            appended: 2,
+            skipped: 0
+        }
+    );
+    let text = std::fs::read_to_string(&p).unwrap();
+    assert_eq!(text.lines().count(), 2);
+    assert!(text.ends_with('\n') && !text.contains('\r'));
+    let again = append(&p, &recs, &Identity).unwrap();
+    assert_eq!(
+        again,
+        AppendOutcome {
+            appended: 0,
+            skipped: 2
+        }
+    );
+    assert_eq!(std::fs::read_to_string(&p).unwrap(), text);
+}
+
+#[test]
+fn append_skips_duplicate_ids_within_one_call() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = path(&dir);
+    let recs = [selected("r1", "b", 1), selected("r1", "b", 1)];
+    let out = append(&p, &recs, &Identity).unwrap();
+    assert_eq!(
+        out,
+        AppendOutcome {
+            appended: 1,
+            skipped: 1
+        }
+    );
+}
+
+#[test]
+fn lines_have_stable_key_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = path(&dir);
+    append(&p, &[selected("r1", "b", 1)], &Identity).unwrap();
+    let text = std::fs::read_to_string(&p).unwrap();
+    assert!(
+        text.starts_with(
+            r#"{"v":1,"request_id":"r1","harness":"claude-code","session_id":"sess-1""#
+        )
+    );
+}
+
+#[test]
+fn append_after_a_file_without_trailing_newline_starts_a_new_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = path(&dir);
+    append(&p, &[selected("r1", "b", 1)], &Identity).unwrap();
+    let text = std::fs::read_to_string(&p).unwrap();
+    std::fs::write(&p, text.trim_end()).unwrap();
+    append(&p, &[selected("r2", "b", 1)], &Identity).unwrap();
+    let l = read(&p).unwrap();
+    assert_eq!(l.entries().len(), 2);
+    assert_eq!(l.stats().malformed, 0);
+}
+
+#[test]
+fn malformed_and_unsupported_lines_are_counted_with_line_numbers() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = path(&dir);
+    append(&p, &[selected("r1", "b", 1)], &Identity).unwrap();
+    let mut text = std::fs::read(&p).unwrap();
+    text.extend_from_slice(b"not json at all\n");
+    text.extend_from_slice(b"{\"v\":1}\n");
+    text.extend_from_slice(b"{\"v\":99,\"request_id\":\"x\"}\n");
+    text.extend_from_slice(&[0xff, 0xfe, b'\n']);
+    text.extend_from_slice(b"\n");
+    std::fs::write(&p, text).unwrap();
+    let l = read(&p).unwrap();
+    let s = l.stats();
+    assert_eq!(l.entries().len(), 1);
+    assert_eq!((s.lines, s.malformed, s.unsupported_version), (5, 3, 1));
+    assert_eq!(s.bad_line_numbers, vec![2, 3, 4, 5]);
+}
+
+#[test]
+fn identical_duplicates_collapse_and_are_counted_as_duplicates() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = path(&dir);
+    append(&p, &[selected("r1", "b", 1)], &Identity).unwrap();
+    let text = std::fs::read_to_string(&p).unwrap();
+    std::fs::write(&p, format!("{text}{text}")).unwrap();
+    let l = read(&p).unwrap();
+    let s = l.stats();
+    assert_eq!((l.entries().len(), s.duplicates, s.conflicts), (1, 1, 0));
+}
+
+#[test]
+fn conflicting_duplicates_resolve_deterministically_and_are_counted() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = path(&dir);
+    let a = serde_json::to_string(&LedgerEntry::from_selected(&selected("r1", "b", 1))).unwrap();
+    let b = serde_json::to_string(&LedgerEntry::from_selected(&selected("r1", "b", 9))).unwrap();
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(&p, format!("{a}\n{b}\n")).unwrap();
+    let one = read(&p).unwrap();
+    std::fs::write(&p, format!("{b}\n{a}\n")).unwrap();
+    let two = read(&p).unwrap();
+    assert_eq!(one.stats().conflicts, 1);
+    assert_eq!(one.entries().len(), 1);
+    assert_eq!(one.entries(), two.entries());
+}
+
+struct Mask;
+impl Redact for Mask {
+    fn redact(&self, mut e: LedgerEntry) -> LedgerEntry {
+        e.session_id = SessionId::new("masked");
+        e
+    }
+}
+
+#[test]
+fn redaction_applies_to_every_entry_before_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = path(&dir);
+    append(&p, &[selected("r1", "b", 1)], &Mask).unwrap();
+    let l = read(&p).unwrap();
+    assert_eq!(l.entries()[0].session_id.as_str(), "masked");
+}
+
+#[test]
+fn union_counts_each_side_and_prefers_the_ledger_copy() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = path(&dir);
+    append(
+        &p,
+        &[selected("r1", "b", 1), selected("r2", "b", 2)],
+        &Identity,
+    )
+    .unwrap();
+    let l = read(&p).unwrap();
+    let live = [
+        selected("r2", "b", 2),
+        selected("r3", "b", 3),
+        selected("r3", "b", 3),
+    ];
+    let u = union(&l, &live);
+    assert_eq!((u.ledger_only, u.live_only, u.in_both), (1, 1, 1));
+    let ids: Vec<&str> = u
+        .records
+        .iter()
+        .map(|s| s.attributed.record.request_id.as_str())
+        .collect();
+    assert_eq!(ids, ["r1", "r2", "r3"]);
+    assert_eq!(u.records[1].attributed.record.cwd, None);
+}
