@@ -7,9 +7,9 @@
 //! read go through [`ConfigEnv`]; the CLI supplies the real implementation (`std::env` and
 //! `std::fs`) and tests supply a fake.
 //!
-//! The file is TOML with four optional, kebab-case keys: `mode` (`"claim"`, `"strict"`,
+//! The file is TOML with six optional, kebab-case keys: `mode` (`"claim"`, `"strict"`,
 //! `"timeline"`), `work-branch` (a regex, kept as a string; the CLI compiles it), `format`
-//! (`"md"`, `"json"`) and `cost` (`true` or `false`). A malformed file, an unknown key or a bad
+//! (`"md"`, `"json"`), and the booleans `cost`, `redact` and `redact-names`. A malformed file, an unknown key or a bad
 //! value is a [`ConfigError`] naming the file and, where there is one, the key. Nothing is ignored
 //! silently. Config content is never echoed except the offending key name.
 
@@ -97,7 +97,7 @@ pub enum ConfigError {
         message: String,
     },
     /// A key core does not know.
-    #[error("config file {}: unknown key `{key}` (expected mode, work-branch, format, cost)", path.display())]
+    #[error("config file {}: unknown key `{key}` (expected mode, work-branch, format, cost, redact, redact-names)", path.display())]
     UnknownKey {
         /// The file.
         path: PathBuf,
@@ -127,6 +127,10 @@ pub struct ConfigFile {
     pub format: Option<Format>,
     /// `cost`.
     pub cost: Option<bool>,
+    /// `redact`.
+    pub redact: Option<bool>,
+    /// `redact-names`.
+    pub redact_names: Option<bool>,
 }
 
 impl ConfigFile {
@@ -182,6 +186,20 @@ impl ConfigFile {
                             .ok_or_else(|| bad("cost", "must be true or false"))?,
                     );
                 }
+                "redact" => {
+                    out.redact = Some(
+                        value
+                            .as_bool()
+                            .ok_or_else(|| bad("redact", "must be true or false"))?,
+                    );
+                }
+                "redact-names" => {
+                    out.redact_names = Some(
+                        value
+                            .as_bool()
+                            .ok_or_else(|| bad("redact-names", "must be true or false"))?,
+                    );
+                }
                 _ => {
                     return Err(ConfigError::UnknownKey {
                         path: path.to_owned(),
@@ -205,6 +223,10 @@ pub struct Flags {
     pub format: Option<Format>,
     /// `--cost` / `--no-cost`.
     pub cost: Option<bool>,
+    /// `--redact`.
+    pub redact: Option<bool>,
+    /// `--redact-names` / `--no-redact-names` (`false` keeps real agent and skill names).
+    pub redact_names: Option<bool>,
 }
 
 /// Effective settings plus how they were found. This is everything `config show` prints.
@@ -225,6 +247,11 @@ pub struct Settings {
     pub format: Resolved<Format>,
     /// Whether to cost the report. Default: `true`.
     pub cost: Resolved<bool>,
+    /// Whether to redact identifiers in the report. Default: `false`.
+    pub redact: Resolved<bool>,
+    /// Whether redaction also replaces agent and skill names. Default: `true`; only meaningful
+    /// when `redact` is on.
+    pub redact_names: Resolved<bool>,
 }
 
 /// The text `config init` writes: every key that has a built-in default, set to that default,
@@ -244,6 +271,14 @@ format = \"md\"
 
 # Show the estimated-cost column: true or false.
 cost = true
+
+# Redact identifiers in the report: session ids become s1, s2, ... and timestamps become dates.
+# Costs stay visible; `cost` is independent. true or false.
+redact = false
+
+# With redact = true: replace agent and skill names with generic labels (true), or keep the real
+# names (false).
+redact-names = true
 ";
 
 /// The default config path: Windows `%APPDATA%\branch-tally\config.toml`; elsewhere
@@ -340,6 +375,8 @@ pub fn load(
         work_branch_active,
         format: pick(flags.format, file.format, Format::Md),
         cost: pick(flags.cost, file.cost, true),
+        redact: pick(flags.redact, file.redact, false),
+        redact_names: pick(flags.redact_names, file.redact_names, true),
     })
 }
 

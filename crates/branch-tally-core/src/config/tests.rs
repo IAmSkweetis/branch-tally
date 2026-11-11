@@ -125,6 +125,8 @@ fn flag_beats_config_for_each_key() {
         work_branch: Some("^fix/".into()),
         format: Some(Format::Md),
         cost: Some(true),
+        redact: Some(false),
+        redact_names: Some(true),
     };
     let s = load_text(FULL, &flags).unwrap();
     assert_eq!(
@@ -215,6 +217,8 @@ fn bad_values_name_file_and_key() {
         ("mode = 3", "mode"),
         ("format = \"xml\"", "format"),
         ("cost = \"yes\"", "cost"),
+        ("redact = \"yes\"", "redact"),
+        ("redact-names = 1", "redact-names"),
         ("work-branch = 7", "work-branch"),
     ] {
         let err = load_text(text, &Flags::default()).unwrap_err();
@@ -264,12 +268,16 @@ fn default_config_text_parses_to_the_built_in_defaults() {
     assert_eq!(from_file.mode.value, built_in.mode.value);
     assert_eq!(from_file.format.value, built_in.format.value);
     assert_eq!(from_file.cost.value, built_in.cost.value);
+    assert_eq!(from_file.redact.value, built_in.redact.value);
+    assert_eq!(from_file.redact_names.value, built_in.redact_names.value);
     assert_eq!(from_file.work_branch.value, built_in.work_branch.value);
     // Every key with a default is written out, not left implicit.
     for r in [
         from_file.mode.source,
         from_file.format.source,
         from_file.cost.source,
+        from_file.redact.source,
+        from_file.redact_names.source,
     ] {
         assert_eq!(r, Source::ConfigFile);
     }
@@ -279,4 +287,89 @@ fn default_config_text_parses_to_the_built_in_defaults() {
         "{DEFAULT_CONFIG}"
     );
     assert!(!DEFAULT_CONFIG.contains('\r'), "LF only");
+}
+
+#[test]
+fn redact_defaults_off_and_names_default_to_redacted() {
+    let s = load(&Fake::default(), None, &Flags::default()).unwrap();
+    assert_eq!(
+        s.redact,
+        Resolved {
+            value: false,
+            source: Source::Default
+        }
+    );
+    assert_eq!(
+        s.redact_names,
+        Resolved {
+            value: true,
+            source: Source::Default
+        }
+    );
+}
+
+#[test]
+fn redact_keys_come_from_the_file_and_flags_beat_them() {
+    let text = "redact = true\nredact-names = false\n";
+    let s = load_text(text, &Flags::default()).unwrap();
+    assert_eq!(
+        s.redact,
+        Resolved {
+            value: true,
+            source: Source::ConfigFile
+        }
+    );
+    assert_eq!(
+        s.redact_names,
+        Resolved {
+            value: false,
+            source: Source::ConfigFile
+        }
+    );
+    let flags = Flags {
+        redact: Some(false),
+        redact_names: Some(true),
+        ..Flags::default()
+    };
+    let s = load_text(text, &flags).unwrap();
+    assert_eq!(
+        s.redact,
+        Resolved {
+            value: false,
+            source: Source::Flag
+        }
+    );
+    assert_eq!(
+        s.redact_names,
+        Resolved {
+            value: true,
+            source: Source::Flag
+        }
+    );
+}
+
+#[test]
+fn redact_and_cost_are_independent() {
+    let s = load_text("cost = false\n", &Flags::default()).unwrap();
+    assert!(!s.cost.value && !s.redact.value);
+    let flags = Flags {
+        redact: Some(true),
+        ..Flags::default()
+    };
+    let s = load_text("cost = false\n", &flags).unwrap();
+    assert!(s.redact.value && !s.cost.value);
+    let flags = Flags {
+        cost: Some(false),
+        ..Flags::default()
+    };
+    let s = load_text("redact = true\n", &flags).unwrap();
+    assert!(s.redact.value && !s.cost.value);
+    let s = load_text("redact = true\n", &Flags::default()).unwrap();
+    assert!(s.redact.value && s.cost.value);
+}
+
+#[test]
+fn default_config_documents_the_redact_keys() {
+    assert!(DEFAULT_CONFIG.contains("\nredact = false\n"));
+    assert!(DEFAULT_CONFIG.contains("\nredact-names = true\n"));
 }
