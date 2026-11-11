@@ -41,7 +41,10 @@ mode, and its successor Zensical is young. Both are Python, which this repositor
 - The manual is one more thing to keep current. The upkeep rule in
   [dev_workflow.md](../references/dev_workflow.md) and the CI build hold it to the code.
 - `book.toml`, the build recipe and the Pages workflow belong to the Repository Tooling Steward.
-  A page under `docs/manual/src/` belongs to whichever agent changed what it describes, the same
-  rule as `docs/references/`.
+  The pages under `docs/manual/src/` and `README.md` belong to a dedicated **Docs Author** agent
+  running on Opus. It is dispatched in the last wave of any feature that changes a flag, a config
+  key or an install method, once that behaviour has merged, so it documents code that exists. An
+  implementing agent describes its user-facing changes in its report, and the Docs Author writes
+  them up. Prose a stranger will copy and trust gets the strongest model, in one consistent voice.
 - Adding Mermaid means a second pinned binary, `mdbook-mermaid`, whose version has to stay
   compatible with mdBook's.
