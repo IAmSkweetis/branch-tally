@@ -20,12 +20,15 @@ JSON Lines or SQLite.
 
 The ledger is **append-only JSON Lines** at `.tally/ledger.jsonl`.
 
-- **One usage record per line**, keyed by the API call's `requestId`.
+- **One usage record per line**, keyed by the API call's `requestId` and `recorded_for`, the
+  branch `record` was run for. In claim mode one request can count toward two branches, so it
+  appears once per branch. Each line also stores the `mode` it was selected under, and
+  `report --from-ledger` keeps exactly the lines recorded for the requested branch.
 - **`merge=union`** is set for the file in `.gitattributes`, so git keeps both sides' lines when
   two branches append.
-- **Dedupe on read.** A reader collapses lines that share a `requestId`, so a duplicate left by a
+- **Dedupe on read.** A reader collapses lines that share a key, so a duplicate left by a
   union merge, or by recording twice, is harmless. Writing is idempotent too: `record` appends only
-  request ids the ledger doesn't already hold.
+  keys the ledger doesn't already hold.
 - **Only what the report needs.** Usage numbers, model, timestamp, branch, session and agent ids,
   plus what the report needs to render the same tables as a live run: the attribution basis (how
   certain the branch is), the selection that kept the record, the skill and agent names, and the
@@ -38,8 +41,8 @@ The ledger is **append-only JSON Lines** at `.tally/ledger.jsonl`.
 
 - **It merges.** Union merge of line-oriented text combines concurrent appends cleanly. A SQLite
   file is a binary that conflicts on every concurrent write.
-- **Duplicates cost nothing.** Keying on `requestId` and deduping on read turns the union merge's
-  only failure mode into a no-op.
+- **Duplicates cost nothing.** Keying on `requestId` and branch and deduping on read turns the
+  union merge's only failure mode into a no-op.
 - **It is reviewable.** A ledger change shows up in the PR diff as added lines, so a reviewer can
   see that no content was written.
 - **No new dependency.** `serde_json` is already in the workspace.
@@ -47,7 +50,7 @@ The ledger is **append-only JSON Lines** at `.tally/ledger.jsonl`.
 ## Consequences
 
 - The file only grows. Size is bounded by the number of API calls, a few hundred bytes each.
-- A union merge can't detect two lines with the same `requestId` and different data. The reader
+- A union merge can't detect two lines with the same key and different data. The reader
   counts the disagreement, never hides it, and keeps the line with the latest `recorded_at`. A tie
   or a missing `recorded_at` falls back to the line that sorts first, so the choice never depends
   on line order. Lines that differ only in `recorded_at` are duplicates, not conflicts.
