@@ -1001,7 +1001,10 @@ fn bracketing_captures_that_agree_recover_a_missing_stamp() {
 
 #[test]
 fn captured_beats_worktree_and_origin_recovery() {
-    let caps = [cap("s", CaptureKind::SessionStart, "feat/cap", T0)];
+    let caps = [
+        cap("s", CaptureKind::SessionStart, "feat/cap", T0),
+        cap("s", CaptureKind::Stop, "feat/cap", T2),
+    ];
     let stamped = at(rec("s", Some("worktree-agent-abc"), None), Some(T1));
     assert_eq!(
         with_caps(stamped, &caps, false),
@@ -1069,21 +1072,23 @@ fn a_record_without_a_usable_timestamp_is_not_guessed() {
 }
 
 #[test]
-fn one_sided_capture_needs_the_whole_session_to_agree() {
-    let agree = [cap("s", CaptureKind::SessionStart, "feat/cap", T0)];
+fn one_sided_captures_do_not_recover_a_record() {
+    // SessionStart on feat/cap only: the user may have switched branches since, and nothing
+    // after the record says otherwise. Not Captured; the existing recovery leaves it uncertain.
+    let before_only = [cap("s", CaptureKind::SessionStart, "feat/cap", T0)];
     let r = at(rec("s", None, None), Some(T1));
     assert_eq!(
-        with_caps(r, &agree, false),
-        ("feat/cap".to_owned(), BranchBasis::Captured)
+        with_caps(r, &before_only, false),
+        ("(none)".to_owned(), BranchBasis::Stamped)
     );
-    // Both captures come after the record: one-sided, and the session disagrees.
+    // Captures only after the record, all agreeing: still one-sided.
     let early = at(rec("s", None, None), Some("2026-11-01T09:00:00Z"));
-    let split = [
-        cap("s", CaptureKind::SessionStart, "main", T1),
+    let after_only = [
+        cap("s", CaptureKind::SessionStart, "feat/cap", T1),
         cap("s", CaptureKind::Stop, "feat/cap", T2),
     ];
     assert_eq!(
-        with_caps(early, &split, false),
+        with_caps(early, &after_only, false),
         ("(none)".to_owned(), BranchBasis::Stamped)
     );
 }
@@ -1105,7 +1110,10 @@ fn captures_of_other_sessions_and_unusable_branches_are_ignored() {
 
 #[test]
 fn captured_branches_feed_the_claim() {
-    let caps = [cap("s", CaptureKind::SessionStart, "feat/cap", T0)];
+    let caps = [
+        cap("s", CaptureKind::SessionStart, "feat/cap", T0),
+        cap("s", CaptureKind::Stop, "feat/cap", T2),
+    ];
     let rs = attribute_with_captures(
         [
             at(rec("s", None, None), Some(T1)),

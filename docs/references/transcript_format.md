@@ -141,7 +141,13 @@ not over a real stamp, and the #6 dispatcher roll-up is kept.
 - The record's session's captures that **bracket its timestamp** decide: the latest at or before
   and the earliest at or after (all captures at that instant). If they all name one branch, the
   record gets it with `BranchBasis::Captured`, ahead of `WorktreeRecovered` and `OriginRecovered`.
-- With only one side, every capture of the session must name the same branch.
+- **Both sides are required.** A record with captures on one side only (for example a
+  SessionStart on `A`, then a checkout of `B`, and no Stop yet) is not recovered from captures: the
+  user may have switched branches after the last capture. It falls through to the existing
+  recovery and stays as uncertain as before.
+- Residual limitation: an `A..A` bracket can hide an `A -> B -> A` switch inside the window. Stop
+  fires every turn, so the window is one turn, but a captured branch is a bounded-window
+  inference, not a certainty. The footnote's captured count says the heuristic was used.
 - Disagreement, a record with no parseable timestamp, an unusable captured branch (empty, `HEAD`,
   `worktree-agent-*`) or a session with no captures: nothing is guessed. The existing recovery
   runs, so the record is as uncertain as before.
@@ -218,7 +224,7 @@ A hook command receives one JSON object on stdin. Common fields: `session_id`, `
 | Event | Extra fields (documented) | Notes |
 | ----- | ------------------------- | ----- |
 | `SessionStart` | `source` (`startup`, `resume`, `clear`, `compact`, `fork`), optional `model`, `agent_type`, `session_title`; on resume/fork also cache-cost fields | |
-| `SessionEnd` | `reason` | 1.5 s default timeout: keep the hook fast |
+| `SessionEnd` | `reason` | 1.5 s default timeout: keep the hook fast. A per-hook `timeout` raises the budget (up to 60 s) only when set in the user's own settings files; timeouts on plugin-provided hooks do not raise it. The env var `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS` (milliseconds) overrides the budget. Verified 2026-11-11 against <https://code.claude.com/docs/en/hooks>. |
 | `Stop` | `stop_hook_active`, `last_assistant_message`, `background_tasks`, `session_crons` | `last_assistant_message` is content |
 | `SubagentStart` | `agent_id`, `agent_type` | |
 | `SubagentStop` | `stop_hook_active`, `agent_id`, `agent_type`, `agent_transcript_path`, `last_assistant_message`, `background_tasks`, `session_crons` | |
