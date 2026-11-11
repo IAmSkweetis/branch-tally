@@ -1,0 +1,71 @@
+name: Installers
+
+# Lint and test the installers (install.sh, install.ps1) whenever they or their tests change. Both
+# run offline against a file:// fake release, so they prove the scripts' own logic before a release;
+# install-check.yml then proves the published one-liners on clean machines. Path-filtered like
+# workflow-audit.yml, and these jobs are not required checks, so a PR that touches none of the paths
+# is not left waiting on them. The recipes are the same ones `just ci` runs.
+
+on:
+  pull_request:
+    paths:
+      - "install.sh"
+      - "install.ps1"
+      - "tests/install/**"
+      - "scripts/lint-install.*"
+      - "scripts/test-install.sh"
+      - ".github/workflows/installers.yml"
+  push:
+    branches: [main]
+    paths:
+      - "install.sh"
+      - "install.ps1"
+      - "tests/install/**"
+      - "scripts/lint-install.*"
+      - "scripts/test-install.sh"
+      - ".github/workflows/installers.yml"
+
+permissions: {}
+
+concurrency:
+  group: installers-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    name: lint-install
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: just@1.59.0
+      # ShellCheck and pwsh ship on the runner image. CI is set, so a missing tool is an error.
+      - name: Install PSScriptAnalyzer (pinned)
+        shell: pwsh
+        run: Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser -Force
+      - run: just lint-install
+
+  test:
+    name: test-install (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-latest]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: just@1.59.0
+      - run: just test-install

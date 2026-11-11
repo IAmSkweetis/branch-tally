@@ -152,6 +152,8 @@ its own lists the recipes.
 | `just audit-workflows [--offline]` | `zizmor` over `.github/`, pinned. Online audits run when `GH_TOKEN` is set. | `uvx zizmor@<pin> .github/` |
 | `just test-scripts` | proves `scripts/check-commit-subject.sh`, `scripts/check-branch-name.sh` and `scripts/package.sh` reject what they must and accept what they should | `sh scripts/test-checks.sh` |
 | `just test-py` | `unittest` for `scripts/scrub_transcripts.py` and `scripts/make_goldens.py`, including one end-to-end run of the reference | `uv run python -m unittest discover -s scripts/tests` |
+| `just lint-install` | ShellCheck on `install.sh` and its test, PSScriptAnalyzer on the `.ps1` files. A missing tool is a printed skip locally and an error when `CI` is set | `sh scripts/lint-install.sh` |
+| `just test-install` | the installers' offline tests under `sh` and `pwsh`, with the same skip rule | `sh scripts/test-install.sh` |
 | `just scrub --root <repo root> <src> <dest>` | scrub a real transcript tree into a committable fixture ([testing.md](testing.md#fixtures)) | `uv run scripts/scrub_transcripts.py …` |
 | `just goldens [scenario] [--check]` | regenerate the fixture goldens from the reference; `--check` writes nothing and fails on a difference | `uv run scripts/make_goldens.py …` |
 | `just next-version` | the version the next release would get, from the commits since the last tag (needs git-cliff at the pin) | `git-cliff --config cliff.toml --bumped-version` |
@@ -160,9 +162,10 @@ its own lists the recipes.
 | `just token-report [args…]` | this repo's own PR token report, from the installed release binary ([Token usage](#token-usage)) | `branch-tally report` |
 
 Recipes run under PowerShell 7 on Windows and `sh` elsewhere, so a recipe line must be a plain tool
-call that reads the same in both. Anything shell-specific goes in a private `_helper` recipe
-written once under `[windows]` and once under `[unix]` (the `_require*` helpers that check for a
-tool are the example). `test-scripts` needs `sh`, which Git for Windows provides.
+call that reads the same in both. Anything shell-specific goes in a private `_helper` recipe written
+once under `[windows]` and once under `[unix]` (the `_require*` helpers that check for a tool are
+the example). `test-scripts`, `lint-install` and `test-install` need `sh`, which Git for Windows
+provides.
 
 CI calls the same recipes, so a local `just ci` checks what CI checks.
 
@@ -194,7 +197,8 @@ same `just` recipes and `scripts/check-*.sh`.
 | Branch name | `pre-push`: Conventional Branch, and refuses a push to `main` | `branch-name`: the PR's head branch |
 | Tests | `pre-push`: `just test` | `test (ubuntu-latest)`, `test (macos-latest)`, `test (windows-latest)` and `msrv`: `just test` |
 | Release build | — | `build` (workflow `Build`): on a PR that touches `build.yml`, `release.yml`, `scripts/package.sh`, `scripts/smoke-test.sh`, `cliff.toml`, `Cargo.lock` or `rust-toolchain.toml`, builds and smoke-tests all six release targets with a dummy version and publishes nothing ([release.md](release.md#proving-the-build-before-a-release)) |
-| Gate scripts | — | `scripts`: `just test-scripts` (so the commit and branch checks, and the packaging script, can't silently stop rejecting) and `just test-py` (the scrubber and goldens generator) |
+| Gate scripts | — | `scripts`: `just test-scripts` (so the commit and branch checks, the packaging script and the installer gates, can't silently stop rejecting) and `just test-py` (the scrubber and goldens generator) |
+| Installers | — | `lint-install` and `test-install (<os>)` (workflow `Installers`), only when an installer, its tests or the workflow change ([release.md](release.md#proving-an-install-works)) |
 | Dependencies | — | `deny`: `cargo deny check` (licences, advisories, duplicates), once `deny.toml` exists |
 | New vulnerable dependencies | — | `dependency-review`: fails a PR that adds a dependency with a known vulnerability of moderate severity or worse |
 | Edit-time lint | Claude Code `PostToolUse` hook: `rustfmt --check` on a `.rs` file, `rumdl check` on a `.md` file | — |
