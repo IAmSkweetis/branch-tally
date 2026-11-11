@@ -1,0 +1,72 @@
+---
+source: crates/branch-tally-core/tests/render.rs
+expression: "json(&s, &c)"
+---
+{
+  "branch": "feat/x",
+  "mode": "claim",
+  "redacted": true,
+  "totalCalls": 3,
+  "totalCostUSD": 2.675,
+  "totalCostIsFloor": true,
+  "unpricedModels": [
+    "claude-b"
+  ],
+  "priceTable": {
+    "asOf": null,
+    "source": "bundled"
+  },
+  "sessions": [
+    {
+      "id": "s3",
+      "origin": "main",
+      "first": "",
+      "last": "",
+      "calls": 1,
+      "tokens": 10,
+      "agents": []
+    },
+    {
+      "id": "s1",
+      "origin": "worktree-1",
+      "first": "2026-01-01",
+      "last": "2026-01-01",
+      "calls": 1,
+      "tokens": 50000,
+      "agents": [
+        "agent-1"
+      ]
+    },
+    {
+      "id": "s2",
+      "origin": "main",
+      "first": "2026-01-02",
+      "last": "2026-01-03",
+      "calls": 2,
+      "tokens": 1234567,
+      "agents": []
+    }
+  ],
+  "models": {
+    "claude-b": {
+      "calls": 1,
+      "input": 5,
+      "cacheWrite5m": 0,
+      "cacheWrite1h": 0,
+      "cacheRead": 0,
+      "output": 300,
+      "thinking": 0,
+      "costUSD": null
+    },
+    "claude-a": {
+      "calls": 2,
+      "input": 1000,
+      "cacheWrite5m": 200,
+      "cacheWrite1h": 50,
+      "cacheRead": 3000,
+      "output": 100,
+      "thinking": 10,
+      "costUSD": 0.125
+    }
+  }
+}

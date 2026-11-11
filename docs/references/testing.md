@@ -214,6 +214,12 @@ expected behaviour directly, next to the same issue number. `malformed-and-keyle
   `defaultBranch` and `source`, or `custom` with `pattern`), and the footnote names the default
   branch when it did not come from `origin/HEAD` and any custom pattern; neither appears in claim
   or strict output.
+- A redacted summary (`Summary.redacted`, #9) is rendered by reading that flag only. JSON gains
+  `"redacted": true` right after `mode`, omitted when false so parity with the reference holds.
+  Markdown adds the segment `identifiers redacted` to the footnote (with or without cost), and
+  the session table header reads `Span (UTC date)` with the stored dates printed whole instead of
+  sliced as clock times. Insta snapshots in
+  `crates/branch-tally-core/tests/snapshots/render__*redacted*.snap` pin all three.
 - The bundled table was reseeded from LiteLLM's current rates (#5), not the reference's `PRICES`.
   Every model the goldens price (`claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-4-6`) has the
   same input, output and cache-read rate in both, so every cost still matches the goldens exactly

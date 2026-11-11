@@ -8,8 +8,8 @@ use std::cmp::Reverse;
 use std::fmt::Write as _;
 
 use crate::model::{
-    Costs, DefaultBranchSource, HeuristicBreakdown, Mode, PriceTableSource, RowCost, Summary,
-    WorkBranchRule, Workspace,
+    Costs, DefaultBranchSource, HeuristicBreakdown, Mode, PriceTableSource, RowCost, SessionId,
+    SessionRow, Summary, WorkBranchRule, Workspace,
 };
 
 /// Opens the region of a PR body this tool owns.
@@ -39,6 +39,12 @@ fn clock(ts: &str) -> String {
         .take(11)
         .collect::<String>()
         .replace('T', " ")
+}
+
+/// A session span end. A redacted summary already holds dates (or empty), not timestamps: print
+/// them whole rather than slice them as clock times.
+fn when(ts: &str, redacted: bool) -> String {
+    if redacted { ts.to_owned() } else { clock(ts) }
 }
 
 /// Millions of tokens to one decimal, as `f"{x / 1e6:.1f}M"`. The cast is exact below 2^53.
@@ -280,6 +286,37 @@ fn subagent_section(summary: &Summary, costs: &Costs, show_cost: bool, o: &mut V
     o.push(text);
 }
 
+/// The sessions table, in the order given, ending in a blank line. A redacted summary's header
+/// says the span is dates.
+fn session_table(ordered: &[&(SessionId, SessionRow)], redacted: bool, o: &mut Vec<String>) {
+    let span_head = if redacted {
+        "Span (UTC date)"
+    } else {
+        "Span (UTC)"
+    };
+    o.push(format!(
+        "| Session | Where | Agents | {span_head} | Calls | Tokens |"
+    ));
+    o.push("|---|---|---|---|--:|--:|".to_owned());
+    for (sid, s) in ordered {
+        let where_ = if s.origin == "main" {
+            "main checkout"
+        } else {
+            "worktree"
+        };
+        let short: String = sid.as_str().chars().take(8).collect();
+        o.push(format!(
+            "| `{short}` | {where_} | {} | {} \u{2192} {} | {} | {} |",
+            s.who(),
+            when(&s.first, redacted),
+            when(&s.last, redacted),
+            n(s.calls),
+            millions(s.tokens),
+        ));
+    }
+    o.push(String::new());
+}
+
 /// The report (`render` in the reference): no trailing newline, no markers.
 ///
 /// Tables are sorted here, stably, as the reference does: models by descending output, sessions
@@ -339,25 +376,7 @@ pub fn markdown(summary: &Summary, costs: &Costs, show_cost: bool) -> String {
     ));
     o.push(String::new());
 
-    o.push("| Session | Where | Agents | Span (UTC) | Calls | Tokens |".to_owned());
-    o.push("|---|---|---|---|--:|--:|".to_owned());
-    for (sid, s) in &ordered {
-        let where_ = if s.origin == "main" {
-            "main checkout"
-        } else {
-            "worktree"
-        };
-        let short: String = sid.as_str().chars().take(8).collect();
-        o.push(format!(
-            "| `{short}` | {where_} | {} | {} \u{2192} {} | {} | {} |",
-            s.who(),
-            clock(&s.first),
-            clock(&s.last),
-            n(s.calls),
-            millions(s.tokens),
-        ));
-    }
-    o.push(String::new());
+    session_table(&ordered, summary.redacted, &mut o);
 
     floor_statement(heur, total.tokens(), &mut o);
 
@@ -377,6 +396,9 @@ pub fn markdown(summary: &Summary, costs: &Costs, show_cost: bool) -> String {
         heuristic_note(heur),
         work_branch_note(summary.work_branch.as_ref()),
     );
+    if summary.redacted {
+        note.push_str(" \u{b7} identifiers redacted");
+    }
     if show_cost {
         note.push_str(&price_note(costs));
         note.push_str(" \u{b7} est. cost at list API rates, not amounts billed</sub>");
