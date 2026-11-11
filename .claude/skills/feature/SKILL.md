@@ -61,14 +61,25 @@ The branch is cut in the **main checkout**, from an up-to-date `main`. Trunk-bas
 for hours or days, not weeks.
 
 ```bash
-git status --short          # must be clean. If not, stop and ask.
-git checkout main
-git pull --ff-only
-git checkout -b <type>/issue-<N>-<description>
+git status --short -- . ':!.tally'   # must print nothing. If not, stop and ask.
+git fetch origin
+git checkout -b <type>/issue-<N>-<description>   # from the current HEAD; carries any dirty .tally/
+git add .tally && git commit -m "chore: record token usage"   # only if .tally/ changed
+git merge origin/main        # .gitattributes merge=union keeps both sides' .tally/ lines
+git fetch origin main:main   # fast-forward the local main ref without checking it out
 ```
 
-Name it per Conventional Branch (`docs/references/dev_workflow.md#branch-names`), for the change.
-If the tree is dirty, stop and ask. **Never stash.** The stash is shared across every worktree.
+`.tally/` is exempt from the clean check because the capture and record plugins append to
+`.tally/captures.jsonl` and `.tally/ledger.jsonl` in the main checkout, on whatever branch is
+checked out. A `git checkout main && git pull --ff-only` refuses when `origin/main` changed those
+files and local lines are uncommitted, which every merged PR now causes. Cutting the branch first
+and merging `origin/main` into it avoids that. If the main checkout is on a branch other than
+`main`, the new branch is cut from that branch's tip: check `git log origin/main..HEAD` is empty
+before the merge, and stop and ask if it isn't.
+
+Name it per Conventional Branch (`docs/references/dev_workflow.md#branch-names`), for the change. If
+anything outside `.tally/` is dirty, stop and ask. **Never stash.** The stash is shared across every
+worktree.
 
 Establish a green baseline before anyone starts:
 

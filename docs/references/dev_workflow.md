@@ -374,6 +374,11 @@ Every PR:
   subcommand or config key missing from `cli.md` or `config.md` fails `just test`. Install methods
   stay a review responsibility.
 
+`.tally/` is exempt from every "working tree must be clean" check in the skills
+(`git status --short -- . ':!.tally'`), because the capture and record plugins append to
+`.tally/captures.jsonl` and `.tally/ledger.jsonl` in the main checkout on whatever branch is checked
+out, so it is routinely dirty. Anything else dirty still stops the skill.
+
 `/create-gh-pr` handles the first four. Tick test-plan boxes honestly. An unticked box tells the
 reviewer something. A falsely ticked one is a lie they can't see.
 
