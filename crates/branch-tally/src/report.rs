@@ -63,12 +63,21 @@ fn projects_root() -> Result<PathBuf, String> {
     Ok(home.join(".claude").join("projects"))
 }
 
-/// The ledger file: `--ledger`, else `.tally/ledger.jsonl` under the checkout path.
-fn ledger_path(flag: Option<&Path>, cwd: &Path) -> PathBuf {
-    flag.map_or_else(
-        || cwd.join(".tally").join("ledger.jsonl"),
-        Path::to_path_buf,
-    )
+/// The ledger file: `--ledger`, else `.tally/ledger.jsonl` at the root of the checkout containing
+/// `dir`. A directory outside any repository is an error: falling back to `dir` would write a
+/// stray ledger.
+fn ledger_path(flag: Option<&Path>, dir: &Path) -> Result<PathBuf, String> {
+    if let Some(flag) = flag {
+        return Ok(flag.to_path_buf());
+    }
+    let top = SystemGit.toplevel(dir).map_err(|e| {
+        format!(
+            "cannot place the default ledger: {} is not inside a git checkout ({e}); \
+             pass --ledger <path>",
+            dir.display()
+        )
+    })?;
+    Ok(top.join(".tally").join("ledger.jsonl"))
 }
 
 /// Runs the command. `Err` carries the one-line message for stderr.
@@ -104,7 +113,7 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), String> {
             &cwd,
             args.branch.as_deref(),
             &options,
-            &ledger_path(args.ledger.as_deref(), &cwd),
+            &ledger_path(args.ledger.as_deref(), &cwd)?,
             &table,
         )
     } else {
@@ -187,7 +196,7 @@ pub(crate) fn record(args: &RecordArgs) -> Result<(), String> {
         &cwd,
         args.branch.as_deref(),
         &options(settings.mode.value, pattern.as_ref(), &matches),
-        &ledger_path(args.ledger.as_deref(), &cwd),
+        &ledger_path(args.ledger.as_deref(), &cwd)?,
         &Identity,
         &SystemClock,
     )
@@ -201,11 +210,25 @@ pub(crate) fn record(args: &RecordArgs) -> Result<(), String> {
     if recorded.worktrees_unavailable.is_some() {
         stderr("note: git worktree list was unavailable, so worktree recovery was skipped");
     }
+    if let Some(note) = unnamed_origins_note(recorded.outcome.unnamed_origins) {
+        stderr(&note);
+    }
     stdout(&format!(
         "appended {}, skipped {}, branch {}\n",
         recorded.outcome.appended, recorded.outcome.skipped, recorded.branch
     ));
     Ok(())
+}
+
+/// Governance II for `record`: entries whose session ran in a worktree outside the main checkout
+/// are stored without a worktree name (the ledger never stores a path). Count only.
+fn unnamed_origins_note(count: u64) -> Option<String> {
+    (count > 0).then(|| {
+        format!(
+            "note: {count} record(s) from a worktree outside the main checkout were stored \
+             without a worktree name"
+        )
+    })
 }
 
 /// The core options for the effective mode, with the work-branch rule in timeline mode.
@@ -378,4 +401,21 @@ fn stdout(text: &str) {
 
 fn stderr(line: &str) {
     let _ = writeln!(std::io::stderr(), "{line}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unnamed_origins_note;
+
+    #[test]
+    fn unnamed_origins_note_is_silent_at_zero_and_counts_otherwise() {
+        assert_eq!(unnamed_origins_note(0), None);
+        assert_eq!(
+            unnamed_origins_note(3).as_deref(),
+            Some(
+                "note: 3 record(s) from a worktree outside the main checkout were stored \
+                 without a worktree name"
+            )
+        );
+    }
 }
