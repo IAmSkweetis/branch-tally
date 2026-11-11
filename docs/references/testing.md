@@ -266,6 +266,16 @@ Rendered output (Markdown tables, JSON) is checked with snapshot tests. The prop
   everything wholesale (`cargo insta accept`) turns red into green without anyone reading it.
 - Snapshot diffs belong in the PR. A reviewer should see the output change.
 
+## Docs drift
+
+`crates/branch-tally/tests/docs_drift.rs` fails when the manual falls behind the code. It walks
+the real command tree by running the binary's `--help` recursively (hidden args and subcommands
+never appear there, so they are exempt) and requires every subcommand path and long flag to occur
+verbatim in `docs/manual/src/cli.md`. It requires every key in `DEFAULT_CONFIG` to occur in
+`docs/manual/src/config.md`. Clap's built-in `--help`, `--version` and the `help` subcommand are
+skipped. The failure names each missing item and the page to update. Nothing is hand-listed, so
+the test needs no upkeep. Install methods are not covered and stay a review responsibility.
+
 ## Related pages
 
 - [project_layout.md](project_layout.md#tests): where each kind of test lives

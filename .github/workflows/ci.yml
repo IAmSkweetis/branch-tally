@@ -3,6 +3,14 @@ name: CI
 # The same `just` recipes the git hooks run. Rust jobs report green, with a visible notice, while
 # the repository has no Cargo.toml (#3), so the required checks exist from day one and switch on by
 # themselves once the workspace lands. See scripts/ci-detect.sh.
+#
+# A pull request that changes no Rust-relevant file (only docs, Markdown, .claude/, or another
+# workflow) skips the Rust work the same way. The `changes` job runs dorny/paths-filter and
+# publishes `code`; the Rust jobs still start, so every required check still reports under its
+# own name (a matrix job skipped by a job-level `if:` reports one unexpanded name and would leave
+# `test (ubuntu-latest)` waiting forever), then skip their steps with a notice. Only a definite
+# `code == 'false'` skips: if `changes` fails or is skipped, the output is empty and everything
+# runs. A push to main runs everything. See docs/references/dev_workflow.md#quality-gates.
 
 on:
   pull_request:
@@ -21,8 +29,44 @@ env:
   INSTA_UPDATE: "no"
 
 jobs:
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # paths-filter lists a PR's files through the API
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      # No checkout: on a pull request the action reads the changed files from the API. On a push
+      # the step is skipped, `code` is empty, and every job runs unfiltered.
+      - if: github.event_name == 'pull_request'
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            code:
+              - "crates/**"
+              - "tests/**"
+              - "Cargo.toml"
+              - "Cargo.lock"
+              - "**/Cargo.toml"
+              - "rust-toolchain.toml"
+              - "rustfmt.toml"
+              - "clippy.toml"
+              - ".config/nextest.toml"
+              - "deny.toml"
+              - ".cargo/**"
+              - "justfile"
+              - "scripts/ci-detect.sh"
+              - "scripts/ci-install-rust.sh"
+              - ".github/workflows/ci.yml"
+
   lint:
     name: lint
+    needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -32,13 +76,16 @@ jobs:
         with:
           persist-credentials: false
       - id: detect
+        env:
+          CODE_CHANGED: ${{ needs.changes.outputs.code }}
         run: sh scripts/ci-detect.sh
       - if: steps.detect.outputs.rust == 'true'
         run: sh scripts/ci-install-rust.sh
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: just@1.59.0
-      - run: just lint
+      - if: steps.detect.outputs.rust == 'true'
+        run: just lint
 
   lint-md:
     name: lint-md
@@ -80,6 +127,8 @@ jobs:
 
   test:
     name: test (${{ matrix.os }})
+    needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -94,6 +143,8 @@ jobs:
           persist-credentials: false
       - id: detect
         shell: bash
+        env:
+          CODE_CHANGED: ${{ needs.changes.outputs.code }}
         run: sh scripts/ci-detect.sh
       - if: steps.detect.outputs.rust == 'true'
         shell: bash
@@ -103,10 +154,13 @@ jobs:
           tool: just@1.59.0,cargo-nextest@0.9.151
       # nextest fails a run that matches no tests, then the doctests run separately: see the
       # `test` recipe and docs/references/testing.md#false-greens.
-      - run: just test
+      - if: steps.detect.outputs.rust == 'true'
+        run: just test
 
   msrv:
     name: msrv
+    needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -116,6 +170,8 @@ jobs:
         with:
           persist-credentials: false
       - id: detect
+        env:
+          CODE_CHANGED: ${{ needs.changes.outputs.code }}
         run: sh scripts/ci-detect.sh
       - name: Require a declared rust-version
         if: steps.detect.outputs.rust == 'true' && steps.detect.outputs.msrv == ''
@@ -129,10 +185,13 @@ jobs:
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: just@1.59.0,cargo-nextest@0.9.151
-      - run: just test
+      - if: steps.detect.outputs.rust == 'true'
+        run: just test
 
   deny:
     name: deny
+    needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -142,6 +201,8 @@ jobs:
         with:
           persist-credentials: false
       - id: detect
+        env:
+          CODE_CHANGED: ${{ needs.changes.outputs.code }}
         run: sh scripts/ci-detect.sh
       - if: steps.detect.outputs.deny == 'true'
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3

@@ -139,6 +139,10 @@ these sets makes a malformed report, not a variation.
 - **`files`**: an object of three arrays, `created`, `modified` and `deleted`.
 - **`agent`**: your frontmatter `name:` verbatim. **`branch`**, **`worktree_path`** and
   **`commits`** are how the orchestrator finds and merges your work.
+- **`user_facing_changes`**: optional. List every flag, config key, install option or output field a
+  user can see that you added, changed or removed, each with `kind` (exactly one of `flag`,
+  `config_key`, `install_option`, `output`, `other`), `name` and a one-line `detail`. The Docs
+  Author writes the manual from it. Omit it when nothing user-facing changed.
 
 ### For this agent
 

@@ -17,3 +17,6 @@ __pycache__/
 
 # .rumdl cache
 .rumdl_cache/
+
+# mdBook build output (docs/manual/book.toml: build-dir).
+/docs/manual/book/

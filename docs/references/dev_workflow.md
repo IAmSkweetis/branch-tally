@@ -142,7 +142,7 @@ its own lists the recipes.
 
 | Recipe | Runs | Raw equivalent |
 | ------ | ---- | -------------- |
-| `just ci` | everything below except `fmt`, `fmt-md` and `audit-workflows`: every gate CI runs | — |
+| `just ci` | everything below except `fmt`, `fmt-md`, `audit-workflows` and `docs-serve`: every gate CI runs, including `docs` | — |
 | `just test [filter]` | nextest over the workspace (a run that matches no tests fails), then doctests | `cargo nextest run --workspace --no-tests=fail [filter]` then `cargo test --workspace --doc [filter]` |
 | `just lint` | `cargo fmt --check` and `cargo clippy --workspace --all-targets -- -D warnings` | same |
 | `just fmt` | `cargo fmt --all` | same |
@@ -154,6 +154,8 @@ its own lists the recipes.
 | `just test-py` | `unittest` for `scripts/scrub_transcripts.py` and `scripts/make_goldens.py`, including one end-to-end run of the reference | `uv run python -m unittest discover -s scripts/tests` |
 | `just lint-install` | ShellCheck on `install.sh` and its test, PSScriptAnalyzer on the `.ps1` files. A missing tool is a printed skip locally and an error when `CI` is set | `sh scripts/lint-install.sh` |
 | `just test-install` | the installers' offline tests under `sh` and `pwsh`, with the same skip rule | `sh scripts/test-install.sh` |
+| `just docs` | build the user manual with mdBook and mdbook-mermaid (pinned) into `docs/manual/book/`; a `SUMMARY.md` entry with no page fails it ([The user manual](#the-user-manual)) | `mdbook build docs/manual` |
+| `just docs-serve` | serve the manual locally and rebuild on change, at `http://localhost:3000` | `mdbook serve docs/manual` |
 | `just scrub --root <repo root> <src> <dest>` | scrub a real transcript tree into a committable fixture ([testing.md](testing.md#fixtures)) | `uv run scripts/scrub_transcripts.py …` |
 | `just goldens [scenario] [--check]` | regenerate the fixture goldens from the reference; `--check` writes nothing and fails on a difference | `uv run scripts/make_goldens.py …` |
 | `just next-version` | the version the next release would get, from the commits since the last tag (needs git-cliff at the pin) | `git-cliff --config cliff.toml --bumped-version` |
@@ -169,11 +171,12 @@ provides.
 
 CI calls the same recipes, so a local `just ci` checks what CI checks.
 
-**Pinned tools.** The `justfile` holds the versions of `rumdl`, `zizmor`, `gitleaks` and
-`git-cliff` (read by `release.yml`, [release.md](release.md#versioning)). CI reads
-them back with `just --evaluate`, so local and CI runs use the same ones. Bump a version in the
-justfile only. For gitleaks also bump the archive checksum in `ci.yml`; a mismatch fails the job.
-`just`, nextest and cargo-deny are pinned in `ci.yml`.
+**Pinned tools.** The `justfile` holds the versions of `rumdl`, `zizmor`, `gitleaks`, `git-cliff`
+(read by `release.yml`, [release.md](release.md#versioning)), `mdbook` and `mdbook-mermaid`. CI
+reads them back with `just --evaluate`, so local and CI runs use the same ones. Bump a version in
+the justfile only. For gitleaks also bump the archive checksum in `ci.yml`, and for mdbook or
+mdbook-mermaid the checksums in `docs.yml`; a mismatch fails the job. `just`, nextest and cargo-deny
+are pinned in `ci.yml`.
 
 **Before the workspace exists (#3).** The Rust recipes (`test`, `lint`, `fmt`) find no
 `Cargo.toml`, print "no Cargo.toml: Rust checks skipped" and exit 0. The CI Rust jobs do the same
@@ -199,6 +202,8 @@ same `just` recipes and `scripts/check-*.sh`.
 | Release build | — | `build` (workflow `Build`): on a PR that touches `build.yml`, `release.yml`, `scripts/package.sh`, `scripts/smoke-test.sh`, `cliff.toml`, `Cargo.lock` or `rust-toolchain.toml`, builds and smoke-tests all six release targets with a dummy version and publishes nothing ([release.md](release.md#proving-the-build-before-a-release)) |
 | Gate scripts | — | `scripts`: `just test-scripts` (so the commit and branch checks, the packaging script and the installer gates, can't silently stop rejecting) and `just test-py` (the scrubber and goldens generator) |
 | Installers | — | `lint-install` and `test-install (<os>)` (workflow `Installers`), only when an installer, its tests or the workflow change ([release.md](release.md#proving-an-install-works)) |
+| User manual | — | `docs` (workflow `Docs`): `just docs`, only when `docs/manual/`, the justfile or the workflow change. Not a required check, for the same reason as `zizmor` ([The user manual](#the-user-manual)) |
+| Rust path filter | — | `changes` (workflow `CI`): `dorny/paths-filter` decides whether a PR touches Rust-relevant files and the Rust jobs skip their steps when it doesn't ([Path filtering](#path-filtering)) |
 | Dependencies | — | `deny`: `cargo deny check` (licences, advisories, duplicates), once `deny.toml` exists |
 | New vulnerable dependencies | — | `dependency-review`: fails a PR that adds a dependency with a known vulnerability of moderate severity or worse |
 | Edit-time lint | Claude Code `PostToolUse` hook: `rustfmt --check` on a `.rs` file, `rumdl check` on a `.md` file | — |
@@ -228,6 +233,36 @@ checks this.
 Don't pass `--no-verify`. If a hook fails, fix what it found. A tool missing from `PATH` makes the
 hook fail with an install hint. It never silently skips the check.
 
+### Path filtering
+
+A PR that changes only docs, Markdown, `.claude/` or another workflow doesn't need the Rust suite.
+The `changes` job in `ci.yml` runs [`dorny/paths-filter`](https://github.com/dorny/paths-filter)
+(pinned, `contents: read` and `pull-requests: read`, no checkout) and publishes `code`, true when
+the PR touches any of:
+
+- `crates/**` (which holds the Rust sources, the tests under `crates/*/tests/` and the bundled
+  data), `tests/**`, `Cargo.toml` (root or any crate), `Cargo.lock`, `rust-toolchain.toml`;
+- `rustfmt.toml`, `clippy.toml`, `.config/nextest.toml`, `deny.toml`, `.cargo/**`;
+- `justfile`, `scripts/ci-detect.sh`, `scripts/ci-install-rust.sh` and `ci.yml` itself, because a
+  change to the gate must exercise the gate.
+
+Anything else (`docs/**`, `*.md`, `.claude/**`, the other workflows, the other `scripts/**`) is not
+code. The filter list is in `ci.yml`; change it there.
+
+**The jobs still run, and skip their steps.** `lint`, `test (<os>)`, `msrv` and `deny` are
+required checks. A matrix job skipped by a job-level `if:` reports one check under its unexpanded
+name, so `test (ubuntu-latest)` would never report and the PR would wait forever. So these jobs
+always start (`if: ${{ !cancelled() }}`), and `scripts/ci-detect.sh` turns `rust=false` when
+`CODE_CHANGED=false`, with a `::notice::` ("Rust checks skipped"), the same path as before the
+workspace existed (#3). Each Rust step is gated on that output. `scripts/test-checks.sh` proves the
+script skips only on the exact string `false`.
+
+**What always runs:** `lint-md`, `scripts`, `secret-scan`, the commit, branch and PR-title checks,
+`dependency-review`, `zizmor` (when `.github/` changes) and `docs` (when the manual changes). On a
+push to `main` the filter step is skipped, `code` is empty, and everything runs. If `changes` itself
+fails, `code` is empty too and everything runs: only a definite `false` skips, so a broken filter
+fails safe, never green.
+
 ### Writing workflows that pass zizmor
 
 [zizmor](https://docs.zizmor.sh/) audits `.github/` for GitHub Actions security problems. Fix its
@@ -238,6 +273,36 @@ findings; don't silence them. Every workflow is held to these rules:
 - **`persist-credentials: false` on every checkout** unless a job must push.
 - **No `${{ }}` inside `run:`.** Pass values through `env:` and use `"$NAME"`.
 - **Name the secrets a reusable workflow gets** instead of `secrets: inherit`.
+
+### The user manual
+
+The user manual is an [mdBook](https://rust-lang.github.io/mdBook/) in `docs/manual/`
+([0003-user-manual.md](../decisions/0003-user-manual.md)). `book.toml` is at its root, the pages
+and `SUMMARY.md` are in `src/`, and the build goes to `docs/manual/book/` (gitignored, and excluded
+from `rumdl`). Diagrams are Mermaid fenced blocks, rendered by the `mdbook-mermaid` preprocessor.
+Its two assets, `mermaid.min.js` and `mermaid-init.js`, are committed beside `book.toml`, outside
+`src/`.
+
+- **Versions.** `mdbook_version` and `mdbook_mermaid_version` in the justfile. mdBook 0.5 changed
+  the preprocessor API, so `mdbook-mermaid` must be a release built against it (0.17 and later).
+  mdBook prints a "built against version 0.5.0 of mdbook" warning when the patch versions differ;
+  that is harmless within 0.5. To move the pin, bump both versions and both checksums in `docs.yml`,
+  then run `mdbook-mermaid install docs/manual` with the new binary and commit the two refreshed
+  assets.
+- **`create-missing = false`.** A `SUMMARY.md` entry that points at a missing page fails the build
+  instead of quietly creating an empty page.
+- **CI.** The `Docs` workflow (`docs.yml`) builds the book on a PR that touches `docs/manual/**`,
+  the justfile or the workflow, installing the prebuilt release binaries against a checked sha256
+  like gitleaks. On a push to `main` that touches `docs/manual/**`, and on `workflow_dispatch`, it
+  also publishes the build to GitHub Pages (`actions/upload-pages-artifact` then
+  `actions/deploy-pages`). Only the `deploy` job holds `pages: write` and `id-token: write`. Pages
+  is set to `build_type: workflow` and the site is `https://iamskweetis.github.io/branch-tally/`.
+  The `docs` job is path-filtered, so it is not a required check; requiring it would leave every PR
+  that doesn't touch these paths waiting on a check that never reports.
+- **`just ci` includes `docs`**, because `just ci` is every gate CI runs. It needs `mdbook` and
+  `mdbook-mermaid` on `PATH` and fails with an install hint if either is missing.
+- **Docs upkeep.** A PR that changes a CLI flag, a config key or an install method updates
+  `docs/manual/` in the same PR ([Pull requests](#pull-requests)).
 
 ### When gitleaks stops a commit
 
@@ -258,9 +323,16 @@ Every PR:
 - links its issue with `Fixes #N`, or `Refs #N` when it only partly resolves it;
 - carries the label its branch type implies (`enhancement`, `bug`, `documentation`);
 - records its own token usage (dogfooding, see below).
+- **updates the manual** when it changes a CLI flag, a config key or an install method: edit the
+  affected page under `docs/manual/src/` in the same PR. The manual documents what ships on
+  `main`, so a feature still in flight is documented in the PR that lands it. A reviewer treats a
+  flag, key or install-method change with no `docs/manual/` change as incomplete. The
+  `docs_drift` test ([testing.md](testing.md#docs-drift)) enforces the CLI and config half: a flag,
+  subcommand or config key missing from `cli.md` or `config.md` fails `just test`. Install methods
+  stay a review responsibility.
 
-`/create-gh-pr` handles all four. Tick test-plan boxes honestly. An unticked box tells the reviewer
-something. A falsely ticked one is a lie they can't see.
+`/create-gh-pr` handles the first four. Tick test-plan boxes honestly. An unticked box tells the
+reviewer something. A falsely ticked one is a lie they can't see.
 
 ### Token usage
 
@@ -284,13 +356,13 @@ The default is every branch except the repository's default branch and `worktree
 The same choices are `--mode claim|strict|timeline` and `--format md|json`; `--strict`,
 `--timeline`, `--md` and `--json` stay as shorthands, and a shorthand cannot be combined with its
 long form, even when they agree (exit 2). `--cost` pairs with `--no-cost`, `--redact` with
-`--no-redact` and `--keep-names` with `--redact-names` (#9; the README's "Redaction" section
-describes them). `--work-branch` is a
-usage error unless the *effective* mode is timeline, whether that came from `--mode timeline`,
-`--timeline` or a config `mode = "timeline"`; a work-branch set only in the config file is ignored
-outside timeline mode. Defaults live in a user config file (flag > file > default); the README's
-"Config file" section has its location and keys, `branch-tally config init` writes a starter file,
-and `branch-tally config show` prints what applies.
+`--no-redact` and `--keep-names` with `--redact-names` (#9; the manual's
+[CLI reference](../manual/src/cli.md#redaction) describes them). `--work-branch` is a usage error
+unless the *effective* mode is timeline, whether that came from `--mode timeline`, `--timeline` or a
+config `mode = "timeline"`; a work-branch set only in the config file is ignored outside timeline
+mode. Defaults live in a user config file (flag > file > default); the manual's
+[Config reference](../manual/src/config.md) has its location and keys, `branch-tally config init`
+writes a starter file, and `branch-tally config show` prints what applies.
 
 It must run on the machine that did the work, and **while every agent worktree still exists**
 until issue #6 removes that dependency. Report the number as a floor ("at least $X").

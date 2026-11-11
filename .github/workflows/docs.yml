@@ -1,0 +1,88 @@
+name: Docs
+
+# Builds the user manual (docs/manual, mdBook plus mdbook-mermaid) with `just docs`, and publishes
+# it to GitHub Pages from main. A PR that touches the manual, the justfile or this workflow gets the
+# build only, so a broken manual (a SUMMARY.md entry with no page, a bad Mermaid asset) can't land.
+# The `docs` job is path-filtered and is not a required check, so a PR that touches none of the
+# paths is not left waiting on it, the same as installers.yml. Pages is set to build_type
+# "workflow" in the repository settings. See docs/references/dev_workflow.md#the-user-manual.
+
+on:
+  pull_request:
+    paths:
+      - "docs/manual/**"
+      - "justfile"
+      - ".github/workflows/docs.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docs/manual/**"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: docs-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: docs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      # sha256 of the x86_64-unknown-linux-gnu release archives. The versions themselves come from
+      # the justfile (mdbook_version, mdbook_mermaid_version); bumping one without the other fails
+      # the check.
+      MDBOOK_SHA256: 3f28de05dafca9d0f2eab99c662116b0e37b89b1d96a08f8f430b9eeae958cd7
+      MDBOOK_MERMAID_SHA256: 9afcfa5b8463afe606d48595a7ae338564302903e626ea5b6edb8007d29393a5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: just@1.59.0
+      - name: Install mdbook and mdbook-mermaid
+        run: |
+          set -eu
+          mdbook=$(just --evaluate mdbook_version)
+          mermaid=$(just --evaluate mdbook_mermaid_version)
+          curl -fsSL --retry 3 -o mdbook.tar.gz \
+            "https://github.com/rust-lang/mdBook/releases/download/v${mdbook}/mdbook-v${mdbook}-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${MDBOOK_SHA256}  mdbook.tar.gz" | sha256sum -c -
+          curl -fsSL --retry 3 -o mdbook-mermaid.tar.gz \
+            "https://github.com/badboy/mdbook-mermaid/releases/download/v${mermaid}/mdbook-mermaid-v${mermaid}-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${MDBOOK_MERMAID_SHA256}  mdbook-mermaid.tar.gz" | sha256sum -c -
+          tar -xzf mdbook.tar.gz mdbook
+          tar -xzf mdbook-mermaid.tar.gz mdbook-mermaid
+          sudo install mdbook mdbook-mermaid /usr/local/bin/
+          rm mdbook.tar.gz mdbook-mermaid.tar.gz mdbook mdbook-mermaid
+      - run: just docs
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: docs/manual/book
+
+  deploy:
+    name: deploy
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Only the job that publishes gets to write Pages and mint an OIDC token.
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    # One deploy at a time, and never cancel one halfway through.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

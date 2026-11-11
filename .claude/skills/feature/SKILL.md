@@ -101,6 +101,7 @@ them.
 | The shipped plugin or skill, the Action, examples | Integration Author | `plugin/` or `action.yml` |
 | A dependency, the toolchain, release config | Workspace Config Steward | serialized |
 | A hook, workflow, recipe, this repo's skills, lint config | Repository Tooling Steward | serialized |
+| The user manual (`docs/manual/src/**`) and `README.md`, when the feature changes a flag, a config key or an install method | Docs Author | those paths, in the **last** wave |
 | A sweep before the PR | Code and Docs Auditor | read-only, any time |
 
 Two rules decide what runs at once:
@@ -111,6 +112,12 @@ Two rules decide what runs at once:
 
 Dispatch everything independent in **one message with several Agent calls**. Sequence only what
 depends on earlier work: model first, then the modules that use it, then the CLI that exposes them.
+
+**Docs Author last.** It documents what the other agents built, so dispatch it in the final wave,
+after their branches are merged into the feature branch, and hand it each implementing agent's
+`user_facing_changes` from its report as the input. It runs in parallel with the Auditor, never
+before the implementers. A feature that changes no flag, config key or install method needs no
+Docs Author.
 
 ### The dispatch
 
