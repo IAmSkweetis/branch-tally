@@ -8,6 +8,7 @@ branch-tally <COMMAND>
 | ------- | ---- |
 | [`report`](#branch-tally-report) | Report Claude Code token usage for a git branch. |
 | [`record`](#branch-tally-record) | Append this branch's attributed usage to the repository ledger (write only). |
+| [`capture`](#branch-tally-capture) | Record this session's branch from a Claude Code hook payload on stdin. Run by the [capture plugin](integration.md), not by hand. |
 | [`prices update`](#branch-tally-prices-update) | Refresh the per-user price cache from the LiteLLM model price list. |
 | [`prices show`](#branch-tally-prices-show) | Show which price table reports would use, with its source, date and path. |
 | [`config show`](#branch-tally-config-show) | Show the config file path, whether it was found, and each effective value and its source. |
@@ -103,6 +104,9 @@ assigns calls to branches.
 
 **`claim` (the default).** Starts from each call's stamp, then:
 
+- places a session's own call that has no stamp, or a `worktree-agent-…` stamp, on the branch the
+  session's [hook captures](captures.md) agree on around that call (*captured hook data*). This
+  needs the capture plugin, and wins over the worktree and origin recovery below;
 - recovers the branch of a subagent call stamped `worktree-agent-…` from the worktree it ran in
   (*worktree recovery*), and of an unstamped call read from a worktree's transcripts from that
   worktree (*origin recovery*), using `git worktree list`, so the worktree must still exist;
@@ -112,9 +116,9 @@ assigns calls to branches.
   `bugfix/`, `hotfix/`, `chore/` or `release/`. So a session that started on `main` and then moved
   to `feat/x` counts entirely toward `feat/x`.
 
-**`strict`.** Keeps only the calls whose stamp is the branch: no session claim, no worktree
-recovery and no dispatcher roll-up. This is the most literal filter, and it usually counts less
-than `claim`.
+**`strict`.** Keeps only the calls whose stamp is the branch: no session claim, no captured hook
+data, no worktree recovery and no dispatcher roll-up. This is the most literal filter, and it
+usually counts less than `claim`.
 
 **`timeline`.** Follows each session's branch over time instead of giving it one branch. A call
 stamped with a work branch stays there. A call stamped with something else (the default branch,
@@ -122,7 +126,7 @@ a `worktree-agent-…` branch) goes to the work branch the session was last on, 
 session's first work-branch call, to the first one it moves to. Subagent calls go to the
 dispatcher's branch at the moment of dispatch. A call with no usable timestamp, or two work
 branches at the same instant, is ambiguous: it keeps its raw stamp and is reported as such. There
-is no worktree lookup in this mode.
+is no worktree lookup in this mode, and hook captures are not used.
 
 In timeline mode, a work branch is by default every branch except the repository's default branch
 and `worktree-agent-*`. The default branch is read from `origin/HEAD`, then from git's
@@ -171,7 +175,7 @@ With `--no-cost`, the cost columns are left out.
 | `totalCostIsFloor` | `true` when the cost is a lower bound, for example because a model is unpriced. |
 | `unpricedModels` | Model ids that had no price. |
 | `priceTable` | `asOf` (the table's date) and `source`: `"bundled"`, `"cache"` or `"override"`. |
-| `heuristics` | Calls and tokens per attribution heuristic (`sessionClaim`, `worktreeRecovery`, `originRecovery`, `dispatcherRollUp`, `timelineForward`, `timelineCarried`) and `ambiguous`, plus `isFloor`. Absent when no heuristic applied. |
+| `heuristics` | Calls and tokens per attribution heuristic (`sessionClaim`, `worktreeRecovery`, `originRecovery`, `dispatcherRollUp`, `timelineForward`, `timelineCarried`) and `ambiguous`, plus `isFloor`. `captured` is added only when [hook captures](captures.md) placed at least one call. Absent when no heuristic applied. |
 | `subagents` | Subagent totals (calls, tokens, dispatched subagents, workspaces, worktrees, unattributed and unlinked counts, cost) and `rows`, one per subagent and model with token counts and cost. Present when subagents did part of the work. |
 | `sessions` | One object per session: `id`, `origin` (`"main"` or the worktree), `first` and `last` timestamps, `calls`, `tokens` and `agents`. |
 | `models` | One object per model id: `calls`, `input`, `cacheWrite5m`, `cacheWrite1h`, `cacheRead`, `output`, `thinking` and `costUSD` (`null` when unpriced). |
@@ -317,11 +321,12 @@ file, `record` uses `mode` and `work-branch` and ignores the rest.
 branch-tally capture
 ```
 
-Run by the capture plugin's hooks (`SessionStart`, `SubagentStop`, `Stop`), not by hand. It reads
-one hook payload from stdin and appends an id-only event to `.tally/captures.jsonl` in the **main
-checkout**, so a worktree session's captures land in one place. The event holds the session id, the
-agent id, the branch, the event kind and a timestamp. No path and no message content is stored or
-printed.
+Run by the [capture plugin](integration.md)'s hooks (`SessionStart`, `SubagentStop`, `Stop`), not
+by hand. It takes no options. It reads one hook payload from stdin and appends an id-only event to
+`.tally/captures.jsonl` in the **main checkout**, so a worktree session's captures land in one
+place. The event holds the session id, the agent id, the branch, the event kind and a timestamp.
+No path and no message content is stored or printed. The file and how reports use it are described
+in [Hook captures](captures.md).
 
 - The branch is the current branch of the payload's `cwd` (the process directory when the payload
   has none). A detached HEAD records nothing.
