@@ -326,7 +326,10 @@ Every PR:
 - **updates the manual** when it changes a CLI flag, a config key or an install method: edit the
   affected page under `docs/manual/src/` in the same PR. The manual documents what ships on
   `main`, so a feature still in flight is documented in the PR that lands it. A reviewer treats a
-  flag, key or install-method change with no `docs/manual/` change as incomplete.
+  flag, key or install-method change with no `docs/manual/` change as incomplete. The
+  `docs_drift` test ([testing.md](testing.md#docs-drift)) enforces the CLI and config half: a flag,
+  subcommand or config key missing from `cli.md` or `config.md` fails `just test`. Install methods
+  stay a review responsibility.
 
 `/create-gh-pr` handles the first four. Tick test-plan boxes honestly. An unticked box tells the
 reviewer something. A falsely ticked one is a lie they can't see.
