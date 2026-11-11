@@ -37,6 +37,8 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), String> {
             work_branch: args.work_branch.as_ref().map(|p| p.text.clone()),
             format: args.format_flag(),
             cost: args.cost_flag(),
+            redact: None,
+            redact_names: None,
         },
     )
     .map_err(|e| e.to_string())?;
