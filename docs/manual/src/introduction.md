@@ -73,6 +73,9 @@ flowchart LR
     R -- "report --pr" --> PR[Pull request body]
 ```
 
+To zoom a diagram, use the + and − buttons in its corner, or hold Ctrl (Cmd on macOS) and turn the
+mouse wheel. Once it is zoomed in, drag to pan, and the reset button returns it to normal size.
+
 - **Source** reads the transcript files for the repository and its worktrees, and keeps only usage
   records.
 - **Attribution** assigns each call a branch, including subagent calls rolled up to the branch
