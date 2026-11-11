@@ -220,6 +220,15 @@ expected behaviour directly, next to the same issue number. `malformed-and-keyle
   the session table header reads `Span (UTC date)` with the stored dates printed whole instead of
   sliced as clock times. Insta snapshots in
   `crates/branch-tally-core/tests/snapshots/render__*redacted*.snap` pin all three.
+- Output divergence #39 (Markdown escaping): the reference prints transcript-derived strings into
+  the Markdown raw. Rust renders model ids, session ids, worktree names and the branch as code
+  spans whose fence is longer than any run of backticks inside. In table cells it also escapes
+  `|`. Agent, subagent and attribution names become plain text with `\`, backticks and `|`
+  backslash-escaped and `&`, `<`, `>` as entities. Line breaks become spaces everywhere. A name
+  with none of those characters renders as before, so the manual byte-parity runs still hold. The
+  JSON report is unaffected. `render__markdown_hostile_names_*.snap` pins every character, and
+  `every_table_row_keeps_its_column_count_whatever_the_names_contain` checks each table row
+  splits like its header, the way cmark-gfm splits it.
 - The bundled table was reseeded from LiteLLM's current rates (#5), not the reference's `PRICES`.
   Every model the goldens price (`claude-fable-5-1`, `claude-opus-5`, `claude-sonnet-4-6`) has the
   same input, output and cache-read rate in both, so every cost still matches the goldens exactly
