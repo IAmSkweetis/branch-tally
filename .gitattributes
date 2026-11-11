@@ -2,3 +2,6 @@
 
 # Transcript fixtures reproduce what a harness writes, byte for byte.
 tests/fixtures/** -text
+
+# The ledger is append-only JSONL; union keeps both sides' lines so parallel branches merge cleanly.
+.tally/ledger.jsonl merge=union
