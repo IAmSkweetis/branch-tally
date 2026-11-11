@@ -1,0 +1,25 @@
+/* Styling for the zoom controls svg-pan-zoom-init.js adds to each Mermaid diagram. */
+
+pre.mermaid svg {
+    /* Let a pinch gesture reach the script while one-finger scrolling stays with the page. */
+    touch-action: pan-x pan-y;
+}
+
+pre.mermaid svg.pan-zoom-zoomed {
+    /* Mermaid sizes the diagram from its aspect ratio, so a wide one is a thin strip and zooming
+       would only show a sliver of it. While zoomed in, give it room. */
+    height: 70vh;
+    cursor: grab;
+}
+
+pre.mermaid svg.pan-zoom-zoomed:active {
+    cursor: grabbing;
+}
+
+/* The controls are drawn in the SVG itself with fixed light-theme colours. Invert them in the
+   dark mdBook themes so they stay legible against a dark page. */
+html.navy pre.mermaid #svg-pan-zoom-controls,
+html.coal pre.mermaid #svg-pan-zoom-controls,
+html.ayu pre.mermaid #svg-pan-zoom-controls {
+    filter: invert(1);
+}

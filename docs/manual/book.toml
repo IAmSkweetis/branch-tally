@@ -2,6 +2,16 @@
 # in the justfile (mdbook_version, mdbook_mermaid_version) and must stay mutually compatible.
 # mermaid.min.js and mermaid-init.js are the assets `mdbook-mermaid install` writes for that
 # pinned version. Refresh them with it when the pin moves. See docs/references/dev_workflow.md.
+#
+# Vendored, not generated: svg-pan-zoom.min.js makes the diagrams zoomable, driven by
+# svg-pan-zoom-init.js and styled by svg-pan-zoom.css (all three are repository tooling).
+#   version   3.6.2 (the latest release on npm; GitHub's releases page stops at 3.6.1)
+#   source    https://registry.npmjs.org/svg-pan-zoom/-/svg-pan-zoom-3.6.2.tgz, file
+#             package/dist/svg-pan-zoom.min.js (tarball sha1 be136506211b242627a234a9656f8128fcbbabed)
+#   sha256    9c8fc41b3359e699990766dd7a943595d234a80c880a90dfc14b920a273b99d8, recorded in
+#             svg-pan-zoom.min.js.sha256 and checked by `just check-pins` (part of `just ci`)
+#   licence   BSD-2-Clause, text in svg-pan-zoom.LICENSE
+#   project   https://github.com/bumbu/svg-pan-zoom
 
 [book]
 title = "branch-tally"
@@ -18,6 +28,13 @@ create-missing = false
 command = "mdbook-mermaid"
 
 [output.html]
-site-url = "/branch-tally/"
+# The manual is served from the apex of https://branch-tally.io/, so links are rooted at "/".
+site-url = "/"
 git-repository-url = "https://github.com/IAmSkweetis/branch-tally"
-additional-js = ["mermaid.min.js", "mermaid-init.js"]
+additional-js = [
+    "mermaid.min.js",
+    "mermaid-init.js",
+    "svg-pan-zoom.min.js",
+    "svg-pan-zoom-init.js",
+]
+additional-css = ["svg-pan-zoom.css"]
