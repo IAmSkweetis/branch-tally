@@ -19,6 +19,7 @@ fn main() -> ExitCode {
     let args = cli::Cli::parse();
     let result = match args.command {
         cli::Command::Report(args) => report::run(&args),
+        cli::Command::Record(args) => report::record(&args),
         cli::Command::Prices(command) => prices::run(&command).map(|text| {
             // Verbatim UTF-8 with LF, whatever the console codepage.
             let mut out = std::io::stdout().lock();
