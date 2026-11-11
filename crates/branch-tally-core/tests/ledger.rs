@@ -5,7 +5,7 @@ use std::process::Command;
 
 use branch_tally_core::ledger::{self, Clock, Identity, LEDGER_PATH};
 use branch_tally_core::model::{
-    AgentId, AttributedRecord, Attribution, BranchBasis, Harness, Record, RequestId,
+    AgentId, AttributedRecord, Attribution, BranchBasis, Harness, Mode, Record, RequestId,
     SelectedRecord, Selection, SessionId, Usage,
 };
 
@@ -75,6 +75,8 @@ fn two_worktrees_record_concurrently_and_merge_without_conflicts_or_double_count
     ledger::append(
         &ledger_path,
         &[selected("base", "feat/x", 1)],
+        "feat/x",
+        Mode::Claim,
         &Identity,
         &CLOCK,
     )
@@ -87,7 +89,7 @@ fn two_worktrees_record_concurrently_and_merge_without_conflicts_or_double_count
         selected("shared", "feat/x", 10),
         selected("only-a", "feat/x", 100),
     ];
-    ledger::append(&ledger_path, &a, &Identity, &CLOCK).unwrap();
+    ledger::append(&ledger_path, &a, "feat/x", Mode::Claim, &Identity, &CLOCK).unwrap();
     git_ok(root, &["commit", "-q", "-am", "a"]);
 
     git_ok(root, &["checkout", "-q", "main"]);
@@ -96,7 +98,7 @@ fn two_worktrees_record_concurrently_and_merge_without_conflicts_or_double_count
         selected("shared", "feat/x", 10),
         selected("only-b", "feat/x", 1000),
     ];
-    ledger::append(&ledger_path, &b, &Identity, &CLOCK).unwrap();
+    ledger::append(&ledger_path, &b, "feat/x", Mode::Claim, &Identity, &CLOCK).unwrap();
     git_ok(root, &["commit", "-q", "-am", "b"]);
 
     git_ok(root, &["checkout", "-q", "main"]);
@@ -143,19 +145,43 @@ fn the_same_id_recorded_at_different_times_survives_the_merge_as_one_duplicate()
     )
     .unwrap();
     let p = root.join(LEDGER_PATH);
-    ledger::append(&p, &[selected("base", "feat/x", 1)], &Identity, &CLOCK).unwrap();
+    ledger::append(
+        &p,
+        &[selected("base", "feat/x", 1)],
+        "feat/x",
+        Mode::Claim,
+        &Identity,
+        &CLOCK,
+    )
+    .unwrap();
     git_ok(root, &["add", "-A"]);
     git_ok(root, &["commit", "-q", "-m", "base"]);
 
     git_ok(root, &["checkout", "-q", "-b", "agent-a"]);
     let early = Fixed("2026-01-02T00:00:00Z");
-    ledger::append(&p, &[selected("dup", "feat/x", 10)], &Identity, &early).unwrap();
+    ledger::append(
+        &p,
+        &[selected("dup", "feat/x", 10)],
+        "feat/x",
+        Mode::Claim,
+        &Identity,
+        &early,
+    )
+    .unwrap();
     git_ok(root, &["commit", "-q", "-am", "a"]);
 
     git_ok(root, &["checkout", "-q", "main"]);
     git_ok(root, &["checkout", "-q", "-b", "agent-b"]);
     let late = Fixed("2026-01-03T00:00:00Z");
-    ledger::append(&p, &[selected("dup", "feat/x", 10)], &Identity, &late).unwrap();
+    ledger::append(
+        &p,
+        &[selected("dup", "feat/x", 10)],
+        "feat/x",
+        Mode::Claim,
+        &Identity,
+        &late,
+    )
+    .unwrap();
     git_ok(root, &["commit", "-q", "-am", "b"]);
 
     git_ok(root, &["checkout", "-q", "main"]);
@@ -195,7 +221,7 @@ fn a_written_line_carries_no_cwd_content_or_raw_stamp() {
             agent: None,
         };
     }
-    ledger::append(&p, &[s], &Identity, &CLOCK).unwrap();
+    ledger::append(&p, &[s], "feat/x", Mode::Claim, &Identity, &CLOCK).unwrap();
     let text = std::fs::read_to_string(&p).unwrap();
     assert!(!text.contains("secret-user"), "cwd leaked");
     assert!(
@@ -217,8 +243,10 @@ fn a_written_line_carries_no_cwd_content_or_raw_stamp() {
         "branch",
         "harness",
         "kept_by",
+        "mode",
         "model",
         "recorded_at",
+        "recorded_for",
         "request_id",
         "session_id",
         "skill",

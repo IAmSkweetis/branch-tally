@@ -1,5 +1,5 @@
 use super::*;
-use crate::model::{Origin, Workspace};
+use crate::model::{Mode, Origin, Workspace};
 
 const CLOCK: Fixed = Fixed("2026-01-01T00:00:00Z");
 
@@ -49,7 +49,7 @@ fn path(dir: &tempfile::TempDir) -> PathBuf {
 #[test]
 fn entry_round_trips_stored_fields_and_drops_the_rest() {
     let s = selected("r1", "feat/a", 5);
-    let back = LedgerEntry::from_selected(&s).to_selected();
+    let back = LedgerEntry::from_selected(&s, "b", Mode::Claim).to_selected();
     let (a, b) = (&s.attributed, &back.attributed);
     assert_eq!(b.branch, "feat/a");
     assert_eq!(b.basis, a.basis);
@@ -80,7 +80,7 @@ fn append_creates_dir_writes_lf_lines_and_is_idempotent() {
     let dir = tempfile::tempdir().unwrap();
     let p = path(&dir);
     let recs = [selected("r1", "b", 1), selected("r2", "b", 2)];
-    let out = append(&p, &recs, &Identity, &CLOCK).unwrap();
+    let out = append(&p, &recs, "b", Mode::Claim, &Identity, &CLOCK).unwrap();
     assert_eq!(
         out,
         AppendOutcome {
@@ -91,7 +91,7 @@ fn append_creates_dir_writes_lf_lines_and_is_idempotent() {
     let text = std::fs::read_to_string(&p).unwrap();
     assert_eq!(text.lines().count(), 2);
     assert!(text.ends_with('\n') && !text.contains('\r'));
-    let again = append(&p, &recs, &Identity, &CLOCK).unwrap();
+    let again = append(&p, &recs, "b", Mode::Claim, &Identity, &CLOCK).unwrap();
     assert_eq!(
         again,
         AppendOutcome {
@@ -107,7 +107,7 @@ fn append_skips_duplicate_ids_within_one_call() {
     let dir = tempfile::tempdir().unwrap();
     let p = path(&dir);
     let recs = [selected("r1", "b", 1), selected("r1", "b", 1)];
-    let out = append(&p, &recs, &Identity, &CLOCK).unwrap();
+    let out = append(&p, &recs, "b", Mode::Claim, &Identity, &CLOCK).unwrap();
     assert_eq!(
         out,
         AppendOutcome {
@@ -121,7 +121,15 @@ fn append_skips_duplicate_ids_within_one_call() {
 fn lines_have_stable_key_order() {
     let dir = tempfile::tempdir().unwrap();
     let p = path(&dir);
-    append(&p, &[selected("r1", "b", 1)], &Identity, &CLOCK).unwrap();
+    append(
+        &p,
+        &[selected("r1", "b", 1)],
+        "b",
+        Mode::Claim,
+        &Identity,
+        &CLOCK,
+    )
+    .unwrap();
     let text = std::fs::read_to_string(&p).unwrap();
     assert!(
         text.starts_with(
@@ -134,10 +142,26 @@ fn lines_have_stable_key_order() {
 fn append_after_a_file_without_trailing_newline_starts_a_new_line() {
     let dir = tempfile::tempdir().unwrap();
     let p = path(&dir);
-    append(&p, &[selected("r1", "b", 1)], &Identity, &CLOCK).unwrap();
+    append(
+        &p,
+        &[selected("r1", "b", 1)],
+        "b",
+        Mode::Claim,
+        &Identity,
+        &CLOCK,
+    )
+    .unwrap();
     let text = std::fs::read_to_string(&p).unwrap();
     std::fs::write(&p, text.trim_end()).unwrap();
-    append(&p, &[selected("r2", "b", 1)], &Identity, &CLOCK).unwrap();
+    append(
+        &p,
+        &[selected("r2", "b", 1)],
+        "b",
+        Mode::Claim,
+        &Identity,
+        &CLOCK,
+    )
+    .unwrap();
     let l = read(&p).unwrap();
     assert_eq!(l.entries().len(), 2);
     assert_eq!(l.stats().malformed, 0);
@@ -147,7 +171,15 @@ fn append_after_a_file_without_trailing_newline_starts_a_new_line() {
 fn malformed_and_unsupported_lines_are_counted_with_line_numbers() {
     let dir = tempfile::tempdir().unwrap();
     let p = path(&dir);
-    append(&p, &[selected("r1", "b", 1)], &Identity, &CLOCK).unwrap();
+    append(
+        &p,
+        &[selected("r1", "b", 1)],
+        "b",
+        Mode::Claim,
+        &Identity,
+        &CLOCK,
+    )
+    .unwrap();
     let mut text = std::fs::read(&p).unwrap();
     text.extend_from_slice(b"not json at all\n");
     text.extend_from_slice(b"{\"v\":1}\n");
@@ -166,7 +198,15 @@ fn malformed_and_unsupported_lines_are_counted_with_line_numbers() {
 fn identical_duplicates_collapse_and_are_counted_as_duplicates() {
     let dir = tempfile::tempdir().unwrap();
     let p = path(&dir);
-    append(&p, &[selected("r1", "b", 1)], &Identity, &CLOCK).unwrap();
+    append(
+        &p,
+        &[selected("r1", "b", 1)],
+        "b",
+        Mode::Claim,
+        &Identity,
+        &CLOCK,
+    )
+    .unwrap();
     let text = std::fs::read_to_string(&p).unwrap();
     std::fs::write(&p, format!("{text}{text}")).unwrap();
     let l = read(&p).unwrap();
@@ -178,8 +218,18 @@ fn identical_duplicates_collapse_and_are_counted_as_duplicates() {
 fn conflicting_duplicates_resolve_deterministically_and_are_counted() {
     let dir = tempfile::tempdir().unwrap();
     let p = path(&dir);
-    let a = serde_json::to_string(&LedgerEntry::from_selected(&selected("r1", "b", 1))).unwrap();
-    let b = serde_json::to_string(&LedgerEntry::from_selected(&selected("r1", "b", 9))).unwrap();
+    let a = serde_json::to_string(&LedgerEntry::from_selected(
+        &selected("r1", "b", 1),
+        "b",
+        Mode::Claim,
+    ))
+    .unwrap();
+    let b = serde_json::to_string(&LedgerEntry::from_selected(
+        &selected("r1", "b", 9),
+        "b",
+        Mode::Claim,
+    ))
+    .unwrap();
     std::fs::create_dir_all(p.parent().unwrap()).unwrap();
     std::fs::write(&p, format!("{a}\n{b}\n")).unwrap();
     let one = read(&p).unwrap();
@@ -202,7 +252,15 @@ impl Redact for Mask {
 fn redaction_applies_to_every_entry_before_write() {
     let dir = tempfile::tempdir().unwrap();
     let p = path(&dir);
-    append(&p, &[selected("r1", "b", 1)], &Mask, &CLOCK).unwrap();
+    append(
+        &p,
+        &[selected("r1", "b", 1)],
+        "b",
+        Mode::Claim,
+        &Mask,
+        &CLOCK,
+    )
+    .unwrap();
     let l = read(&p).unwrap();
     assert_eq!(l.entries()[0].session_id.as_str(), "masked");
 }
@@ -214,6 +272,8 @@ fn union_counts_each_side_and_prefers_the_ledger_copy() {
     append(
         &p,
         &[selected("r1", "b", 1), selected("r2", "b", 2)],
+        "b",
+        Mode::Claim,
         &Identity,
         &CLOCK,
     )
@@ -243,7 +303,7 @@ impl Clock for Fixed {
 }
 
 fn line(id: &str, output: u64, recorded_at: Option<&str>) -> String {
-    let mut e = LedgerEntry::from_selected(&selected(id, "b", output));
+    let mut e = LedgerEntry::from_selected(&selected(id, "b", output), "b", Mode::Claim);
     e.recorded_at = recorded_at.map(str::to_owned);
     serde_json::to_string(&e).unwrap()
 }
@@ -258,7 +318,15 @@ fn append_stamps_recorded_at_from_the_injected_clock() {
     let dir = tempfile::tempdir().unwrap();
     let p = path(&dir);
     let clock = Fixed("2026-02-03T04:05:06Z");
-    append(&p, &[selected("r1", "b", 1)], &Identity, &clock).unwrap();
+    append(
+        &p,
+        &[selected("r1", "b", 1)],
+        "b",
+        Mode::Claim,
+        &Identity,
+        &clock,
+    )
+    .unwrap();
     let l = read(&p).unwrap();
     assert_eq!(
         l.entries()[0].recorded_at.as_deref(),
@@ -333,4 +401,78 @@ fn a_line_without_recorded_at_is_accepted() {
     let l = read(&p).unwrap();
     assert_eq!((l.entries().len(), l.stats().malformed), (1, 0));
     assert_eq!(l.entries()[0].recorded_at, None);
+}
+
+#[test]
+fn the_same_request_recorded_for_two_branches_keeps_one_line_each() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = path(&dir);
+    let recs = [selected("r1", "other", 1)];
+    let a = append(&p, &recs, "feat/a", Mode::Claim, &Identity, &CLOCK).unwrap();
+    let b = append(&p, &recs, "feat/b", Mode::Claim, &Identity, &CLOCK).unwrap();
+    assert_eq!((a.appended, b.appended), (1, 1));
+    // Re-recording either one appends nothing.
+    let a2 = append(&p, &recs, "feat/a", Mode::Claim, &Identity, &CLOCK).unwrap();
+    let b2 = append(&p, &recs, "feat/b", Mode::Claim, &Identity, &CLOCK).unwrap();
+    assert_eq!(
+        (a2.appended, a2.skipped, b2.appended, b2.skipped),
+        (0, 1, 0, 1)
+    );
+    let l = read(&p).unwrap();
+    assert_eq!(l.entries().len(), 2);
+    assert_eq!((l.stats().duplicates, l.stats().conflicts), (0, 0));
+}
+
+#[test]
+fn for_branch_keeps_only_entries_recorded_for_that_branch() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = path(&dir);
+    let one = [selected("r1", "x", 1)];
+    let two = [selected("r1", "x", 1), selected("r2", "x", 2)];
+    append(&p, &one, "feat/a", Mode::Claim, &Identity, &CLOCK).unwrap();
+    append(&p, &two, "feat/b", Mode::Claim, &Identity, &CLOCK).unwrap();
+    let l = read(&p).unwrap();
+    assert_eq!(l.for_branch("feat/a").entries().len(), 1);
+    assert_eq!(l.for_branch("feat/b").entries().len(), 2);
+    assert_eq!(l.for_branch("nope").entries().len(), 0);
+}
+
+#[test]
+fn the_same_key_with_a_different_mode_is_a_conflict_won_by_the_later_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = path(&dir);
+    let recs = [selected("r1", "x", 1)];
+    let early = Fixed("2026-01-01T00:00:00Z");
+    append(&p, &recs, "feat/a", Mode::Claim, &Identity, &early).unwrap();
+    // Appending skips the held key, so write the second line directly.
+    let mut later = LedgerEntry::from_selected(&recs[0], "feat/a", Mode::Timeline);
+    later.recorded_at = Some("2026-02-01T00:00:00Z".to_owned());
+    let mut text = std::fs::read_to_string(&p).unwrap();
+    text.push_str(&serde_json::to_string(&later).unwrap());
+    text.push('\n');
+    std::fs::write(&p, text).unwrap();
+    let l = read(&p).unwrap();
+    assert_eq!((l.entries().len(), l.stats().conflicts), (1, 1));
+    assert_eq!(l.entries()[0].mode, Mode::Timeline);
+}
+
+#[test]
+fn modes_lists_each_distinct_mode_once_in_stable_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = path(&dir);
+    let at = |id: &str, mode| {
+        append(
+            &p,
+            &[selected(id, "x", 1)],
+            "feat/a",
+            mode,
+            &Identity,
+            &CLOCK,
+        )
+    };
+    at("r1", Mode::Timeline).unwrap();
+    at("r2", Mode::Claim).unwrap();
+    at("r3", Mode::Claim).unwrap();
+    let l = read(&p).unwrap();
+    assert_eq!(l.modes(), vec![Mode::Claim, Mode::Timeline]);
 }

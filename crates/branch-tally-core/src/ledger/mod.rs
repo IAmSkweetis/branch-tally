@@ -1,11 +1,14 @@
 //! The repository ledger: attributed usage kept in `.tally/ledger.jsonl` (decision 0002).
 //!
-//! One JSON object per line, keyed by the API call's request id. The file is append-only and set
-//! to `merge=union` in `.gitattributes`, so concurrent branches merge without conflicts; a reader
-//! collapses duplicate request ids, and a writer appends only ids the ledger does not hold.
+//! One JSON object per line, keyed by the API call's request id and the branch `record` was run
+//! for: a request two branches both claim is written once per branch, because each branch's report
+//! claims it. The file is append-only and set to `merge=union` in `.gitattributes`, so concurrent
+//! branches merge without conflicts; a reader collapses duplicate keys, and a writer appends only
+//! keys the ledger does not hold.
 //!
-//! A line holds usage, model, timestamp, branch, session and agent ids, the attribution basis,
-//! the selection that kept the record, the skill and agent names and the subagent tags. It never
+//! A line holds usage, model, timestamp, the branch and mode it was recorded for, the assigned
+//! branch, session and agent ids, the attribution basis, the selection that kept the record, the
+//! skill and agent names and the subagent tags. It never
 //! holds message content or a working directory (Governance III): there is no field for either.
 //! Every entry passes through a [`Redact`] seam before it is written; [`Identity`] is the default
 //! until #9 supplies a policy.
@@ -18,7 +21,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    AgentId, AttributedRecord, Attribution, BranchBasis, Harness, Record, RequestId,
+    AgentId, AttributedRecord, Attribution, BranchBasis, Harness, Mode, Record, RequestId,
     SelectedRecord, Selection, SessionId, SubagentTags, Usage,
 };
 
@@ -48,7 +51,12 @@ pub struct LedgerEntry {
     /// The model id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    /// The branch attribution assigned.
+    /// The branch `record` was run for. With `request_id` it is the ledger key: a request that
+    /// two branches both claim is written once per branch.
+    pub recorded_for: String,
+    /// The mode the record was selected under.
+    pub mode: Mode,
+    /// The branch attribution assigned. The report's tables use this one.
     pub branch: String,
     /// How the branch was decided.
     pub basis: BranchBasis,
@@ -111,7 +119,14 @@ fn format_rfc3339_utc(secs: u64) -> String {
     )
 }
 
+/// The ledger key: the request id and the branch it was recorded for.
+type EntryKey = (RequestId, String);
+
 impl LedgerEntry {
+    fn key(&self) -> EntryKey {
+        (self.request_id.clone(), self.recorded_for.clone())
+    }
+
     /// Whether the two entries hold the same data, ignoring `recorded_at`.
     fn same_data(&self, other: &Self) -> bool {
         let mut a = self.clone();
@@ -131,7 +146,7 @@ impl LedgerEntry {
 
     /// The entry for a selected record. Content, cwd and the raw branch stamp are not carried.
     #[must_use]
-    pub fn from_selected(selected: &SelectedRecord) -> Self {
+    pub fn from_selected(selected: &SelectedRecord, recorded_for: &str, mode: Mode) -> Self {
         let a = &selected.attributed;
         let r = &a.record;
         Self {
@@ -142,6 +157,8 @@ impl LedgerEntry {
             agent_id: r.agent_id.clone(),
             ts: r.ts.clone(),
             model: r.model.clone(),
+            recorded_for: recorded_for.to_owned(),
+            mode,
             branch: a.branch.clone(),
             basis: a.basis,
             kept_by: selected.kept_by,
@@ -255,6 +272,30 @@ impl Ledger {
     pub fn to_selected(&self) -> Vec<SelectedRecord> {
         self.entries.iter().map(LedgerEntry::to_selected).collect()
     }
+
+    /// The entries recorded for `branch`, as a ledger of their own (same read stats).
+    #[must_use]
+    pub fn for_branch(&self, branch: &str) -> Self {
+        let entries: Vec<LedgerEntry> = self
+            .entries
+            .iter()
+            .filter(|e| e.recorded_for == branch)
+            .cloned()
+            .collect();
+        Self {
+            entries,
+            stats: self.stats.clone(),
+        }
+    }
+
+    /// The distinct modes the entries were recorded under, in strict, claim, timeline order.
+    #[must_use]
+    pub fn modes(&self) -> Vec<Mode> {
+        [Mode::Strict, Mode::Claim, Mode::Timeline]
+            .into_iter()
+            .filter(|m| self.entries.iter().any(|e| e.mode == *m))
+            .collect()
+    }
 }
 
 /// A ledger operation failed.
@@ -314,8 +355,8 @@ pub fn read(path: &Path) -> Result<Ledger, LedgerError> {
         }
     };
     let mut ledger = Ledger::default();
-    let mut index: std::collections::HashMap<RequestId, usize> = std::collections::HashMap::new();
-    let mut conflicted: std::collections::HashSet<RequestId> = std::collections::HashSet::new();
+    let mut index: std::collections::HashMap<EntryKey, usize> = std::collections::HashMap::new();
+    let mut conflicted: std::collections::HashSet<EntryKey> = std::collections::HashSet::new();
     for (i, raw) in bytes.split(|b| *b == b'\n').enumerate() {
         let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
         if raw.iter().all(u8::is_ascii_whitespace) {
@@ -335,16 +376,16 @@ pub fn read(path: &Path) -> Result<Ledger, LedgerError> {
                 continue;
             }
         };
-        match index.get(&entry.request_id) {
+        match index.get(&entry.key()) {
             None => {
-                index.insert(entry.request_id.clone(), ledger.entries.len());
+                index.insert(entry.key(), ledger.entries.len());
                 ledger.entries.push(entry);
             }
             Some(&at) => {
                 let held = &mut ledger.entries[at];
                 if held.same_data(&entry) {
                     ledger.stats.duplicates += 1;
-                } else if conflicted.insert(entry.request_id.clone()) {
+                } else if conflicted.insert(entry.key()) {
                     ledger.stats.conflicts += 1;
                 }
                 if entry.wins_over(held) {
@@ -375,6 +416,8 @@ pub struct AppendOutcome {
 pub fn append(
     path: &Path,
     records: &[SelectedRecord],
+    recorded_for: &str,
+    mode: Mode,
     redact: &dyn Redact,
     clock: &dyn Clock,
 ) -> Result<AppendOutcome, LedgerError> {
@@ -385,18 +428,15 @@ pub fn append(
         source,
     };
     let existing = read(path)?;
-    let mut seen: std::collections::HashSet<RequestId> = existing
-        .entries()
-        .iter()
-        .map(|e| e.request_id.clone())
-        .collect();
+    let mut seen: std::collections::HashSet<EntryKey> =
+        existing.entries().iter().map(LedgerEntry::key).collect();
     let recorded_at = clock.now();
     let mut out = AppendOutcome::default();
     let mut buf = String::new();
     for rec in records {
-        let mut entry = redact.redact(LedgerEntry::from_selected(rec));
+        let mut entry = redact.redact(LedgerEntry::from_selected(rec, recorded_for, mode));
         entry.recorded_at = Some(recorded_at.clone());
-        if !seen.insert(entry.request_id.clone()) {
+        if !seen.insert(entry.key()) {
             out.skipped += 1;
             continue;
         }
