@@ -538,6 +538,7 @@ pub fn record(
         &sel.selected,
         &branch,
         options.mode,
+        Some(&live.main_checkout),
         redact,
         clock,
     )?;
@@ -588,7 +589,8 @@ pub fn run_from_ledger(
     let read = crate::ledger::read(ledger_path)?;
     // Exactly the entries `record` wrote for this branch; the ledger keys on (request, branch).
     let ledger = read.for_branch(&branch);
-    let ledger_records = ledger.to_selected();
+    let main_checkout = git.main_checkout(repo_dir);
+    let ledger_records = ledger.to_selected(Some(&main_checkout));
     let mut info = LedgerReport {
         ledger_stats: read.stats().clone(),
         ledger_only: ledger_records.len() as u64,
@@ -614,7 +616,7 @@ pub fn run_from_ledger(
         );
         unavailable = live.unavailable;
         // The ledger's copy wins on overlap.
-        let union = crate::ledger::union(&ledger, &live_sel.selected);
+        let union = crate::ledger::union(&ledger, &live_sel.selected, Some(&main_checkout));
         let records = union.records;
         info.ledger_only = union.ledger_only;
         info.live_only = union.live_only;

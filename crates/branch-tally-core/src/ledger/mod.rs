@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    AgentId, AttributedRecord, Attribution, BranchBasis, Harness, Mode, Record, RequestId,
+    AgentId, AttributedRecord, Attribution, BranchBasis, Harness, Mode, Origin, Record, RequestId,
     SelectedRecord, Selection, SessionId, SubagentTags, Usage,
 };
 
@@ -71,6 +71,10 @@ pub struct LedgerEntry {
     /// The subagent tags, when attribution produced them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagent: Option<SubagentTags>,
+    /// The session's transcript root, stored relative to the repository. Absent on lines written
+    /// before it existed, which read as no origin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<StoredOrigin>,
     /// Token counts.
     pub usage: Usage,
     /// When the line was written (RFC 3339 UTC), stamped by [`append`] from its [`Clock`].
@@ -78,6 +82,62 @@ pub struct LedgerEntry {
     /// usage data: comparing entries for duplicates and conflicts ignores it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recorded_at: Option<String>,
+}
+
+/// A session origin as the ledger stores it: `"main"`, `{"worktree": "<relative name>"}` or
+/// `{"worktree": null}`.
+///
+/// A transcript slug encodes the worktree's full path, user name included, so it is never
+/// stored. The name is the slug minus the main checkout's slug, with leading separators trimmed
+/// (`claude-worktrees-agent-abc`). A slug outside the main checkout, or one recorded without
+/// knowing the main checkout, is stored unnamed and counted ([`AppendOutcome::unnamed_origins`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StoredOrigin {
+    /// The main checkout.
+    Main,
+    /// A worktree: its name relative to the repository, or `None` when it could not be derived.
+    Worktree(Option<String>),
+}
+
+impl StoredOrigin {
+    /// The stored form of `origin`, relative to `main`'s slug.
+    fn from_origin(origin: &Origin, main: Option<&Path>) -> Self {
+        match origin {
+            Origin::Main => Self::Main,
+            Origin::Worktree(slug) => Self::Worktree(main.and_then(|m| relative_name(slug, m))),
+        }
+    }
+
+    /// The origin a report shows, with the name re-prefixed by `main`'s current slug. An unnamed
+    /// worktree, or a name with no main checkout to re-prefix it, is `None`: unknown.
+    fn to_origin(&self, main: Option<&Path>) -> Option<Origin> {
+        match (self, main) {
+            (Self::Main, _) => Some(Origin::Main),
+            (Self::Worktree(Some(name)), Some(m)) => Some(Origin::worktree(format!(
+                "{}--{name}",
+                crate::paths::slug(m)
+            ))),
+            (Self::Worktree(_), _) => None,
+        }
+    }
+}
+
+/// `slug` minus the main checkout's slug and the separators after it. `None` when `slug` is not
+/// inside the main checkout (matched case-insensitively on a whole segment) or nothing remains.
+fn relative_name(slug: &str, main: &Path) -> Option<String> {
+    crate::paths::slug_candidates(main).iter().find_map(|m| {
+        let head = slug.get(..m.len())?;
+        if !head.eq_ignore_ascii_case(m) {
+            return None;
+        }
+        let rest = slug.get(m.len()..)?;
+        if !rest.starts_with('-') {
+            return None;
+        }
+        let name = rest.trim_start_matches('-');
+        (!name.is_empty()).then(|| name.to_owned())
+    })
 }
 
 /// The clock [`append`] stamps `recorded_at` from. Behind a trait so tests inject a fixed time.
@@ -146,7 +206,12 @@ impl LedgerEntry {
 
     /// The entry for a selected record. Content, cwd and the raw branch stamp are not carried.
     #[must_use]
-    pub fn from_selected(selected: &SelectedRecord, recorded_for: &str, mode: Mode) -> Self {
+    pub fn from_selected(
+        selected: &SelectedRecord,
+        recorded_for: &str,
+        mode: Mode,
+        main: Option<&Path>,
+    ) -> Self {
         let a = &selected.attributed;
         let r = &a.record;
         Self {
@@ -165,15 +230,19 @@ impl LedgerEntry {
             skill: r.attribution.skill.clone(),
             agent: r.attribution.agent.clone(),
             subagent: a.subagent.clone(),
+            origin: r
+                .origin
+                .as_ref()
+                .map(|o| StoredOrigin::from_origin(o, main)),
             usage: r.usage,
             recorded_at: None,
         }
     }
 
     /// The selected record this entry stands for. Fields the ledger does not store (cwd, raw
-    /// branch stamp, origin, parent session) are `None`/default.
+    /// branch stamp, parent session) are `None`/default.
     #[must_use]
-    pub fn to_selected(&self) -> SelectedRecord {
+    pub fn to_selected(&self, main: Option<&Path>) -> SelectedRecord {
         let mut record = Record::new(
             self.harness,
             self.session_id.clone(),
@@ -183,6 +252,7 @@ impl LedgerEntry {
         record.agent_id.clone_from(&self.agent_id);
         record.ts.clone_from(&self.ts);
         record.model.clone_from(&self.model);
+        record.origin = self.origin.as_ref().and_then(|o| o.to_origin(main));
         record.attribution = Attribution {
             skill: self.skill.clone(),
             agent: self.agent.clone(),
@@ -269,8 +339,8 @@ impl Ledger {
 
     /// The entries as selected records the summary stage can consume.
     #[must_use]
-    pub fn to_selected(&self) -> Vec<SelectedRecord> {
-        self.entries.iter().map(LedgerEntry::to_selected).collect()
+    pub fn to_selected(&self, main: Option<&Path>) -> Vec<SelectedRecord> {
+        self.entries.iter().map(|e| e.to_selected(main)).collect()
     }
 
     /// The entries recorded for `branch`, as a ledger of their own (same read stats).
@@ -405,6 +475,9 @@ pub struct AppendOutcome {
     pub appended: u64,
     /// Records skipped because the ledger (or an earlier record in the call) already held the id.
     pub skipped: u64,
+    /// Entries written whose worktree origin is unnamed: the session's slug was not inside the
+    /// main checkout's, so no name could be stored.
+    pub unnamed_origins: u64,
 }
 
 /// Appends the records whose request ids the ledger does not hold, after passing each through
@@ -418,6 +491,7 @@ pub fn append(
     records: &[SelectedRecord],
     recorded_for: &str,
     mode: Mode,
+    main: Option<&Path>,
     redact: &dyn Redact,
     clock: &dyn Clock,
 ) -> Result<AppendOutcome, LedgerError> {
@@ -434,7 +508,7 @@ pub fn append(
     let mut out = AppendOutcome::default();
     let mut buf = String::new();
     for rec in records {
-        let mut entry = redact.redact(LedgerEntry::from_selected(rec, recorded_for, mode));
+        let mut entry = redact.redact(LedgerEntry::from_selected(rec, recorded_for, mode, main));
         entry.recorded_at = Some(recorded_at.clone());
         if !seen.insert(entry.key()) {
             out.skipped += 1;
@@ -443,6 +517,7 @@ pub fn append(
         buf.push_str(&line_text(&entry));
         buf.push('\n');
         out.appended += 1;
+        out.unnamed_origins += u64::from(entry.origin == Some(StoredOrigin::Worktree(None)));
     }
     if out.appended == 0 {
         return Ok(out);
@@ -478,8 +553,8 @@ pub struct Union {
 
 /// Unions `ledger` with `live`, deduplicated by request id.
 #[must_use]
-pub fn union(ledger: &Ledger, live: &[SelectedRecord]) -> Union {
-    let mut records = ledger.to_selected();
+pub fn union(ledger: &Ledger, live: &[SelectedRecord], main: Option<&Path>) -> Union {
+    let mut records = ledger.to_selected(main);
     let mut seen: std::collections::HashSet<RequestId> = ledger
         .entries()
         .iter()
