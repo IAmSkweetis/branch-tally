@@ -47,6 +47,18 @@
       }
     ]
   },
+  "extraKnownMarketplaces": {
+    "branch-tally": {
+      "source": {
+        "source": "github",
+        "repo": "IAmSkweetis/branch-tally"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "branch-tally-capture@branch-tally": true,
+    "branch-tally-record@branch-tally": true
+  },
   "worktree": {
     "baseRef": "head"
   }

@@ -134,12 +134,20 @@ Never delete `main`, locally or remotely. Never force-push.
 
 ```bash
 git worktree prune
+git status --short -- . ':!.tally'    # must print nothing; .tally/ is appended to by the plugins
 git checkout main
-git pull --ff-only
+git fetch origin
+git merge --ff-only origin/main
 git worktree list
 git branch -a
 git status --short
 ```
+
+If `git merge --ff-only` refuses only because of uncommitted `.tally/` lines, leave `main` behind
+`origin/main` and the lines uncommitted, and tell the user. Don't discard them (captures can't be
+regenerated) and don't commit them on `main` or a side branch. The next `/feature` Step 2 cuts its
+branch from this state, commits `.tally/` there and merges `origin/main`. If anything outside
+`.tally/` is dirty, stop and ask.
 
 Report what was removed, what was left alone and why, and the state `main` is in. Offer `just test`
 if the user wants confidence the checkout is usable. Report the exit code **and the test count**.

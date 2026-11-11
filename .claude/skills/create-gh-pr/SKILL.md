@@ -25,7 +25,8 @@ $ARGUMENTS
 
 - `git branch --show-current` must not be `main`. If it is, stop and ask.
 - `gh auth status` must be authenticated.
-- `git status --short` should be clean. If there is uncommitted work, ask before going on.
+- `git status --short -- . ':!.tally'` should print nothing. If there is other uncommitted work, ask
+  before going on. Step 5 commits `.tally/`, so changes there are expected.
 - `just ci` should be green. Record the exit code **and the test count**. If it's red, say so and
   ask whether to open the PR as a draft.
 - `git fetch origin && git merge-base --is-ancestor origin/main HEAD`: if `main` has moved, offer
@@ -122,14 +123,23 @@ If that fails with a scope error, the PR is fine. Tell the user to run
 
 ## Step 5: Token usage
 
-Run this immediately once the PR exists, **while every agent worktree still exists**:
+Run this immediately once the PR exists, **while every agent worktree still exists**. It records
+the branch's usage into the committed ledger, then fills the PR table from that ledger:
 
 ```bash
-just token-report --pr      # runs the installed `branch-tally report --pr`
+just token-record                    # runs the installed `branch-tally record`
+git add .tally/ledger.jsonl          # and .tally/captures.jsonl too, if it exists
+git commit -m "chore: record token usage for this branch"
+git push
+just token-report --pr --from-ledger # runs the installed `branch-tally report --pr --from-ledger`
 ```
 
+Only add the `.tally/` files that changed. If `record` changed nothing, skip the commit and push.
+Push only this branch, never an agent's worktree branch. The commit must be a valid Conventional
+Commit (`chore:`), because the `commit-messages` check runs on it.
+
 It uses the **installed release binary**, not `cargo run` on this branch. If `branch-tally` isn't
-on `PATH`, the recipe stops with an install hint. Tell the user to install the latest
+on `PATH`, the recipes stop with an install hint. Tell the user to install the latest
 [release](https://github.com/IAmSkweetis/branch-tally/releases/latest) archive, and leave the
 placeholder until they have. Don't install it yourself, and don't fall back to
 `reference/token_report.py`: it is only the goldens' parity oracle now. Don't paste a number from
@@ -140,12 +150,16 @@ When reading the output:
 - **It must run on the machine that did the work**, within `cleanupPeriodDays` (default 30).
 - **The session's cwd must have been this repository.** Work started from another directory is
   filed under that directory's transcripts and is invisible here.
-- **It's a floor.** Until #6 and #7 land, worktree subagents and multi-branch sessions are
-  under-counted. Say "at least $X". Where the number looks wrong to the user, that's a finding:
-  offer to open an issue for it.
+- **Read the label as printed.** The total says "at least $X" only when some calls can't be
+  attributed with certainty or a model is unpriced. A ledger missing entries can understate the
+  total without that label, so don't present an unlabelled number as complete. `report
+  --from-ledger` also prints `note: unattributed counts unavailable from the ledger`, because the
+  ledger holds only this branch's calls (see the manual's
+  [ledger chapter](../../../docs/manual/src/ledger.md)).
+  Where the number looks wrong to the user, that's a finding: offer to open an issue for it.
 
-If the script fails, report what it said and move on. A missing table is worth reporting, never
-worth failing the PR over.
+If `record` or `report` fails, report what it said and move on. A missing table is worth reporting,
+never worth failing the PR over.
 
 ## Notes
 
