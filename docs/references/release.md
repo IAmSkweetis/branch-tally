@@ -216,7 +216,9 @@ Two layers. `installers.yml` runs on a pull request or push to `main` that chang
 `install.ps1`, `tests/install/**`, the `scripts/lint-install.*` and `scripts/test-install.sh`
 helpers or the workflow itself: ShellCheck on the shell files, PSScriptAnalyzer (pinned, warnings
 fail) on the PowerShell files, and the two offline test scripts (`sh tests/install/install_test.sh`,
-`pwsh -NoProfile -File tests/install/install_test.ps1`) on Ubuntu, macOS and Windows. It is
+`pwsh -NoProfile -File tests/install/install_test.ps1`) on Ubuntu, macOS and Windows. On a Windows
+host the sh suite is skipped with a message, because `install.sh` does not target Windows; the pwsh
+suite still runs, and a missing `pwsh` there still fails when `CI` is set. It is
 path-filtered like `workflow-audit.yml` and none of its jobs are required checks, so a pull request
 that touches none of those paths is not left waiting. Locally: `just lint-install` and
 `just test-install`, which print a skip when `shellcheck` or `pwsh` is absent and fail when `CI` is

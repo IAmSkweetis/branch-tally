@@ -148,5 +148,48 @@ inst test-psfail test-install.sh reject
 fake test-psfail pwsh 0
 inst test-psfail test-install.sh accept
 
+# On a Windows host install.sh is not the installer (install.ps1 is), so the sh suite is skipped
+# with a message while the pwsh suite still runs and still fails the gate. A Windows run without
+# pwsh stays a failure in CI: the skip must not become a false green. The sh test here always
+# exits 1, so an accept means it was skipped, and the pwsh stand-in's status decides the rest.
+fakeuname() {
+  # fakeuname <case> <kernel name>: a stand-in uname that prints the name.
+  rm -f "$scratch/$1/bin/uname"
+  printf '#!/bin/sh\necho %s\n' "$2" >"$scratch/$1/bin/uname"
+  chmod +x "$scratch/$1/bin/uname"
+}
+said() {
+  # said <case> <text>: the last inst run's output must contain the text.
+  total=$((total + 1))
+  case $out in *"$2"*) ;; *) wrong=$((wrong + 1)); echo "WRONG: $1: output lacks '$2': $out" >&2 ;; esac
+}
+for kernel in MINGW64_NT-10.0-26100 MSYS_NT-10.0 CYGWIN_NT-10.0; do
+  c="win-$kernel"
+  mkinst "$c"
+  printf 'exit 1\n' >"$scratch/$c/tests/install/install_test.sh"
+  fakeuname "$c" "$kernel"
+  fake "$c" pwsh 0
+  inst "$c" test-install.sh accept
+  said "$c" "install.sh does not target Windows; install_test.ps1 covers it"
+  fake "$c" pwsh 1
+  inst "$c" test-install.sh reject
+  rm "$scratch/$c/bin/pwsh"
+  inst "$c" test-install.sh reject CI=true
+  inst "$c" test-install.sh accept
+  skipped "$c"
+done
+# The OS variable alone marks a Windows host, with no uname on the PATH at all.
+mkinst win-env
+printf 'exit 1\n' >"$scratch/win-env/tests/install/install_test.sh"
+fake win-env pwsh 0
+inst win-env test-install.sh accept OS=Windows_NT
+said win-env "install.sh does not target Windows"
+# A Linux host still runs the sh suite: its failure fails the gate.
+mkinst linux-shfail
+printf 'exit 1\n' >"$scratch/linux-shfail/tests/install/install_test.sh"
+fakeuname linux-shfail Linux
+fake linux-shfail pwsh 0
+inst linux-shfail test-install.sh reject
+
 echo "check scripts: $total cases, $wrong wrong"
 [ "$wrong" -eq 0 ]
