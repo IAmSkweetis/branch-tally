@@ -310,6 +310,30 @@ the [ledger](ledger.md). It writes only the ledger file: no `git add`, no commit
 The same conflict rules as `report` apply to the mode flags and `--work-branch`. From the config
 file, `record` uses `mode` and `work-branch` and ignores the rest.
 
+## `branch-tally capture`
+
+```text
+branch-tally capture
+```
+
+Run by the capture plugin's hooks (`SessionStart`, `SubagentStop`, `Stop`), not by hand. It reads
+one hook payload from stdin and appends an id-only event to `.tally/captures.jsonl` in the **main
+checkout**, so a worktree session's captures land in one place. The event holds the session id, the
+agent id, the branch, the event kind and a timestamp. No path and no message content is stored or
+printed.
+
+- The branch is the current branch of the payload's `cwd` (the process directory when the payload
+  has none). A detached HEAD records nothing.
+- For `SubagentStop`, `worktree_branch` is the branch of the worktree directory named
+  `agent-<agent id>` in `git worktree list` (compared case-insensitively). Failing that, it is the
+  branch of the payload's own checkout when that is a linked worktree. Otherwise it is absent. It
+  is never guessed.
+- `SessionEnd` and `SubagentStart` payloads are accepted and ignored.
+- It prints nothing on success. On failure (malformed payload, not a git checkout, a detached HEAD,
+  a git or write error) it prints one short fixed line to stderr and exits 1. The hook command ends
+  in `; exit 0`, so a failure never blocks the session; that also covers a command-line usage error,
+  which exits 2.
+
 ## `branch-tally prices update`
 
 ```text

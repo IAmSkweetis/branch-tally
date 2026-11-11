@@ -34,6 +34,15 @@ pub(crate) enum Command {
     /// Append this branch's attributed usage to the repository ledger (write only).
     Record(RecordArgs),
 
+    /// Record this session's branch from a Claude Code hook payload on stdin.
+    ///
+    /// Meant to be run by the capture plugin's hooks (`SessionStart`, `SubagentStop`, `Stop`), not by
+    /// hand. Appends an id-only event (session, agent, branch, kind, time) to the main checkout's
+    /// .tally/captures.jsonl. No paths or message content are stored. Silent on success; on
+    /// failure it prints a short fixed message and exits 1, and the hook command's `; exit 0`
+    /// keeps that from blocking the session.
+    Capture,
+
     /// Manage the model price table.
     #[command(subcommand)]
     Prices(PricesCommand),
