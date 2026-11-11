@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use branch_tally_core::git::{Git, SystemGit, normalize_path};
 use branch_tally_core::ledger::{Clock, SystemClock, append_captures};
 use branch_tally_core::model::{CAPTURE_SCHEMA_VERSION, CaptureEvent, CaptureKind, Harness};
+use branch_tally_core::paths::windows_drive_form;
 use branch_tally_core::sources::claude_code::hook::{
     HookEventKind, HookPayload, parse_hook_payload,
 };
@@ -27,7 +28,7 @@ pub(crate) fn run() -> Result<(), String> {
     let payload = parse_hook_payload(&input)
         .map_err(|_| "capture: the hook payload was not understood".to_owned())?;
     let dir = match &payload.cwd {
-        Some(cwd) => PathBuf::from(cwd),
+        Some(cwd) => PathBuf::from(native_cwd(cwd)),
         None => std::env::current_dir()
             .map_err(|_| "capture: could not determine the working directory".to_owned())?,
     };
@@ -38,6 +39,16 @@ pub(crate) fn run() -> Result<(), String> {
     append_captures(&root, &[event])
         .map_err(|_| "capture: could not write .tally/captures.jsonl".to_owned())?;
     Ok(())
+}
+
+/// The payload cwd as a path git can open here. Hooks run from Git Bash may report `/c/x`; on
+/// Windows that is the drive path `C:/x`. Any other form, and every form off Windows, is untouched.
+fn native_cwd(cwd: &str) -> String {
+    if cfg!(windows) {
+        windows_drive_form(cwd).unwrap_or_else(|| cwd.to_owned())
+    } else {
+        cwd.to_owned()
+    }
 }
 
 /// The event to store for `payload`, or `None` for a hook moment the model has no kind for.

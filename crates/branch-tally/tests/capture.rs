@@ -299,3 +299,29 @@ fn help_says_it_is_for_the_plugin_hooks() {
     assert!(help.contains("hook"), "{help}");
     assert!(help.contains("plugin"), "{help}");
 }
+
+/// The `/x/...` Git Bash form of a drive path only means something on Windows, so this is gated.
+/// The process cwd is a different directory, so the fallback cannot mask a failed translation.
+#[cfg(windows)]
+#[test]
+fn git_bash_drive_form_cwd_is_captured() {
+    let r = repo();
+    let bash = branch_tally_core::paths::git_bash_form(&r.root.to_string_lossy()).unwrap();
+    assert!(bash.starts_with('/'), "{bash}");
+    let elsewhere = tempfile::Builder::new()
+        .prefix("bt-elsewhere-")
+        .tempdir()
+        .unwrap();
+    let payload = json!({
+        "hook_event_name": "SessionStart",
+        "session_id": "sess-1",
+        "cwd": bash,
+    })
+    .to_string();
+    let out = run(&payload, elsewhere.path());
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let events = r.captures();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["branch"], "main");
+    assert!(!text(&out.stderr).contains("bt-capture-"));
+}
