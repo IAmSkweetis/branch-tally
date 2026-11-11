@@ -92,6 +92,14 @@ so the same rules hold: it only writes the file, a second run appends nothing ne
 commit and push the ledger yourself. It needs `branch-tally` on your `PATH`, and it never blocks
 the session, even when `record` fails.
 
+Claude Code gives a `SessionEnd` hook 1.5 seconds by default, and a plugin can't raise that.
+`record` reads every transcript for the repository, so a long history can need more. Set
+`CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS` (in milliseconds) or use a hook in your own settings with
+a `timeout`, as described in [SessionEnd time limit](integration.md#sessionend-time-limit). If
+`record` is stopped part way, it catches up later: it appends only what the ledger does not already
+hold, so the next session end, or a `record` by hand, writes the rest, provided it runs before the
+transcripts are purged.
+
 A branch worked on from several sessions, or with sessions that ended on another branch, may
 still need a `record` by hand for the branches the hook did not see. Installing the plugin, and
 the companion `branch-tally-capture` plugin, is covered in [Integration](integration.md).
