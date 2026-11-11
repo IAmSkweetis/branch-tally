@@ -13,7 +13,7 @@ places a new file belongs in**.
 | Path | Holds | Notes |
 | ---- | ----- | ----- |
 | `crates/branch-tally-core/` | The library: every piece of logic | See below. |
-| `crates/branch-tally/` | The binary: CLI parsing and wiring | Thin by design. `src/config.rs` supplies core's `ConfigEnv` (real env and fs) and renders `config show` and `config init` (which writes core's `DEFAULT_CONFIG` template); `report` resolves its flags through core's `config` module (flag > file > default, #28). `src/prices.rs` holds the `prices` subcommand, the `ureq` `PriceFeed`, the cache path and the table lookup `report` shares (#5). `src/report.rs` holds `report` and `record` (#8): `record` appends the branch's new records to `.tally/ledger.jsonl` under the `--repo` path (write only, never `git add` or commit), and `report --from-ledger [--with-live]` reads it back; `--ledger <path>` overrides the file for both, so tests and dogfooding never touch a real ledger. |
+| `crates/branch-tally/` | The binary: CLI parsing and wiring | Thin by design. `src/config.rs` supplies core's `ConfigEnv` (real env and fs) and renders `config show` and `config init` (which writes core's `DEFAULT_CONFIG` template); `report` resolves its flags through core's `config` module (flag > file > default, #28). `src/prices.rs` holds the `prices` subcommand, the `ureq` `PriceFeed`, the cache path and the table lookup `report` shares (#5). `src/report.rs` holds `report` and `record` (#8): `record` appends the branch's new records to `.tally/ledger.jsonl` at the root of the current checkout (`Git::toplevel` of the `--repo` path or cwd, so a subdirectory or linked worktree writes at its own root; outside a repository it is an error, never a fallback to cwd; write only, never `git add` or commit), and `report --from-ledger [--with-live]` reads it back; `--ledger <path>` overrides the file for both, so tests and dogfooding never touch a real ledger. |
 | `tests/fixtures/<harness>/` | Scrubbed transcript trees, one directory per scenario | Shared by both crates' tests. See [testing.md](testing.md#fixtures). |
 | `reference/token_report.py` | The original Python script, **immutable** | The parity oracle, run only by the golden generator (`just goldens`). This repository's PR token reports come from branch-tally itself (#41). It is never edited, not even to fix a bug, and nothing else is ever added to `reference/`. New Python goes in `scripts/`. |
 | `data/` | Data shipped with the binary, such as the bundled price table | The bundled price table lives in `crates/branch-tally-core/data/prices.toml` so the crate packages it (#5). Tuned, not coded. |
@@ -87,7 +87,9 @@ A ledger-backed report adds notes of the same shape: `unattributed counts unavai
 ledger` (ledger only; the repository-wide counts are unknown, not zero), `ledger mixes modes (…)`,
 `skipped N ledger line(s)` (malformed, unsupported version) and a count of conflicting lines
 resolved. Duplicate lines are not announced, for the same reason as replays. `--with-live` also
-prints the live read's notes.
+prints the live read's notes. `record` adds one: `N record(s) from a worktree outside the main
+checkout were stored without a worktree name` (the ledger stores worktree origins relative to the
+main checkout, never a path), printed only when N is above zero.
 
 ## Tests
 

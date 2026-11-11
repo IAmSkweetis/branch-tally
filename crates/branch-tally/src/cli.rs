@@ -193,7 +193,7 @@ pub(crate) struct ReportArgs {
     #[arg(long, requires = "from_ledger")]
     pub(crate) with_live: bool,
 
-    /// The ledger file (default: .tally/ledger.jsonl in the repository path).
+    /// The ledger file (default: .tally/ledger.jsonl at the root of the current checkout).
     #[arg(long, value_name = "PATH")]
     pub(crate) ledger: Option<PathBuf>,
 }
@@ -228,7 +228,7 @@ pub(crate) struct RecordArgs {
     #[arg(long, value_name = "PATH")]
     pub(crate) config: Option<PathBuf>,
 
-    /// The ledger file (default: .tally/ledger.jsonl in the repository path).
+    /// The ledger file (default: .tally/ledger.jsonl at the root of the current checkout).
     #[arg(long, value_name = "PATH")]
     pub(crate) ledger: Option<PathBuf>,
 }

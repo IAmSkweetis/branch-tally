@@ -229,3 +229,76 @@ fn from_ledger_honours_pr_dry_run_flags_cost_and_mode() {
     let live = world.run(&["report", BRANCH, "--no-cost"]);
     assert_eq!(stdout(&out), stdout(&live));
 }
+
+fn run_git(dir: &std::path::Path, args: &[&str]) {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git {args:?} failed");
+}
+
+#[test]
+fn the_default_ledger_is_at_the_repo_root_when_run_from_a_subdirectory() {
+    let world = World::scenario("main-then-branch");
+    let sub = world.repo.join("deep").join("er");
+    fs::create_dir_all(&sub).unwrap();
+    let out = world.run_in(&sub, &["record", BRANCH]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let root_ledger = world.repo.join(".tally").join("ledger.jsonl");
+    assert_eq!(fs::read_to_string(root_ledger).unwrap().lines().count(), 5);
+    assert!(
+        !sub.join(".tally").exists(),
+        "no stray ledger in the subdirectory"
+    );
+    // And `report --from-ledger` reads the same file from the subdirectory.
+    let report = world.run_in(&sub, &["report", BRANCH, "--from-ledger"]);
+    assert_eq!(report.status.code(), Some(0), "{}", stderr(&report));
+}
+
+#[test]
+fn the_default_ledger_in_a_linked_worktree_is_that_worktrees_root() {
+    let world = World::scenario("main-then-branch");
+    let wt = world.home.join("elsewhere-wt");
+    run_git(
+        &world.repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "chore/ledger-wt",
+            wt.to_str().unwrap(),
+        ],
+    );
+    let wt = common::canon(&wt);
+    let sub = wt.join("src");
+    fs::create_dir_all(&sub).unwrap();
+    let out = world.run_in(&sub, &["record", BRANCH]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        wt.join(".tally").join("ledger.jsonl").is_file(),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!sub.join(".tally").exists());
+    assert!(!world.repo.join(".tally").exists(), "not the main checkout");
+}
+
+#[test]
+fn the_default_ledger_outside_a_repo_is_an_error_not_a_stray_file() {
+    let world = World::scenario("main-then-branch");
+    let loose = world.home.join("not-a-repo");
+    fs::create_dir_all(&loose).unwrap();
+    for args in [
+        vec!["record", BRANCH],
+        vec!["report", BRANCH, "--from-ledger"],
+    ] {
+        let out = world.run_in(&loose, &args);
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert!(!loose.join(".tally").exists());
+    }
+}
