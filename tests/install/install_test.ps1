@@ -21,13 +21,14 @@ $script:cases = 0
 $script:failures = 0
 
 function Test-Case {
-  param([string]$Description, [bool]$Condition)
+  param([string]$Description, [bool]$Condition, [string]$Detail = '')
   $script:cases++
   if ($Condition) {
     [Console]::Out.WriteLine("ok   $Description")
   } else {
     $script:failures++
     [Console]::Out.WriteLine("FAIL $Description")
+    if ($Detail) { [Console]::Out.WriteLine("     $Detail") }
   }
 }
 
@@ -38,10 +39,10 @@ function Write-NoBom {
 
 function Invoke-Installer {
   # Runs install.ps1 in a child pwsh. Returns @{ Rc; Out; Err }.
-  param([string[]]$Arguments = @(), [hashtable]$Env = @{})
+  param([string[]]$Arguments = @(), [hashtable]$Env = @{}, [string]$ScriptPath = $installer)
   $psi = New-Object System.Diagnostics.ProcessStartInfo
   $psi.FileName = $pwshExe
-  foreach ($a in @('-NoProfile', '-NonInteractive', '-File', $installer) + $Arguments) {
+  foreach ($a in @('-NoProfile', '-NonInteractive', '-File', $ScriptPath) + $Arguments) {
     $psi.ArgumentList.Add($a)
   }
   $psi.RedirectStandardOutput = $true
@@ -76,6 +77,15 @@ function Initialize-Sandbox {
   }
   foreach ($dir in @($sandbox.Home, $sandbox.Tmp, $sandbox.Release)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
   $script:S = $sandbox
+}
+
+function Get-RelativeFile {
+  # Paths (never contents) of every file under Dir, relative to it, sorted.
+  param([string]$Dir)
+  $full = (Resolve-Path -LiteralPath $Dir).ProviderPath
+  $paths = @(Get-ChildItem -LiteralPath $full -Recurse -Force -File -ErrorAction SilentlyContinue |
+      ForEach-Object { $_.FullName.Substring($full.Length).TrimStart('\', '/') })
+  return @($paths | Sort-Object)
 }
 
 function Test-Empty {
@@ -264,13 +274,23 @@ Initialize-Sandbox 'pathhint'
 $R = $script:S.Release; $D = $script:S.Dest
 Build-Release $R 'v2.0.0' $target '2.0.0'
 Build-Latest $R 'v2.0.0'
+# A control child (a no-op script, same environment) shows what the runtime alone leaves in HOME, so
+# the profile check below measures the installer and not pwsh/.NET.
+$noop = Join-Path $T 'noop.ps1'
+Write-NoBom $noop 'exit 0'
+$null = Invoke-Installer @() @{} $noop
+$homeBefore = Get-RelativeFile $script:S.Home
 $res = Invoke-Installer @('-To', $D)
 Test-Case 'PATH hint shown when dir is not on PATH' ($res.Out -like '*is not on your PATH*' -and $res.Out -like "*$D*")
 $res = Invoke-Installer @('-To', $D) @{ PATH = "$D;$env:PATH" }
 Test-Case 'no PATH hint when dir is on PATH' ($res.Out -notlike '*is not on your PATH*')
 $res = Invoke-Installer @('-To', $D) @{ PATH = "$($D.ToUpperInvariant())\;$env:PATH" }
 Test-Case 'no PATH hint for a case-different, trailing-backslash entry' ($res.Out -notlike '*is not on your PATH*')
-Test-Case 'installer does not write into the user profile' (Test-Empty $script:S.Home)
+$homeAfter = Get-RelativeFile $script:S.Home
+$homeAdded = @($homeAfter | Where-Object { $homeBefore -notcontains $_ })
+Test-Case 'installer adds nothing to the user profile directory' ($homeAdded.Count -eq 0) ('unexpected paths: ' + ($homeAdded -join '; '))
+$profileFiles = @($homeAfter | Where-Object { $_ -like '*profile*.ps1' })
+Test-Case 'no PowerShell profile file was created' ($profileFiles.Count -eq 0) ('profile paths: ' + ($profileFiles -join '; '))
 
 # 6. Re-install overwrites.
 Initialize-Sandbox 'reinstall'
