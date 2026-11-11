@@ -310,3 +310,38 @@ fn agent_ids_are_synthetic_distinct_and_consistent_across_rows() {
     let shared: Vec<_> = rows[0].agent_ids.intersection(&rows[1].agent_ids).collect();
     assert_eq!(shared.len(), 1);
 }
+
+/// The summary stage falls back to the agent id as the `subagent` tag when no name was stamped.
+fn fallback_summary() -> Summary {
+    let mut s = sample();
+    s.subagents
+        .rows
+        .push(sub(Workspace::Main, "fallback-id-1", &["fallback-id-1"]));
+    s.subagents
+        .rows
+        .push(sub(Workspace::Main, "named", &["fallback-id-2"]));
+    s
+}
+
+#[test]
+fn an_agent_id_used_as_the_subagent_tag_is_redacted_even_with_names_kept() {
+    let after = redact(fallback_summary(), RedactOptions { names: false });
+    let rows = &after.subagents.rows;
+    let fallback = &rows[4];
+    assert_eq!(fallback.agent_ids.len(), 1);
+    // Same synthetic id as in agent_ids, so the two stay consistent.
+    let id = fallback.agent_ids.iter().next().expect("one id");
+    assert_eq!(fallback.subagent, id.as_str());
+    assert!(!all_text(&after).contains("fallback-id-"));
+    // A real name next to it is still kept.
+    assert_eq!(rows[5].subagent, "named");
+}
+
+#[test]
+fn an_agent_id_used_as_the_subagent_tag_is_redacted_with_names_redacted_too() {
+    let after = redact(fallback_summary(), RedactOptions::default());
+    assert!(!all_text(&after).contains("fallback-id-"));
+    let fallback = &after.subagents.rows[4];
+    let id = fallback.agent_ids.iter().next().expect("one id");
+    assert_eq!(fallback.subagent, id.as_str());
+}

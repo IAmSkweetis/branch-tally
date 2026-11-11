@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use crate::model::{AgentId, SessionId, Summary, Workspace};
+use crate::model::{AgentId, SessionId, SubagentRow, Summary, Workspace};
 
 /// What to redact. `names: false` keeps agent and skill names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,7 +45,9 @@ pub fn redact(mut summary: Summary, opts: RedactOptions) -> Summary {
             *key = relabel_attribution(key, &mut agents, &mut skills);
         }
         for row in &mut summary.subagents.rows {
-            row.subagent = agents.get(&row.subagent);
+            if !names_itself_by_id(row) {
+                row.subagent = agents.get(&row.subagent);
+            }
         }
     }
 
@@ -78,19 +80,40 @@ pub fn redact(mut summary: Summary, opts: RedactOptions) -> Summary {
                 .or_insert_with(|| format!("worktree-{next}"));
             row.workspace = Workspace::worktree(label.clone());
         }
+        let by_id = names_itself_by_id(row);
+        let old_tag = row.subagent.clone();
+        let mut relabelled_tag = None;
         row.agent_ids = std::mem::take(&mut row.agent_ids)
             .into_iter()
             .map(|id| {
+                let is_tag = by_id && id.as_str() == old_tag;
                 let next = ids.len() + 1;
-                ids.entry(id)
+                let new = ids
+                    .entry(id)
                     .or_insert_with(|| AgentId::new(format!("a{next}")))
-                    .clone()
+                    .clone();
+                if is_tag {
+                    relabelled_tag = Some(new.as_str().to_owned());
+                }
+                new
             })
             .collect();
+        if let Some(tag) = relabelled_tag {
+            row.subagent = tag;
+        }
     }
 
     summary.redacted = true;
     summary
+}
+
+/// Whether the row's `subagent` tag is one of its own agent ids. This is exactly how the
+/// attribution stage tags a subagent with no stamped name (it falls back to the id), so such a
+/// tag is an id, not a name, and is redacted whatever `names` says. A stamped name that happens
+/// to equal its own id is indistinguishable and is treated as an id, which errs on the private
+/// side.
+fn names_itself_by_id(row: &SubagentRow) -> bool {
+    row.agent_ids.iter().any(|id| id.as_str() == row.subagent)
 }
 
 /// `YYYY-MM-DD` taken from the front of an ISO timestamp, or `""` when it is not date-shaped.
