@@ -42,7 +42,8 @@ pub struct CaptureEvent {
     /// The branch the subagent's worktree held at subagent-stop. `None` when it had no worktree.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree_branch: Option<String>,
-    /// The event time as the hook reported it, ISO-8601, kept raw.
+    /// When `branch-tally capture` recorded the event: the ledger clock's UTC time at second
+    /// precision (`...Z`), not a time carried by the hook payload.
     pub ts: String,
 }
 
