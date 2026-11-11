@@ -10,7 +10,7 @@ set -u
 
 here=$(cd "$(dirname "$0")" && pwd)
 installer=$here/../../install.sh
-shell_under_test=${TEST_SHELL:-sh}
+shell_cmd=${TEST_SHELL:-sh}
 
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT INT TERM
@@ -36,6 +36,12 @@ runs_as() { [ "$("$1")" = "$2" ]; }
 real_uname=$(command -v uname)
 sha_cmd=sha256sum
 command -v sha256sum >/dev/null 2>&1 || sha_cmd="shasum -a 256"
+
+# The shell under test as one command name: a wrapper that execs TEST_SHELL (which may be several
+# words, such as "busybox sh"), so every call site quotes it.
+shell_under_test=$T/shell-under-test
+printf '#!/bin/sh\nexec %s "$@"\n' "$shell_cmd" > "$shell_under_test"
+chmod +x "$shell_under_test"
 
 FAKEBIN=$T/fakebin
 mkdir -p "$FAKEBIN"
@@ -105,7 +111,7 @@ run_install() {
 
 X=x86_64-unknown-linux-musl
 # sh_run <installer args...>
-sh_run() { run_install $shell_under_test "$installer" "$@"; }
+sh_run() { run_install "$shell_under_test" "$installer" "$@"; }
 
 # 1. Happy path: latest, custom dir.
 fresh happy
@@ -125,13 +131,13 @@ mk_release "$R" v1.0.0 $X 1.0.0
 mk_release "$R" v2.0.0 $X 2.0.0
 mk_latest "$R" v2.0.0
 run_install BRANCH_TALLY_INSTALL_DIR="$D" BRANCH_TALLY_INSTALL_VERSION=v1.0.0 \
-  $shell_under_test "$installer"
+  "$shell_under_test" "$installer"
 check "env-pinned version exits 0" test "$rc" -eq 0
 check "env-pinned version installs v1.0.0" contains "$out" "branch-tally 1.0.0"
 
 # 2b. Flags override env.
 run_install BRANCH_TALLY_INSTALL_DIR="$S/ignored" BRANCH_TALLY_INSTALL_VERSION=v2.0.0 \
-  $shell_under_test "$installer" --version v1.0.0 --to "$D"
+  "$shell_under_test" "$installer" --version v1.0.0 --to "$D"
 check "flag --version overrides env" contains "$out" "branch-tally 1.0.0"
 check "flag --to overrides env" test ! -e "$S/ignored"
 
@@ -200,9 +206,9 @@ mk_release "$R" v2.0.0 $X 2.0.0
 mk_latest "$R" v2.0.0
 sh_run --to "$D"
 check "PATH hint shown when dir is not on PATH" contains "$out" "export PATH=\"$D:\$PATH\""
-run_install PATH="$D:$FAKEBIN:$PATH" $shell_under_test "$installer" --to "$D"
+run_install PATH="$D:$FAKEBIN:$PATH" "$shell_under_test" "$installer" --to "$D"
 check "no PATH hint when dir is on PATH" lacks "$out" "export PATH"
-run_install PATH="$D/:$FAKEBIN:$PATH" $shell_under_test "$installer" --to "$D"
+run_install PATH="$D/:$FAKEBIN:$PATH" "$shell_under_test" "$installer" --to "$D"
 check "no PATH hint when PATH has a trailing-slash form" lacks "$out" "export PATH"
 check "installer does not write into HOME (no rc edits)" empty_dir "$S/home"
 
@@ -238,19 +244,19 @@ check "unsupported arch names the arch" contains "$err" "riscv64"
 
 # 9. Platform mapping: Linux arm64, macOS arm64, macOS Intel under Rosetta, native macOS Intel.
 fresh plat
-for spec in \
-  "Linux aarch64 0 aarch64-unknown-linux-musl" \
-  "Darwin arm64 0 aarch64-apple-darwin" \
-  "Darwin x86_64 1 aarch64-apple-darwin" \
-  "Darwin x86_64 0 x86_64-apple-darwin"; do
-  set -- $spec
+while read -r p_os p_arch p_translated p_target; do
   rm -rf "$R" "$D"
   mkdir -p "$R"
-  mk_release "$R" v2.0.0 "$4" 2.0.0
+  mk_release "$R" v2.0.0 "$p_target" 2.0.0
   mk_latest "$R" v2.0.0
-  FAKE_UNAME_S=$1 FAKE_UNAME_M=$2 FAKE_PROC_TRANSLATED=$3 sh_run --to "$D"
-  check "platform $1/$2 (translated=$3) selects $4" test "$rc" -eq 0
-done
+  FAKE_UNAME_S=$p_os FAKE_UNAME_M=$p_arch FAKE_PROC_TRANSLATED=$p_translated sh_run --to "$D"
+  check "platform $p_os/$p_arch (translated=$p_translated) selects $p_target" test "$rc" -eq 0
+done <<'SPECS'
+Linux aarch64 0 aarch64-unknown-linux-musl
+Darwin arm64 0 aarch64-apple-darwin
+Darwin x86_64 1 aarch64-apple-darwin
+Darwin x86_64 0 x86_64-apple-darwin
+SPECS
 
 # 10. There is no attestation option: the installer needs nothing but stock tools.
 fresh noattest
