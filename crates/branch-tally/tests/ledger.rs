@@ -22,24 +22,6 @@ fn ledger_path(world: &World) -> PathBuf {
     world.home.join("scratch").join("ledger.jsonl")
 }
 
-/// Blanks the session origin, which the ledger does not store yet (reported to the orchestrator
-/// as `needs_core_api`): a ledger-backed report shows `unknown` where a live one shows `main` or
-/// a worktree name, and Markdown labels that session's `Where` cell `worktree`. Every number,
-/// name and span still has to match exactly.
-fn without_origin(text: &str) -> String {
-    match serde_json::from_str::<serde_json::Value>(text) {
-        Ok(mut v) => {
-            for s in v["sessions"].as_array_mut().into_iter().flatten() {
-                s["origin"] = "".into();
-            }
-            v.to_string()
-        }
-        Err(_) => text
-            .replace("| main checkout |", "| <where> |")
-            .replace("| worktree |", "| <where> |"),
-    }
-}
-
 fn recorded() -> (World, PathBuf) {
     let world = World::scenario("main-then-branch");
     let ledger = ledger_path(&world);
@@ -116,11 +98,7 @@ fn from_ledger_equals_the_live_report_in_json_and_markdown() {
         let from = world.run(&["report", BRANCH, fmt, "--from-ledger", "--ledger", path]);
         assert_eq!(live.status.code(), Some(0), "{}", stderr(&live));
         assert_eq!(from.status.code(), Some(0), "{}", stderr(&from));
-        assert_eq!(
-            without_origin(&stdout(&live)),
-            without_origin(&stdout(&from)),
-            "{fmt}"
-        );
+        assert_eq!(stdout(&live), stdout(&from), "{fmt}");
     }
 }
 
@@ -173,10 +151,7 @@ fn with_live_does_not_double_count_and_drops_the_unavailable_note() {
         path,
     ]);
     assert_eq!(both.status.code(), Some(0), "{}", stderr(&both));
-    assert_eq!(
-        without_origin(&stdout(&live)),
-        without_origin(&stdout(&both))
-    );
+    assert_eq!(stdout(&live), stdout(&both));
     assert!(!stderr(&both).contains("unattributed counts unavailable"));
 }
 
@@ -252,8 +227,5 @@ fn from_ledger_honours_pr_dry_run_flags_cost_and_mode() {
     ]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     let live = world.run(&["report", BRANCH, "--no-cost"]);
-    assert_eq!(
-        without_origin(&stdout(&out)),
-        without_origin(&stdout(&live))
-    );
+    assert_eq!(stdout(&out), stdout(&live));
 }

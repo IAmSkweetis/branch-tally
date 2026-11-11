@@ -546,3 +546,27 @@ fn entries_recorded_under_more_than_one_mode_are_counted_on_the_report() {
         vec![Mode::Strict, Mode::Claim]
     );
 }
+
+#[test]
+fn a_ledger_report_keeps_each_sessions_origin_like_the_live_one() {
+    let mut wt = rec("s2", "c", "feat/x", 4);
+    let wt_slug = format!(
+        "{}--claude-worktrees-agent-a",
+        branch_tally_core::paths::slug(Path::new("/repo"))
+    );
+    wt.origin = Some(Origin::worktree(wt_slug.clone()));
+    let source = FakeSource(vec![rec("s1", "a", "feat/x", 1), wt]);
+    let dir = tempfile::tempdir().unwrap();
+    let path = ledger_path(&dir);
+    do_record(&source, "feat/x", &path, "2026-01-01T00:00:00Z");
+    let from = from_ledger(None, "feat/x", &path).unwrap();
+    let want = live(&source, "feat/x");
+    assert_eq!(from.summary.sessions, want.summary.sessions);
+    let origins: Vec<&str> = from
+        .summary
+        .sessions
+        .iter()
+        .map(|(_, r)| r.origin.as_str())
+        .collect();
+    assert_eq!(origins, ["main", wt_slug.to_lowercase().as_str()]);
+}

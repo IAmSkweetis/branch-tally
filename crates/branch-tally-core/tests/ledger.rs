@@ -5,9 +5,10 @@ use std::process::Command;
 
 use branch_tally_core::ledger::{self, Clock, Identity, LEDGER_PATH};
 use branch_tally_core::model::{
-    AgentId, AttributedRecord, Attribution, BranchBasis, Harness, Mode, Record, RequestId,
+    AgentId, AttributedRecord, Attribution, BranchBasis, Harness, Mode, Origin, Record, RequestId,
     SelectedRecord, Selection, SessionId, Usage,
 };
+use branch_tally_core::paths;
 
 fn selected(id: &str, branch: &str, output: u64) -> SelectedRecord {
     let mut r = Record::new(
@@ -77,6 +78,7 @@ fn two_worktrees_record_concurrently_and_merge_without_conflicts_or_double_count
         &[selected("base", "feat/x", 1)],
         "feat/x",
         Mode::Claim,
+        None,
         &Identity,
         &CLOCK,
     )
@@ -89,7 +91,16 @@ fn two_worktrees_record_concurrently_and_merge_without_conflicts_or_double_count
         selected("shared", "feat/x", 10),
         selected("only-a", "feat/x", 100),
     ];
-    ledger::append(&ledger_path, &a, "feat/x", Mode::Claim, &Identity, &CLOCK).unwrap();
+    ledger::append(
+        &ledger_path,
+        &a,
+        "feat/x",
+        Mode::Claim,
+        None,
+        &Identity,
+        &CLOCK,
+    )
+    .unwrap();
     git_ok(root, &["commit", "-q", "-am", "a"]);
 
     git_ok(root, &["checkout", "-q", "main"]);
@@ -98,7 +109,16 @@ fn two_worktrees_record_concurrently_and_merge_without_conflicts_or_double_count
         selected("shared", "feat/x", 10),
         selected("only-b", "feat/x", 1000),
     ];
-    ledger::append(&ledger_path, &b, "feat/x", Mode::Claim, &Identity, &CLOCK).unwrap();
+    ledger::append(
+        &ledger_path,
+        &b,
+        "feat/x",
+        Mode::Claim,
+        None,
+        &Identity,
+        &CLOCK,
+    )
+    .unwrap();
     git_ok(root, &["commit", "-q", "-am", "b"]);
 
     git_ok(root, &["checkout", "-q", "main"]);
@@ -150,6 +170,7 @@ fn the_same_id_recorded_at_different_times_survives_the_merge_as_one_duplicate()
         &[selected("base", "feat/x", 1)],
         "feat/x",
         Mode::Claim,
+        None,
         &Identity,
         &CLOCK,
     )
@@ -164,6 +185,7 @@ fn the_same_id_recorded_at_different_times_survives_the_merge_as_one_duplicate()
         &[selected("dup", "feat/x", 10)],
         "feat/x",
         Mode::Claim,
+        None,
         &Identity,
         &early,
     )
@@ -178,6 +200,7 @@ fn the_same_id_recorded_at_different_times_survives_the_merge_as_one_duplicate()
         &[selected("dup", "feat/x", 10)],
         "feat/x",
         Mode::Claim,
+        None,
         &Identity,
         &late,
     )
@@ -221,7 +244,7 @@ fn a_written_line_carries_no_cwd_content_or_raw_stamp() {
             agent: None,
         };
     }
-    ledger::append(&p, &[s], "feat/x", Mode::Claim, &Identity, &CLOCK).unwrap();
+    ledger::append(&p, &[s], "feat/x", Mode::Claim, None, &Identity, &CLOCK).unwrap();
     let text = std::fs::read_to_string(&p).unwrap();
     assert!(!text.contains("secret-user"), "cwd leaked");
     assert!(
@@ -245,6 +268,7 @@ fn a_written_line_carries_no_cwd_content_or_raw_stamp() {
         "kept_by",
         "mode",
         "model",
+        "origin",
         "recorded_at",
         "recorded_for",
         "request_id",
@@ -265,8 +289,111 @@ fn a_written_line_carries_no_cwd_content_or_raw_stamp() {
         "text",
         "prompt",
         "git_branch",
-        "origin",
+        "source_cwd",
     ] {
         assert!(!keys.contains(&forbidden), "forbidden key {forbidden}");
     }
+}
+
+const MAIN: &str = "/home/alice-smith/workspaces/myrepo";
+
+/// Appends one record whose session origin is the worktree slug of `cwd`, and returns the line
+/// text and the append outcome.
+#[expect(clippy::unwrap_used, reason = "test helper: fail loudly")]
+fn append_worktree_origin(slug: &str) -> (String, ledger::AppendOutcome, std::path::PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.keep().join(LEDGER_PATH);
+    let mut s = selected("r1", "feat/x", 5);
+    s.attributed.record.origin = Some(Origin::worktree(slug));
+    s.attributed.record.cwd = Some(format!("{MAIN}/.claude/worktrees/agent-abc"));
+    let out = ledger::append(
+        &p,
+        &[s],
+        "feat/x",
+        Mode::Claim,
+        Some(Path::new(MAIN)),
+        &Identity,
+        &CLOCK,
+    )
+    .unwrap();
+    (std::fs::read_to_string(&p).unwrap(), out, p)
+}
+
+#[test]
+fn a_worktree_origin_is_stored_relative_to_the_repo_with_no_path_or_user() {
+    let worktree = Path::new(MAIN)
+        .join(".claude")
+        .join("worktrees")
+        .join("agent-abc");
+    let slug = paths::slug(&worktree);
+    let main_slug = paths::slug(Path::new(MAIN));
+    assert!(
+        slug.contains("alice"),
+        "the realistic slug carries the user"
+    );
+    let (text, out, p) = append_worktree_origin(&slug);
+    assert!(!text.contains(&main_slug), "main slug leaked: {text}");
+    assert!(!text.contains("alice"), "user segment leaked: {text}");
+    assert!(!text.contains("home"), "a path leaked: {text}");
+    let line: serde_json::Value = serde_json::from_str(text.trim_end()).unwrap();
+    assert!(!line["origin"].to_string().contains('/'), "a path leaked");
+    assert_eq!(
+        line["origin"],
+        serde_json::json!({"worktree": "claude-worktrees-agent-abc"})
+    );
+    assert_eq!(out.unnamed_origins, 0);
+    // Read back on the same machine: the origin equals the live one exactly.
+    let read = ledger::read(&p).unwrap();
+    let back = read.entries()[0].to_selected(Some(Path::new(MAIN)));
+    assert_eq!(back.attributed.record.origin, Some(Origin::worktree(slug)));
+}
+
+#[test]
+fn the_main_slug_is_matched_case_insensitively() {
+    let slug =
+        paths::slug(&Path::new(MAIN).join(".claude").join("worktrees").join("w")).to_uppercase();
+    let (text, out, _) = append_worktree_origin(&slug);
+    assert!(
+        text.contains(r#""origin":{"worktree":"CLAUDE-WORKTREES-W"}"#),
+        "{text}"
+    );
+    assert_eq!(out.unnamed_origins, 0);
+}
+
+#[test]
+fn a_slug_outside_the_main_checkout_is_unnamed_and_counted() {
+    for outside in [
+        paths::slug(Path::new("/home/bob/elsewhere/wt")),
+        // Shares the main slug as a prefix but is a different directory.
+        format!("{}2--claude-worktrees-a", paths::slug(Path::new(MAIN))),
+        // The main checkout itself is not a worktree name.
+        paths::slug(Path::new(MAIN)),
+    ] {
+        let (text, out, p) = append_worktree_origin(&outside);
+        assert!(
+            !text.contains("bob") && !text.contains("elsewhere"),
+            "{text}"
+        );
+        assert!(text.contains(r#""origin":{"worktree":null}"#), "{text}");
+        assert_eq!(out.unnamed_origins, 1, "{outside}");
+        let read = ledger::read(&p).unwrap();
+        let back = read.entries()[0].to_selected(Some(Path::new(MAIN)));
+        assert_eq!(back.attributed.record.origin, None, "no name is claimed");
+    }
+}
+
+#[test]
+fn a_line_without_origin_still_reads_with_origin_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join(LEDGER_PATH);
+    let mut s = selected("r1", "feat/x", 5);
+    s.attributed.record.origin = None;
+    ledger::append(&p, &[s], "feat/x", Mode::Claim, None, &Identity, &CLOCK).unwrap();
+    let text = std::fs::read_to_string(&p).unwrap();
+    assert!(!text.contains("origin"), "a None origin is omitted");
+    let read = ledger::read(&p).unwrap();
+    assert_eq!(
+        read.entries()[0].to_selected(None).attributed.record.origin,
+        None
+    );
 }
