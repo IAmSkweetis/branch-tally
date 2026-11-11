@@ -208,6 +208,7 @@ fn count_heuristic(h: &mut crate::model::HeuristicBreakdown, sel: &SelectedRecor
         BranchBasis::TimelineForward => h.timeline_forward.add(tokens),
         BranchBasis::TimelineCarried => h.timeline_carried.add(tokens),
         BranchBasis::TimelineAmbiguous | BranchBasis::SubagentUnlinked => {}
+        BranchBasis::Captured => h.captured.add(tokens),
         BranchBasis::Stamped => {
             if sel.kept_by == Selection::SessionClaim {
                 h.session_claim.add(tokens);
