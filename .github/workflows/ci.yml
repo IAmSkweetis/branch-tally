@@ -126,6 +126,8 @@ jobs:
       - run: just test-scripts
       # The scrubber and goldens generator tests, including one end-to-end run of the reference.
       - run: just test-py
+      # mise.toml and the vendored manual assets agree with the pins and checksums they mirror.
+      - run: just check-pins
 
   test:
     name: test (${{ matrix.os }})

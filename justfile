@@ -10,6 +10,7 @@
 set shell := ["pwsh.exe", "-NoLogo", "-NoProfile", "-Command"]
 
 # Pinned tool versions. CI reads them back with `just --evaluate <name>`, so local and CI agree.
+# mise.toml mirrors them for local setup; `just check-pins` fails when the two drift.
 # Bump one here and nowhere else (gitleaks is installed from a release archive whose sha256 is
 # pinned in .github/workflows/ci.yml, so bump that checksum with it; mdbook and mdbook-mermaid are
 # the same, with their checksums in .github/workflows/docs.yml and pages.yml, and the two must stay
@@ -30,7 +31,7 @@ default:
     @{{ just_executable() }} --list
 
 # Every gate CI runs (everything except fmt and audit-workflows).
-ci: lint lint-md test test-scripts test-py check-plugin lint-install test-install docs secret-scan
+ci: lint lint-md test test-scripts test-py check-pins check-plugin lint-install test-install docs secret-scan
 
 # Prove the commit-message and branch-name checks reject what they must and accept what they should.
 [unix]
@@ -106,6 +107,10 @@ audit-workflows *args: (_require "uvx" "install uv: https://docs.astral.sh/uv/ge
 # Unit tests for the Python tooling in scripts/ (stdlib unittest via uv; needs git for the e2e test).
 test-py: (_require "uv" "install uv: https://docs.astral.sh/uv/getting-started/installation/") (_require "git" "install git")
     uv run python -m unittest discover -s scripts/tests
+
+# Fail when mise.toml disagrees with the pins here, in the workflows or in rust-toolchain.toml, or when a vendored manual asset no longer matches its recorded sha256. Needs neither mise nor network.
+check-pins: (_require "uv" "install uv: https://docs.astral.sh/uv/getting-started/installation/")
+    uv run scripts/check_pins.py
 
 # Check the shipped plugin and marketplace: manifests parse, every hook command ends in `; exit 0`,
 # every hook names a real subcommand of the freshly built binary. `claude plugin validate` also runs

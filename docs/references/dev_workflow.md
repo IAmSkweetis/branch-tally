@@ -151,6 +151,7 @@ its own lists the recipes.
 | `just secret-scan [args…]` | `gitleaks git` over the full history of every local ref, redacted. CI passes `--log-opts=HEAD` | `gitleaks git --redact .` |
 | `just audit-workflows [--offline]` | `zizmor` over `.github/`, pinned. Online audits run when `GH_TOKEN` is set. | `uvx zizmor@<pin> .github/` |
 | `just test-scripts` | proves `scripts/check-commit-subject.sh`, `scripts/check-branch-name.sh` and `scripts/package.sh` reject what they must and accept what they should | `sh scripts/test-checks.sh` |
+| `just check-pins` | fails when `mise.toml` disagrees with the pins in the justfile, the workflows or `rust-toolchain.toml` (or lacks one of them, or lists a tool nothing else pins), or when a vendored manual asset no longer matches its recorded sha256. Reads the files as text: needs `uv` only, not mise, just's evaluator or the network | `uv run scripts/check_pins.py` |
 | `just test-py` | `unittest` for `scripts/scrub_transcripts.py` and `scripts/make_goldens.py`, including one end-to-end run of the reference | `uv run python -m unittest discover -s scripts/tests` |
 | `just check-plugin` | build the binary, then check the shipped plugin and marketplace: manifests parse, every hook command ends in `; exit 0`, every hook names a real subcommand of that binary. `claude plugin validate` also runs when the `claude` CLI is installed and is a printed `SKIP` otherwise (CI has none). Needs `cargo` and `uv` | `cargo build -p branch-tally` then `sh plugin/tests/check.sh target/debug/branch-tally` |
 | `just lint-install` | ShellCheck on `install.sh` and its test, PSScriptAnalyzer on the `.ps1` files. A missing tool is a printed skip locally and an error when `CI` is set | `sh scripts/lint-install.sh` |
@@ -179,6 +180,26 @@ the justfile only. For gitleaks also bump the archive checksum in `ci.yml`, and 
 mdbook-mermaid the checksums in `docs.yml`; a mismatch fails the job. `just`, nextest and cargo-deny
 are pinned in `ci.yml`.
 
+**`mise.toml`.** `mise install` at the repository root sets up a dev machine with every one of
+those pins (`rust`, `just`, `cargo-nextest`, `cargo-deny`, `gitleaks`, `git-cliff`, `rumdl`,
+`zizmor`, `mdbook`, `mdbook-mermaid`). It is a **local convenience, not an authority**: the
+justfile, the workflows and `rust-toolchain.toml` still decide what CI runs, and nothing in CI or
+the hooks calls mise. `just check-pins` (part of `just ci`, and a CI step in the `scripts` job)
+compares them as text and fails on any drift: a version that differs, a pinned tool missing from
+`mise.toml`, or a tool in `mise.toml` that nothing else pins (so mise can't grow a pin of its own).
+To bump a tool, change it where it is really pinned, then in `mise.toml` in the same commit.
+Backends: `aqua:` (via the short registry name) for `just`, `cargo-deny`, `gitleaks`, `git-cliff`,
+`rumdl`, `zizmor` and `mdbook`; `cargo:cargo-nextest` (not in the aqua registry; compiles from
+source unless `cargo-binstall` is installed); `github:badboy/mdbook-mermaid` (no registry entry).
+`uv`, `git`, `sh` and the installer linters are not pinned anywhere, so they are not in
+`mise.toml`; install them yourself.
+
+`mise.toml` also lists `rust`, even though `rustup` already reads `rust-toolchain.toml` and installs
+that channel the first time `cargo` runs. The file stays the authority (it also carries the
+components and profile, which `rustup` honours and a `mise.toml` entry would only duplicate), and CI
+and the hooks use `rustup`. The `rust` line only lets `mise install` fetch the toolchain up front
+with the other tools, and `check-pins` keeps its version equal to the channel in the toolchain file.
+
 **Before the workspace exists (#3).** The Rust recipes (`test`, `lint`, `fmt`) find no
 `Cargo.toml`, print "no Cargo.toml: Rust checks skipped" and exit 0. The CI Rust jobs do the same
 with a `::notice::` annotation, so the required checks still report and start checking on their
@@ -201,6 +222,7 @@ same `just` recipes and `scripts/check-*.sh`.
 | Branch name | `pre-push`: Conventional Branch, and refuses a push to `main` | `branch-name`: the PR's head branch |
 | Tests | `pre-push`: `just test` | `test (ubuntu-latest)`, `test (macos-latest)`, `test (windows-latest)` and `msrv`: `just test` |
 | Release build | — | `build` (workflow `Build`): on a PR that touches `build.yml`, `release.yml`, `scripts/package.sh`, `scripts/smoke-test.sh`, `cliff.toml`, `Cargo.lock` or `rust-toolchain.toml`, builds and smoke-tests all six release targets with a dummy version and publishes nothing ([release.md](release.md#proving-the-build-before-a-release)) |
+| Pins | — | `scripts`: `just check-pins`, so `mise.toml` and the vendored manual assets can't drift from the pins and checksums they mirror (also in `just ci`) |
 | Gate scripts | — | `scripts`: `just test-scripts` (so the commit and branch checks, the packaging script and the installer gates, can't silently stop rejecting) and `just test-py` (the scrubber and goldens generator) |
 | Plugin | — | `plugin`: `just check-plugin`, so a hook that could block a Claude Code session, or name a subcommand that does not exist, fails the PR. Manifest validation by `claude plugin validate` is skipped there (no `claude` CLI on the runner) and says so |
 | Installers | — | `lint-install` and `test-install (<os>)` (workflow `Installers`), only when an installer, its tests or the workflow change ([release.md](release.md#proving-an-install-works)) |
@@ -286,6 +308,23 @@ from `rumdl`). Diagrams are Mermaid fenced blocks, rendered by the `mdbook-merma
 Its two assets, `mermaid.min.js` and `mermaid-init.js`, are committed beside `book.toml`, outside
 `src/`.
 
+- **URL.** The manual is served at the apex, `https://branch-tally.io/` (DNS is done; the custom
+  domain is set by hand in the repository's Settings, Pages). So `site-url` in `book.toml` is `"/"`.
+  No `CNAME` file is shipped: with Pages deploying from Actions (`build_type: workflow`) GitHub
+  ignores a `CNAME` in the artifact and takes the domain from the setting, so the file would only be
+  a second copy to drift. Links in `README.md` and `docs/manual/src/` use the apex.
+- **Zoomable diagrams.** Every Mermaid diagram can be zoomed and panned, in every mdBook theme.
+  `svg-pan-zoom.min.js` is vendored beside `book.toml` (svg-pan-zoom 3.6.2, BSD 2-Clause: licence in
+  `svg-pan-zoom.LICENSE`, source URL and checksums in the `book.toml` header,
+  `svg-pan-zoom.min.js.sha256` for `just check-pins` to verify). `svg-pan-zoom-init.js` and
+  `svg-pan-zoom.css` are ours, loaded through `additional-js` and `additional-css`; the generated
+  `mermaid-init.js` is untouched, so refreshing it with `mdbook-mermaid install` loses nothing. The
+  diagram stays its normal size and the page scrolls normally until the reader uses the corner
+  controls or Ctrl/Cmd + wheel; once zoomed in, dragging pans and the frame grows to 70vh. The init
+  script waits for Mermaid's asynchronous render to settle before attaching (attaching to a
+  half-rendered `<svg>` makes svg-pan-zoom throw). To update the library: replace the file from the
+  npm tarball, write the new sha256 to `svg-pan-zoom.min.js.sha256`, and update the `book.toml`
+  header and `svg-pan-zoom.LICENSE`.
 - **Versions.** `mdbook_version` and `mdbook_mermaid_version` in the justfile. mdBook 0.5 changed
   the preprocessor API, so `mdbook-mermaid` must be a release built against it (0.17 and later).
   mdBook prints a "built against version 0.5.0 of mdbook" warning when the patch versions differ;
@@ -299,7 +338,7 @@ Its two assets, `mermaid.min.js` and `mermaid-init.js`, are committed beside `bo
   like gitleaks. On a push to `main` that touches `docs/manual/**`, and on `workflow_dispatch`, it
   also publishes the build to GitHub Pages (`actions/upload-pages-artifact` then
   `actions/deploy-pages`). Only the `deploy` job holds `pages: write` and `id-token: write`. Pages
-  is set to `build_type: workflow` and the site is `https://iamskweetis.github.io/branch-tally/`.
+  is set to `build_type: workflow` and the site is `https://branch-tally.io/`.
   The `docs` job is path-filtered, so it is not a required check; requiring it would leave every PR
   that doesn't touch these paths waiting on a check that never reports.
 - **`just ci` includes `docs`**, because `just ci` is every gate CI runs. It needs `mdbook` and
