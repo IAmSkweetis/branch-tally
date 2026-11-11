@@ -129,6 +129,26 @@ What follows for attribution:
   unstamped main-checkout record stays `(none)` (#37). The reference recovers it. Fixture:
   `unstamped-main`.
 
+### Captured attribution (#13)
+
+`attribute_with_captures` takes the hook captures (`&[CaptureEvent]`) as well; `attribute` is the
+same with none. Captured data is authoritative over `git worktree list` and origin recovery, but
+not over a real stamp, and the #6 dispatcher roll-up is kept.
+
+- Applies only in claim mode, to a top-level record whose stamp is missing or
+  `worktree-agent-<id>`. Strict and timeline mode ignore captures. Subagent records keep the
+  roll-up.
+- The record's session's captures that **bracket its timestamp** decide: the latest at or before
+  and the earliest at or after (all captures at that instant). If they all name one branch, the
+  record gets it with `BranchBasis::Captured`, ahead of `WorktreeRecovered` and `OriginRecovered`.
+- With only one side, every capture of the session must name the same branch.
+- Disagreement, a record with no parseable timestamp, an unusable captured branch (empty, `HEAD`,
+  `worktree-agent-*`) or a session with no captures: nothing is guessed. The existing recovery
+  runs, so the record is as uncertain as before.
+- The subagent `Workspace` tag is derived from the record's cwd, never from `git worktree list`,
+  so it already survives the worktree being removed. A captured worktree branch cannot be stored
+  in it without a model field (raised as `model_change_required`).
+
 ### Timeline mode (#7)
 
 `attribute_timeline` is a third mode beside strict and claim; claim attribution is unchanged.
