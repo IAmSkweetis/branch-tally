@@ -60,10 +60,11 @@ contains it.
 These are closed sets. An agent that needs a value not listed here must escalate, not invent one.
 
 **These sets are deliberately duplicated.** Every agent definition in `.claude/agents/` restates
-`status`, the `verification` entry shape and the `files` object in its own Report section. In the
+`status`, the `verification` entry shape and the `files` object in its own Report section, and
+every implementing agent restates `user_facing_changes`. In the
 project this pattern comes from, linking to this page alone didn't hold: agents invented `status`
 values (`completed`, `success`) and returned `verification` as an object. The price is that an
-edit here is only half an edit. **Edit this page and all six agent definitions in the same
+edit here is only half an edit. **Edit this page and every agent definition in the same
 commit.** Otherwise the copies become what agents actually follow, while this page quietly
 disagrees.
 

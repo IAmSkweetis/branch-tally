@@ -114,6 +114,8 @@ The parts that matter when reading one:
   transcript content.
 - **`complete_no_changes` is a success.** An auditor that found nothing wrong did its job.
 - **`blocked` and `failed` must each carry an escalation.**
+- **`user_facing_changes` feeds the Docs Author.** When any agent in a wave lists one, dispatch the
+  Docs Author in the last wave with those entries, after the behaviour has merged.
 
 ## Escalation routing
 
