@@ -184,6 +184,49 @@ assistant record holding the Agent `tool_use`; its `gitBranch` matched the user 
 
 Fixtures: `subagent-*` scenarios; `malformed-and-keyless` holds the non-dispatch shapes.
 
+## Hook payloads
+
+Source: the official hooks reference, <https://code.claude.com/docs/en/hooks>, read 2026-11-11.
+These are documented shapes, **not** captures from a live session; the Claude Code version they
+describe is not stated on the page (it mentions v2.1.251 and v2.1.271 for newer fields). Verify
+against a live hook before relying on a field the page marks optional.
+
+A hook command receives one JSON object on stdin. Common fields: `session_id`, `transcript_path`,
+`cwd`, `hook_event_name`, plus `permission_mode`, `effort`, `prompt_id`, `scratchpad_dir`, and
+`agent_id`/`agent_type` when the hook fires inside a subagent or under `--agent`.
+
+| Event | Extra fields (documented) | Notes |
+| ----- | ------------------------- | ----- |
+| `SessionStart` | `source` (`startup`, `resume`, `clear`, `compact`, `fork`), optional `model`, `agent_type`, `session_title`; on resume/fork also cache-cost fields | |
+| `SessionEnd` | `reason` | 1.5 s default timeout: keep the hook fast |
+| `Stop` | `stop_hook_active`, `last_assistant_message`, `background_tasks`, `session_crons` | `last_assistant_message` is content |
+| `SubagentStart` | `agent_id`, `agent_type` | |
+| `SubagentStop` | `stop_hook_active`, `agent_id`, `agent_type`, `agent_transcript_path`, `last_assistant_message`, `background_tasks`, `session_crons` | |
+| `WorktreeCreate` | `name` (a slug such as `bold-oak-a3f2`) | A command hook *replaces* worktree creation and prints the path on stdout, so it is not a passive observer |
+| `WorktreeRemove` | `worktree_path` (absolute) | Non-zero exit can fail the removal |
+
+Facts for branch-tally:
+
+- **SubagentStop carries `agent_id`** (and `agent_type`, which may be empty for Claude's internal
+  agents such as prompt suggestions and `/btw`; those also fire SubagentStop).
+- **`session_id` on SubagentStop is the parent session's**, as for the transcript `sessionId`
+  stamp, and `transcript_path` is the main transcript while `agent_transcript_path` is
+  `<session>/subagents/agent-<id>.jsonl`.
+- **Nothing on SubagentStop names the subagent's worktree.** There is no worktree field. The
+  only location is `cwd`, which the page says follows Claude (the worktree root once Claude has
+  entered one). Whether a subagent's SubagentStop `cwd` is its worktree was **not verified**;
+  the page does not say. The caller must resolve a branch from `cwd` with git and treat a `cwd`
+  equal to the main checkout as "worktree unknown", not as proof.
+- `WorktreeRemove.worktree_path` is the only payload that names a worktree path directly, but a
+  hook on it takes over removal semantics, so the core parser does not read it.
+- All paths in payloads follow the host: `D:\...` on Windows, possibly `/d/...` under Git Bash.
+
+The parser (`sources/claude_code/hook.rs`, `parse_hook_payload`) deserializes `session_id`,
+`hook_event_name`, `cwd`, `agent_id` and `agent_type` only, supports the five events above, and
+treats empty strings as absent. `agent_id` is required for SubagentStart/SubagentStop. Errors
+(`HookError`) never include payload text, because `serde_json` messages can quote values.
+Fixtures: `tests/fixtures/claude-code/hook-payloads/` (hand-written, fake ids and paths).
+
 ## Related pages
 
 - [testing.md](testing.md#fixtures): turning these shapes into scrubbed fixtures

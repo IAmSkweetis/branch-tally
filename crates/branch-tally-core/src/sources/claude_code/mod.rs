@@ -50,6 +50,7 @@ use std::path::{Path, PathBuf};
 use crate::model::{Dispatch, Harness, Origin, Record};
 use crate::sources::{ReadStats, RepoIdentity, RootKind, Source, SourceError, TranscriptRoot};
 
+pub mod hook;
 mod parse;
 mod slug;
 
