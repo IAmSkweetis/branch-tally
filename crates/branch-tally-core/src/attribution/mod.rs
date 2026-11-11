@@ -165,10 +165,15 @@ fn usable_branch(branch: &str) -> Option<&str> {
 ///
 /// `captures` are the session's `(instant, usable branch)` pairs. The captures bracketing `ts`
 /// are the latest at-or-before it and the earliest at-or-after it (every capture sharing that
-/// instant). With both sides present they must all name one branch. With one side only, every
-/// capture of the session must name that one branch. A record with no usable timestamp, a
-/// capture with an unparseable timestamp or an unusable branch where agreement is required, and
-/// any disagreement all give `None`: nothing is guessed.
+/// instant). Both sides are required and they must all name one usable branch. A record with
+/// captures on one side only is not recovered: the user may have switched branches after the last
+/// capture (Stop not yet fired, or the capture failed), so nothing vouches for the record. A
+/// record with no usable timestamp, a capture with an unparseable timestamp or an unusable
+/// branch where agreement is required, and any disagreement all give `None`: nothing is guessed.
+///
+/// Residual limitation: an `A..A` bracket can hide an `A -> B -> A` switch inside the window.
+/// Stop fires every turn, so the window is one turn, but the result is a bounded-window
+/// inference, not a certainty.
 fn captured_branch<'a>(
     captures: &[(Option<i128>, Option<&'a str>)],
     ts: Option<i128>,
@@ -181,15 +186,13 @@ fn captured_branch<'a>(
         let first = (*branches.first()?)?;
         branches.iter().all(|b| *b == Some(first)).then_some(first)
     };
-    match (before, after) {
-        (Some(b), Some(a)) => agreed(
-            timed()
-                .filter(|(t, _)| *t == b || *t == a)
-                .map(|(_, br)| br)
-                .collect(),
-        ),
-        _ => agreed(captures.iter().map(|(_, br)| *br).collect()),
-    }
+    let (b, a) = (before?, after?);
+    agreed(
+        timed()
+            .filter(|(t, _)| *t == b || *t == a)
+            .map(|(_, br)| br)
+            .collect(),
+    )
 }
 
 /// Claim-mode handling of a record from a subagent file. The branch is the dispatcher's raw
