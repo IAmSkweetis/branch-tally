@@ -165,9 +165,10 @@ Order matters, and the reason is this project's own subject:
 4. **`worktree-cleanup`** removes the worktrees and branches, and returns the main checkout to a
    clean `main`.
 
-Run step 4 early and, until #6 and #13 land, the token report can't attribute those agents' usage.
-The reference script maps `worktree-agent-<id>` records onto branches by asking `git worktree list`.
-Fixing that dependency is one of this project's first jobs. Until it's fixed, we live with it.
+Run `record` before step 4 anyway: it is the safe order, and the ledger it writes outlives the
+worktrees. What the numbers can and can't say is in
+[dev_workflow.md](dev_workflow.md#token-usage): the "at least $X" label comes only from uncertain
+attribution or unpriced models, so a ledger missing entries can understate without it.
 
 ## When an agent is the wrong tool
 

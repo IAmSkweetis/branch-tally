@@ -418,8 +418,12 @@ mode. Defaults live in a user config file (flag > file > default); the manual's
 [Config reference](../manual/src/config.md) has its location and keys, `branch-tally config init`
 writes a starter file, and `branch-tally config show` prints what applies.
 
-It must run on the machine that did the work, and **while every agent worktree still exists**
-until issue #6 removes that dependency. Report the number as a floor ("at least $X").
+It must run on the machine that did the work, and the safe order is before
+`/worktree-cleanup`. Report the total as the table labels it: "at least $X" appears only when calls
+can't be attributed with certainty or a model is unpriced. A ledger missing entries can understate
+the total without that label ([plugin/README.md](../../plugin/README.md)), and `report
+--from-ledger` prints `note: unattributed counts unavailable from the ledger`
+([ledger chapter](../manual/src/ledger.md)).
 `reference/token_report.py` is no longer run for this. Only the golden generator (`just goldens`)
 still runs it, as the parity oracle.
 
