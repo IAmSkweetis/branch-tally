@@ -68,6 +68,9 @@ The full list, and what CI runs on top, is in
    the title becomes the commit on `main`. Link the issue with `Fixes #N`.
 6. **CI must be green.** It runs the same gates as the hooks, plus tests on Linux, macOS and
    Windows, the MSRV, dependency review and `cargo deny`.
+7. **Get one approval.** [CodeRabbit](https://docs.coderabbit.ai/) reviews every non-draft PR.
+   Reply to or resolve each of its threads. It approves once they are resolved and the latest
+   commit is reviewed, and that approval, or a maintainer's, is what `main` requires.
 
 [dev_workflow.md](docs/references/dev_workflow.md) covers the allowed types, the branch-to-commit
 mapping and every quality gate in detail.

@@ -53,7 +53,9 @@ These are set in GitHub, not in the repository. Apply them before the first PR m
 | ------- | ----- | --- |
 | Allowed merge methods | squash only | One commit per PR on `main`. The PR title is the commit message the release tooling reads. |
 | Default squash message | PR title and description | So the Conventional Commit written in the title is what lands. |
-| Branch protection on `main` | require a PR, require CI green, block force-pushes and deletion | The hooks stop accidents locally; this stops them for everyone. |
+| Branch protection on `main` | the `default` ruleset: require a PR with **1 approval**, dismiss stale approvals on push, require review threads resolved, require CI green, block force-pushes and deletion | The hooks stop accidents locally; this stops them for everyone. The approval is CodeRabbit's ([Code review](#code-review)). |
+| Ruleset bypass | the repository admin, in **pull request** mode only | The escape hatch when CodeRabbit can't approve. A bypass merge is recorded on the PR; a direct push to `main` is still refused. |
+| CodeRabbit GitHub App | installed on this repository | Reviews every PR and supplies the required approval. Configured by `.coderabbit.yaml`. |
 | Automatically delete head branches | off | `worktree-cleanup` deletes branches after checking their content landed. |
 | Required status checks on `main` | `lint`, `lint-md`, `scripts`, `test (ubuntu-latest)`, `test (macos-latest)`, `test (windows-latest)`, `msrv`, `deny`, `secret-scan`, `pr-title`, `branch-name`, `commit-messages`, `dependency-review` | The CI jobs above. Don't require `zizmor`: it only runs when `.github/` changes, so on other PRs it would never report. |
 | Dependency graph, Dependabot alerts, Dependabot security updates | on | Feeds `dependency-review` and the Dependabot PRs. |
@@ -414,6 +416,48 @@ neither follows a symlink in it (#94).
 
 `/create-gh-pr` handles the first four. Tick test-plan boxes honestly. An unticked box tells the
 reviewer something. A falsely ticked one is a lie they can't see.
+
+### Code review
+
+[CodeRabbit](https://docs.coderabbit.ai/) reviews every non-draft PR against `main`, and its
+approval is the one the `default` ruleset requires. The only human collaborator authors every PR,
+and GitHub never lets an author approve their own, so the reviewer can't be a person yet (#106).
+`.coderabbit.yaml` at the repository root holds the configuration:
+
+- **Automatic approvals** (`reviews.auto_approvals.enabled`). CodeRabbit requests changes for a
+  blocking finding and approves once the latest commit has a finished review, every review thread
+  is resolved and no pre-merge check fails. A new push dismisses the approval (the ruleset), and
+  CodeRabbit re-approves after reviewing it.
+- **No self-approval** (`allow_author_approval: false`). Otherwise the author could comment
+  `@coderabbitai approve` and get an approval without a finished review.
+- **Nothing in the PR description.** The squash commit is the title and description, so the
+  summary goes in the walkthrough comment (`high_level_summary_in_walkthrough`), and the
+  `token-report` markers stay the only generated part of the description.
+- **Governance in the review.** `AGENTS.md` is read as a coding guideline by default.
+  `path_instructions` sharpen it for Rust sources, transcript sources, fixtures, workflows and the
+  installers. Generated, vendored and immutable paths (`.tally/`, `reference/`, `Cargo.lock`, the
+  goldens, the vendored manual assets) are excluded by `path_filters`.
+- **Tools.** markdownlint is off, because `rumdl` lints Markdown with this repository's config.
+  The other bundled tools keep CodeRabbit's defaults and duplicate CI on purpose: CI decides, and
+  CodeRabbit only comments.
+- **Pre-merge checks** are `warning`, not `error`. An `error` check that fails withholds the
+  approval. The title check is off, since `pr-title` enforces it.
+
+The `CodeRabbit` status is **not** a required check. The approval already waits for the review,
+and a check that doesn't report (a skipped or rate-limited review) would leave the PR waiting.
+
+When a review is wrong, reply in its thread to explain, then resolve it. When CodeRabbit can't
+approve at all (an outage, or a finding it won't drop), the admin merges with the ruleset bypass
+and says why in the PR. Don't apply a suggestion with GitHub's "Commit suggestion" button: its
+commit message isn't a Conventional Commit and fails `commit-messages`. Apply it locally, or with
+`/coderabbit:autofix` (below), so the `commit-msg` hook checks it.
+
+The CodeRabbit Claude Code plugin is optional and per user, not configured in this repository:
+`/plugin install coderabbit@claude-plugins-official`. It adds `/coderabbit:code-review` (a local
+review before pushing, which needs the CodeRabbit CLI and its own login), `/coderabbit:autofix`
+(works through a PR's unresolved CodeRabbit threads) and `/coderabbit:coderabbit-config`
+(validates `.coderabbit.yaml`). It stays out of `.claude/settings.json` so that agents in
+worktrees, which can't log in, don't send diffs out on their own.
 
 ### Token usage
 

@@ -169,6 +169,9 @@ never worth failing the PR over.
 
 ## Notes
 
-- This skill doesn't request reviewers, doesn't merge, and doesn't run cleanup. The user merges
-  (squash only), then runs `/worktree-cleanup`.
+- This skill doesn't request reviewers, doesn't merge, and doesn't run cleanup. CodeRabbit
+  reviews the PR on its own, and its approval is the one `main` requires. End by telling the user
+  the PR is waiting on that review, and that `/coderabbit:autofix` (if installed) works through
+  its unresolved threads ([dev_workflow.md](../../../docs/references/dev_workflow.md#code-review)).
+  The user merges (squash only), then runs `/worktree-cleanup`.
 - Never force-push to update a PR. Push new commits.
