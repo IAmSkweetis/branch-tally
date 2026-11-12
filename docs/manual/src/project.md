@@ -34,6 +34,10 @@ Prices are applied when you run `project`, from the price table for the `--repo`
 exactly as for `report --from-ledger`. See
 [Which price table is used](cli.md#which-price-table-is-used).
 
+The [config file](config.md)'s `mode` applies as it does to `report --from-ledger`. The branch of
+each call was decided when it was recorded, so the mode doesn't move calls between branches or
+change any number. In `strict` mode the report doesn't list the attribution heuristics.
+
 The ledger notes that `report --from-ledger` prints on stderr (skipped lines, conflicting lines,
 mixed modes) are printed by `project` too. They are described in
 [Report from the ledger](ledger.md#report-from-the-ledger).
@@ -46,13 +50,35 @@ row's numbers are what `branch-tally report <branch> --from-ledger` shows for th
 | Column | Holds |
 | ------ | ----- |
 | Branch | The branch `record` was run for. |
-| Last call | The date of the latest API call in the branch's ledger lines, or `undated` when none of them has a timestamp. |
+| Last call | The date of the latest API call in the branch's ledger lines, or `undated` when none of them has a usable timestamp. |
 | Calls | API calls recorded for the branch, shared calls included. |
 | Tokens | All tokens in those calls: input, cache writes, cache reads, output and thinking. |
 | Cost | The estimated cost at list API rates, or `at least $X` when a model had no price. |
 
-Rows are in order of their last call, oldest first. Branches with the same last call are ordered
-by name, and undated branches come last.
+Rows are in order of their last call, oldest first. Timestamps are compared as points in time, so
+a different time zone offset or precision doesn't change the order. Branches with the same last
+call are ordered by name, and undated branches come last.
+
+### Calls with no usable timestamp
+
+A call whose timestamp is missing, or can't be read as a date and time, is still counted in its
+branch's calls, tokens and cost. It just can't date the branch:
+
+- A branch where **no** call has a usable timestamp is **undated**. Its row says `undated`, and it
+  is left off the chart (see [below](#the-cost-over-time-chart)).
+- A dated branch with **some** such calls takes its date from the calls that have one. Its real
+  last call may have been later than the date shown.
+
+A note under the table names the dated branches this applies to:
+
+```text
+- 2 call(s) have no usable timestamp. These branches may end later than their last call shown,
+  because those calls could not be dated: `fix/typo` (1 call(s))
+```
+
+(The real note is a single line; it is wrapped here to fit the page.) The first count is
+project-wide, each call counted once, undated branches included. The list names only dated
+branches, because an undated branch has no date to be early.
 
 ## Shared calls: why the rows can add up to more than the total
 
@@ -83,7 +109,8 @@ are in `overlap`.
 A cost that leaves something out is shown as a floor, a lower bound, never as an exact figure:
 
 - A **row** is `at least $X` when one of its models has no price in the price table. Its tokens
-  are counted, but the unpriced model's cost is not in `$X`.
+  are counted, but the unpriced model's cost is not in `$X`. A branch that used only unpriced
+  models shows `at least $0.00`: its tokens are real, but nothing in them could be priced.
 - The **project total** is `at least $X` when any figure in the report is a floor: the total, any
   row or any chart point. A note names the unpriced models.
 
@@ -104,71 +131,107 @@ branch was inferred rather than stamped. The heuristics are described in
 
 The chart has one point per dated branch, in the same order as the table. Each point's height is
 the cumulative cost: that branch's cost plus every earlier branch's. Its label is the branch's
-last call date. Each label is unique, so when two branches have their last call on the same day,
-their labels still tell the points apart. The chart shows dates only; branch names are in the
-table.
+last call date. The chart shows dates only; branch names are in the table.
+
+When two or more points fall on the same day, each of them gets an ordinal after the date, so the
+labels stay distinct: `"2026-03-20 #1"`, `"2026-03-20 #2"`. A date that occurs once has no
+ordinal.
 
 A shared call is added once, at the earliest branch that claims it. So the chart never counts a
 call twice, and its last point is the total cost of all the dated branches.
 
+The chart's title gives that last point: `Cumulative cost (USD)` when it is exact, or
+`Cumulative cost (USD, at least $X)`, where `$X` is the last point, when it is not. It says "at
+least" when any figure in the report is a floor, or when some branch is undated.
+
 Two things the chart leaves out, and says so:
 
-- **Undated branches.** A branch with no timestamp has no place on a time axis. It is in the table
-  and the total, but not on the chart, and a note says how many were left off. The chart then
-  covers the dated branches only, and its last point is lower than the project total.
+- **Undated branches.** A branch with no usable timestamp has no place on a time axis. It is in
+  the table and the total, but not on the chart. The chart then covers the dated branches only, so
+  its last point is lower than the project total, and the title says "at least". A note under the
+  table says how many branches were left off.
 - **The scale of time.** Points are evenly spaced in date order. The distance between two points
   does not show how much time passed between them.
 
 **Floor points.** Once a branch is a floor, every point from there on is a floor too, because each
-point includes every earlier branch. The Markdown chart marks a floor point with `*` on its label,
-says "at least" in its title, and adds a line under the chart explaining the `*`. The SVG draws a
-floor point as a hollow circle, with a dashed segment leading into it.
+point includes every earlier branch. The Markdown chart puts `*` at the end of a floor point's
+label, after any ordinal (`"2026-03-20 #1*"`), and adds a line under the chart explaining the `*`.
+The SVG draws a floor point as a hollow circle, with a dashed segment leading into it.
 
 ## Example
 
-The output below comes from a small synthetic ledger, made up for this page. It has four branches:
-`fix/typo` shares one call with `feat/login`, `feat/search` used a model with no price, and
-`chore/old-notes` has no timestamps. The Mermaid chart block that follows the notes is left out
-here.
+The output below comes from a small synthetic ledger, made up for this page. It has five
+branches:
 
-```markdown
+- `fix/typo` shares one call with `feat/login`, and has one call with no timestamp;
+- `docs/faq` used only a model with no price, on the same day as `feat/search`;
+- `feat/search` used that model too, alongside a priced one;
+- `chore/old-notes` has no timestamps at all.
+
+````markdown
 ## Project cost
 
-Project total: **at least $21.70** · 8 call(s) · 25,920,000 tokens (25.9M)
+Project total: **at least $22.40** · 10 call(s) · 32,400,000 tokens (32.4M)
 
 | Branch | Last call | Calls | Tokens | Cost |
 | --- | --- | ---: | ---: | ---: |
 | `feat/login` | 2026-03-02 | 4 | 12,960,000 | $11.20 |
-| `fix/typo` | 2026-03-09 | 2 | 6,480,000 | $7.00 |
+| `fix/typo` | 2026-03-09 | 3 | 9,720,000 | $7.70 |
+| `docs/faq` | 2026-03-20 | 1 | 3,240,000 | at least $0.00 |
 | `feat/search` | 2026-03-20 | 2 | 6,480,000 | at least $3.50 |
 | `chore/old-notes` | undated | 1 | 3,240,000 | $3.50 |
 
 - Shared calls: 1 call(s) (3,240,000 tokens, $3.50) were counted more than once in the rows because two or more branches claim them. The project total counts each once, so the rows may sum to more than the total.
 - 1 model(s) unpriced, total is a floor: `claude-mystery-9`
 - Attributed by heuristic: session claim 1 call(s) / 3,240,000 tokens
-- 1 branch(es) have no timestamp and are left off the chart.
+- 1 branch(es) have no timestamp and are left off the chart, which covers dated branches only and so shows at least the cost of those.
+- 2 call(s) have no usable timestamp. These branches may end later than their last call shown, because those calls could not be dated: `fix/typo` (1 call(s))
+
+```mermaid
+xychart-beta
+    title "Cumulative cost (USD, at least $18.90)"
+    x-axis ["2026-03-02", "2026-03-09", "2026-03-20 #1*", "2026-03-20 #2*"]
+    y-axis "USD" 0 --> 19
+    line [11.20, 15.40, 15.40, 18.90]
+```
+
+Points marked * are floors: that branch or an earlier one has an unpriced model, so the real cost is at least this.
+````
+
+The Mermaid block renders like this:
+
+```mermaid
+xychart-beta
+    title "Cumulative cost (USD, at least $18.90)"
+    x-axis ["2026-03-02", "2026-03-09", "2026-03-20 #1*", "2026-03-20 #2*"]
+    y-axis "USD" 0 --> 19
+    line [11.20, 15.40, 15.40, 18.90]
 ```
 
 Reading it:
 
-- The rows sum to $25.20 and 9 calls. The total is $21.70 and 8 calls, because the shared call is
-  counted once.
-- The total is "at least", because `feat/search` used `claude-mystery-9`, which has no price.
-- The chart has three points: $11.20, $14.70 and at least $18.20. The last is a floor, marked
-  with `*` (hollow in the SVG).
-- The chart ends at $18.20, not $21.70: `chore/old-notes` ($3.50) is undated, so it is in the
-  total but not on the chart.
-- `fix/typo` adds $3.50 to the chart, not its row's $7.00, because its shared call was already
-  counted at `feat/login`.
+- The rows sum to $25.90 and 11 calls. The total is $22.40 and 10 calls, because the shared call
+  is counted once.
+- The total is "at least", because `docs/faq` and `feat/search` used `claude-mystery-9`, which
+  has no price. `docs/faq` used nothing else, so its row is `at least $0.00`.
+- `fix/typo` adds $4.20 to the chart, not its row's $7.70, because its shared call ($3.50) was
+  already counted at `feat/login`. One of its calls has no timestamp, so its work may have ended
+  after 2026-03-09.
+- `docs/faq` and `feat/search` both last ran on 2026-03-20, so their labels get `#1` and `#2`.
+  Both are floors, so both carry `*`. `docs/faq` adds nothing that could be priced, so the line
+  stays flat into it.
+- The chart ends at $18.90, not $22.40: `chore/old-notes` ($3.50) is undated, so it is in the
+  total but not on the chart. The title says "at least" for that reason as well as for the floor.
 
 ## Output formats
 
 ### Markdown
 
 Markdown (`--format md`) is the default. It is the `## Project cost` section shown above: the
-total line, the table, the notes and the Mermaid `xychart-beta` block. With no branches in the
-ledger, it says `No branches recorded in the ledger.` With no dated branches, it prints the table
-and says `No dated branches, so there is no cost chart.`
+total line, the table, the notes and the Mermaid `xychart-beta` block. The total line always
+shows the full project total, each call counted once, undated branches included. With no branches
+in the ledger, it says `No branches recorded in the ledger.` With no dated branches, it prints the
+table and says `No dated branches, so there is no cost chart.`
 
 The output holds branch names, dates, model ids and numbers only. `project` has no redaction
 option: branch names appear in the table as they are in the ledger.
@@ -187,30 +250,34 @@ option: branch names appear in the table as they are in the ledger.
 | `unpricedModels` | Model ids that had no price, across all branches. |
 | `overlap` | The shared calls: `calls`, `tokens`, `costUSD` and `costIsFloor`. Counted in more than one branch, once in the totals. |
 | `heuristics` | Calls and tokens per attribution heuristic, and `ambiguous`, as in `report`'s JSON, plus `isFloor`. Every key is present, with zeros where nothing applied. |
-| `undatedBranches` | How many branches have no timestamp and are left off the series. |
-| `branches` | One object per branch, in table order: `branch`, `lastCall` (the full timestamp, or `null`), `calls`, `tokens`, `costUSD`, `costIsFloor`, `unpricedModels` and `heuristics`. |
+| `undatedBranches` | How many branches have no usable timestamp and are left off the series. |
+| `undatedCalls` | How many calls have no usable timestamp, each counted once, undated branches included. |
+| `branches` | One object per branch, in table order: `branch`, `lastCall` (the full timestamp as recorded, or `null`), `calls`, `tokens`, `costUSD`, `costIsFloor`, `unpricedModels`, `heuristics` and `undatedCalls` (this branch's calls with no usable timestamp). |
 | `series` | One object per chart point, in date order: `date` (the full timestamp), `branch`, `cumulativeCostUSD` and `isFloor`. |
 
-Dollar amounts are rounded to four decimal places. An abridged example from the synthetic ledger
-above, with the `heuristics` objects left out:
+Dollar amounts are rounded to four decimal places. An all-unpriced branch has `"costUSD": 0.0`
+with `"costIsFloor": true`, the JSON form of `at least $0.00`. An abridged example from the
+synthetic ledger above, with some branches and points and every `heuristics` object left out:
 
 ```json
 {
-  "totalCalls": 8,
-  "totalTokens": 25920000,
+  "totalCalls": 10,
+  "totalTokens": 32400000,
   "totalTokensIsFloor": false,
-  "totalCostUSD": 21.7,
+  "totalCostUSD": 22.4,
   "totalCostIsFloor": true,
   "unpricedModels": ["claude-mystery-9"],
   "overlap": { "calls": 1, "tokens": 3240000, "costUSD": 3.5, "costIsFloor": false },
   "undatedBranches": 1,
+  "undatedCalls": 2,
   "branches": [
-    { "branch": "feat/login", "lastCall": "2026-03-02T13:00:00Z", "calls": 4, "tokens": 12960000, "costUSD": 11.2, "costIsFloor": false, "unpricedModels": [] },
-    { "branch": "chore/old-notes", "lastCall": null, "calls": 1, "tokens": 3240000, "costUSD": 3.5, "costIsFloor": false, "unpricedModels": [] }
+    { "branch": "fix/typo", "lastCall": "2026-03-09T09:00:00Z", "calls": 3, "tokens": 9720000, "costUSD": 7.7, "costIsFloor": false, "unpricedModels": [], "undatedCalls": 1 },
+    { "branch": "docs/faq", "lastCall": "2026-03-20T09:00:00Z", "calls": 1, "tokens": 3240000, "costUSD": 0.0, "costIsFloor": true, "unpricedModels": ["claude-mystery-9"], "undatedCalls": 0 },
+    { "branch": "chore/old-notes", "lastCall": null, "calls": 1, "tokens": 3240000, "costUSD": 3.5, "costIsFloor": false, "unpricedModels": [], "undatedCalls": 1 }
   ],
   "series": [
     { "date": "2026-03-02T13:00:00Z", "branch": "feat/login", "cumulativeCostUSD": 11.2, "isFloor": false },
-    { "date": "2026-03-20T16:00:00Z", "branch": "feat/search", "cumulativeCostUSD": 18.2, "isFloor": true }
+    { "date": "2026-03-20T16:00:00Z", "branch": "feat/search", "cumulativeCostUSD": 18.9, "isFloor": true }
   ]
 }
 ```
@@ -220,11 +287,15 @@ above, with the `heuristics` objects left out:
 `--export-graph <PATH>` also writes the chart as a standalone SVG file, 640 by 360 pixels. The
 report still prints on stdout as usual, in whichever format you chose.
 
-- The heading states the cumulative cost, with "at least" in front of it when it is a floor. When
-  some branches are undated, the heading says the chart covers dated branches only.
+- The heading, which is also the SVG's `<title>`, gives the last plotted point:
+  `Cumulative cost: $X`, or `Cumulative cost: at least $X` when any figure in the report is a
+  floor or some branch is undated. As in the Markdown chart, `$X` covers the dated branches only.
 - The axis shows the first and last dates. A floor point is a hollow circle, and the segment
-  leading into it is dashed. A line under the chart explains this when there is a floor, and
-  another says how many undated branches are not shown.
+  leading into it is dashed.
+- Lines under the chart explain what it can't show: `hollow = floor (at least), dashed line leads
+  to a floor` when there is a floor, `N undated branch(es) not shown`, and
+  `N call(s) with no usable timestamp, branch dates may be early`. Each appears only when it
+  applies.
 - Branch names are not printed on the chart. Each point has a tooltip with its branch, date and
   cumulative cost. Browsers don't show tooltips for an SVG embedded as an image, so open the file
   itself to see them.

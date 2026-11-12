@@ -341,7 +341,8 @@ model is shown as a floor, "at least $X". What the report holds and how to read 
 
 `--md` or `--json` together with `--format`, and `--md` with `--json`, are command-line errors
 (exit 2), as for `report`. The config file's `format` key sets the default format; a flag
-overrides it.
+overrides it. The config file's `mode` is used as `report --from-ledger` uses it; `project` has no
+mode flags. See [What it reads](project.md#what-it-reads).
 
 `--export-graph` writes the file whole or not at all, and replaces an existing file. It does not
 create the parent directory. The SVG is written before the report prints, so when it fails nothing

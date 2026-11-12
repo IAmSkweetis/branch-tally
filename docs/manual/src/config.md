@@ -53,8 +53,11 @@ redact = true
 ```
 
 `record` reads the same file but uses only `mode` and `work-branch`; the output settings don't
-apply to it. [`project`](project.md) also reads it; of the output settings it uses only `format`.
-A bad config file stops `project` just as it stops `report`.
+apply to it. [`project`](project.md) also reads it and uses `mode` and `format`. As with
+`report --from-ledger`, `mode` there doesn't change any number, because the ledger already holds
+each call's branch; in `strict` mode the report leaves out the attribution heuristics. `project`
+ignores `cost`, `redact` and `redact-names`. A bad config file stops `project` just as it stops
+`report`.
 
 A `work-branch` in the file while the effective mode is not timeline is ignored, not an error.
 `config show` marks it `[inactive: mode is not timeline]`. A `--work-branch` *flag* outside
