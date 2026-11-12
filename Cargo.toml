@@ -32,6 +32,20 @@ ureq = { version = "3.5.1", default-features = false, features = ["rustls"] }
 # `string` is the `&str` API we call, and `std` only adds the `std::error::Error` impl, which clap's
 # value parser needs to carry a bad `--work-branch` pattern. Neither adds a dependency.
 regex-lite = { version = "0.1.9", default-features = false, features = ["std", "string"] }
+# `branch-tally update`: verify the SHA-256 of a downloaded release archive against SHA256SUMS.
+# ring is already in the lockfile (ureq's rustls provider), so `ring::digest` adds zero crates,
+# where `sha2` would add several (sha2, digest, block-buffer, crypto-common, ...). Only `digest` is
+# used, so no default features are requested by us.
+ring = { version = "0.17.14", default-features = false }
+# `branch-tally update`: gunzip the release tarball. `rust_backend` is miniz_oxide, pure Rust: no
+# libz-sys, no C zlib, so musl and windows-msvc build unchanged. It is also the inflater zip uses.
+flate2 = { version = "1.1.11", default-features = false, features = ["rust_backend"] }
+# `branch-tally update`: read the one binary out of the .tar.gz. Extraction only; `xattr` stays
+# off, which keeps the xattr/libc extras out. MIT OR Apache-2.0.
+tar = { version = "0.4.46", default-features = false }
+# `branch-tally update`: read the one binary out of the Windows .zip. Deflate only, through the
+# pure-Rust flate2 backend above: no zopfli (a writer), no zlib-rs, no bzip2/zstd/lzma/aes/time.
+zip = { version = "9.5.1", default-features = false, features = ["deflate-flate2"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
