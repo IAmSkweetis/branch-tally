@@ -7,7 +7,10 @@
 mod assets;
 mod version;
 
-pub use assets::{SUMS_NAME, archive_name, verify_checksum};
+pub use assets::{
+    SUMS_NAME, UNSUPPORTED_TARGET, archive_name, current_target, is_binary_entry,
+    latest_version_from_sums, sha256_hex, verify_checksum,
+};
 pub use version::{DEV_VERSION, Version, is_dev_version};
 
 /// The installer one-liners shown when `update` cannot run.
