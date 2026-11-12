@@ -99,7 +99,8 @@ This repository is also a Claude Code plugin marketplace with two optional plugi
 
 `branch-tally-capture` writes an id-only `.tally/captures.jsonl` that lets reports place calls
 whose transcript carries no branch. `branch-tally-record` fills the ledger before Claude Code purges
-transcripts. The manual's [Integration](https://branch-tally.io/integration.html) page covers both.
+transcripts. The manual's [Claude Code](https://branch-tally.io/integration/claude-code.html) page
+covers both.
 
 ## Documentation
 
@@ -110,8 +111,9 @@ The user manual is at **<https://branch-tally.io/>**:
 | [CLI reference](https://branch-tally.io/cli.html) | Every command and flag, attribution modes, output formats, redaction, exit codes |
 | [Config reference](https://branch-tally.io/config.html) | The config file: location, precedence, every key, `config show` and `config init` |
 | [Persisting the Ledger](https://branch-tally.io/ledger.html) | `record` and `report --from-ledger`, to keep usage after transcripts are purged |
-| [Integration](https://branch-tally.io/integration.html) | The optional Claude Code plugins: install, what their hooks do, and the captures file |
-| [Workflow Examples](https://branch-tally.io/workflows/) | How this repository publishes each PR's token cost |
+| [Integration](https://branch-tally.io/integration/) | Running branch-tally from an agent harness's hooks: for Claude Code, the optional plugins, how to install them and what their hooks do |
+| [Hook captures](https://branch-tally.io/captures.html) | The captures file the hooks write, and how reports use it for calls the transcript could not place |
+| [Workflow Examples](https://branch-tally.io/workflows/) | How this repository records each PR's token cost in a committed ledger and publishes it on the PR |
 
 ## Price table
 

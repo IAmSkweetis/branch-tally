@@ -9,7 +9,7 @@ branch-tally <COMMAND>
 | [`report`](#branch-tally-report) | Report Claude Code token usage for a git branch. |
 | [`record`](#branch-tally-record) | Append this branch's attributed usage to the repository ledger (write only). |
 | [`project`](#branch-tally-project) | Report project-wide totals and the cost-over-time series from the ledger. |
-| [`capture`](#branch-tally-capture) | Record this session's branch from a Claude Code hook payload on stdin. Run by the [capture plugin](integration.md), not by hand. |
+| [`capture`](#branch-tally-capture) | Record this session's branch from a Claude Code hook payload on stdin. Run by the [capture plugin](integration/claude-code.md), not by hand. |
 | [`prices update`](#branch-tally-prices-update) | Refresh the per-user price cache from the LiteLLM model price list. |
 | [`prices show`](#branch-tally-prices-show) | Show which price table reports would use, with its source, date and path. |
 | [`config show`](#branch-tally-config-show) | Show the config file path, whether it was found, and each effective value and its source. |
@@ -366,12 +366,12 @@ ledger notes on stderr are the same as for `report --from-ledger`; see
 branch-tally capture
 ```
 
-Run by the [capture plugin](integration.md)'s hooks (`SessionStart`, `SubagentStop`, `Stop`), not
-by hand. It takes no options. It reads one hook payload from stdin and appends an id-only event to
-`.tally/captures.jsonl` in the **main checkout**, so a worktree session's captures land in one
-place. The event holds the session id, the agent id, the branch, the event kind and a timestamp.
-No path and no message content is stored or printed. The file and how reports use it are described
-in [Hook captures](captures.md).
+Run by the [capture plugin](integration/claude-code.md)'s hooks (`SessionStart`, `SubagentStop`,
+`Stop`), not by hand. It takes no options. It reads one hook payload from stdin and appends an
+id-only event to `.tally/captures.jsonl` in the **main checkout**, so a worktree session's captures
+land in one place. The event holds the session id, the agent id, the branch, the event kind and a
+timestamp. No path and no message content is stored or printed. The file and how reports use it are
+described in [Hook captures](captures.md).
 
 - The branch is the current branch of the payload's `cwd` (the process directory when the payload
   has none). A detached HEAD records nothing.
@@ -510,7 +510,7 @@ Replaces the running `branch-tally` binary with a release from the
 [releases page](https://github.com/IAmSkweetis/branch-tally/releases). `upgrade` is an alias and
 behaves identically. It works on a binary installed by `install.sh`, `install.ps1` or a
 [download by hand](installation/manual-download.md), on the six
-[release targets](installation/README.md).
+[release targets](installation/).
 
 | Option | Does |
 | ------ | ---- |
