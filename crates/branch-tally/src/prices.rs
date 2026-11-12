@@ -37,6 +37,8 @@ const PRICES_FILE: &str = "prices.toml";
 struct GuardedText<'a> {
     main: &'a Path,
     override_path: &'a Path,
+    /// The core refusal text, kept because `ResolveError::Unreadable` carries only the I/O kind.
+    refusal: std::cell::RefCell<Option<String>>,
 }
 
 impl TextSource for GuardedText<'_> {
@@ -44,7 +46,10 @@ impl TextSource for GuardedText<'_> {
         if path != self.override_path {
             return FsText.read(path);
         }
-        let refused = |e: LedgerError| std::io::Error::other(e.to_string());
+        let refused = |e: LedgerError| {
+            *self.refusal.borrow_mut() = Some(e.to_string());
+            std::io::Error::other("refused")
+        };
         let Some(tally) = TallyDir::open(self.main).map_err(refused)? else {
             return Ok(None);
         };
@@ -85,10 +90,11 @@ pub(crate) fn resolve_table(locations: &Locations) -> Result<PriceTable, String>
     let fs = GuardedText {
         main: &locations.main,
         override_path: &locations.override_path,
+        refusal: std::cell::RefCell::new(None),
     };
     resolve(&fs, &locations.override_path, cache)
         .map(|resolved| resolved.table)
-        .map_err(|e| one_line(&e.to_string()))
+        .map_err(|e| one_line(&fs.refusal.take().unwrap_or_else(|| e.to_string())))
 }
 
 fn one_line(text: &str) -> String {
