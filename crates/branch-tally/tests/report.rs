@@ -97,6 +97,7 @@ fn check_against_golden(golden: &str, extra: &[&str], strict: bool) -> usize {
                 strip_price_divergences(&mut got);
                 strip_heuristics_divergence(&mut got, strict);
                 strip_subagent_divergence(&mut got, strict);
+                strip_unstamped_divergence(&mut got, &name, strict);
                 match divergence {
                     None => assert_eq!(&got, want, "{name} {branch}"),
                     Some((_, _, issue, _)) => {
@@ -169,7 +170,7 @@ const CLAIM_DIVERGENCES: &[(&str, &str, &str, &str)] = &[
         "main",
         "#37",
         "the reference recovers unstamped main-checkout calls onto the branch the main checkout \
-         has checked out now; they stay (none) and are reported as unattributed",
+         has checked out now; they stay (none), and the report counts them in `unstamped`",
     ),
 ];
 
@@ -200,6 +201,59 @@ fn strip_heuristics_divergence(payload: &mut serde_json::Value, strict: bool) {
         h["dispatcherRollUp"]["tokens"].as_u64().unwrap(),
         sub_tokens
     );
+}
+
+/// The reference's own `(none)` bucket for a scenario, from its strict golden: `(calls, tokens)` of
+/// every call that carries no branch stamp. `(0, 0)` when the golden has no such key.
+fn reference_none(scenario: &str) -> (u64, u64) {
+    let path = fixtures_root()
+        .join(scenario)
+        .join("goldens")
+        .join("strict.json");
+    let golden: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    let Some(none) = golden.get("(none)") else {
+        return (0, 0);
+    };
+    let tokens = none["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["tokens"].as_u64().unwrap())
+        .sum();
+    (none["totalCalls"].as_u64().unwrap(), tokens)
+}
+
+/// #60: a payload with unstamped calls carries a top-level `unstamped` object the reference does
+/// not emit. A report-field divergence, stripped deliberately after its values are checked so no
+/// other key is loosened. Strict mode is raw, so its count is exactly the reference's `(none)`
+/// bucket; claim mode can only place calls, never add them, so it is at most that. Mirrors
+/// `without_unstamped_divergence` in `branch-tally-core/tests/parity_claude_code.rs`.
+fn strip_unstamped_divergence(payload: &mut serde_json::Value, scenario: &str, strict: bool) {
+    let (raw_calls, raw_tokens) = reference_none(scenario);
+    let got = payload.as_object_mut().unwrap().remove("unstamped");
+    let (calls, tokens) = got.as_ref().map_or((0, 0), |u| {
+        assert_eq!(u.as_object().unwrap().len(), 2, "unexpected unstamped keys");
+        (u["calls"].as_u64().unwrap(), u["tokens"].as_u64().unwrap())
+    });
+    if got.is_some() {
+        assert!(calls > 0, "a zero count must be omitted");
+    }
+    if strict {
+        assert_eq!(
+            (calls, tokens),
+            (raw_calls, raw_tokens),
+            "{scenario}: strict is raw"
+        );
+    } else {
+        assert!(
+            calls <= raw_calls && tokens <= raw_tokens,
+            "{scenario}: claim mode counted more unstamped calls than the transcripts hold"
+        );
+    }
+    if scenario == "unstamped-main" {
+        assert_eq!((calls, tokens), (2, 2_221));
+    }
 }
 
 /// Checks the #6 `subagents` object, when present, adds up on its own terms and is absent in
