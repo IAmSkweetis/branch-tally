@@ -30,6 +30,10 @@ pub struct BranchRow {
     pub unpriced_models: Vec<String>,
     /// Calls whose branch was not certain, by heuristic.
     pub uncertain: HeuristicBreakdown,
+    /// Calls with a missing or unparsable `ts`. They are in `usage` and `cost` but cannot move
+    /// `last_call`, so when this is non-zero `last_call` may be earlier than the real last call.
+    #[serde(default)]
+    pub undated_calls: u64,
 }
 
 impl BranchRow {
@@ -64,6 +68,9 @@ pub struct ProjectTotals {
     pub uncertain: HeuristicBreakdown,
     /// What the rows count more than once.
     pub overlap: SharedOverlap,
+    /// Calls with a missing or unparsable `ts`, counted once per request id.
+    #[serde(default)]
+    pub undated_calls: u64,
 }
 
 impl ProjectTotals {

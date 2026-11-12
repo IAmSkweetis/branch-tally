@@ -1,11 +1,10 @@
-//! Timestamp instants for ordering. A private copy of the attribution timeline parser
-//! (`attribution::parse_ts` is not exported and `project` may not edit that module): keep the
-//! two in step, or lift one shared helper into `model` later.
+//! The one RFC 3339 timestamp parser, shared by attribution (timeline ordering) and project
+//! (last-call ordering). Crate-internal: nothing outside core needs it.
 
 /// Nanoseconds since the Unix epoch for an RFC 3339 timestamp with an explicit offset
 /// (`2026-11-01T10:00:00.000Z`, `...+01:00`). `None` for anything else: a timestamp whose
 /// instant cannot be known is never guessed.
-pub(super) fn parse_ts(text: &str) -> Option<i128> {
+pub(crate) fn parse_ts(text: &str) -> Option<i128> {
     let b = text.as_bytes();
     let num = |from: usize, len: usize| -> Option<i64> {
         let digits = b.get(from..from + len)?;

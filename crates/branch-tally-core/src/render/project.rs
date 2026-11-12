@@ -184,6 +184,27 @@ fn notes(report: &ProjectReport, o: &mut String) {
             n(report.undated_branches)
         );
     }
+    let early: Vec<String> = report
+        .rows
+        .iter()
+        .filter(|r| r.last_call.is_some() && r.undated_calls > 0)
+        .map(|r| {
+            format!(
+                "{} ({} call(s))",
+                code(&r.branch, false),
+                n(r.undated_calls)
+            )
+        })
+        .collect();
+    if !early.is_empty() {
+        let _ = writeln!(
+            o,
+            "- {} call(s) have no usable timestamp. These branches may end later than their \
+             last call shown, because those calls could not be dated: {}",
+            n(t.undated_calls),
+            early.join(", ")
+        );
+    }
     if o.len() > before {
         o.push('\n');
     }
@@ -283,6 +304,7 @@ pub fn project_json(report: &ProjectReport) -> String {
     );
     let _ = writeln!(o, "  \"heuristics\": {},", heuristics_json(&t.uncertain));
     let _ = writeln!(o, "  \"undatedBranches\": {},", report.undated_branches);
+    let _ = writeln!(o, "  \"undatedCalls\": {},", t.undated_calls);
     if report.rows.is_empty() {
         o.push_str("  \"branches\": [],\n");
     } else {
@@ -299,13 +321,14 @@ pub fn project_json(report: &ProjectReport) -> String {
                 o,
                 "    {{ \"branch\": {}, \"lastCall\": {last}, \"calls\": {}, \"tokens\": {}, \
                  \"costUSD\": {usd}, \"costIsFloor\": {}, \"unpricedModels\": {}, \
-                 \"heuristics\": {} }}{comma}",
+                 \"heuristics\": {}, \"undatedCalls\": {} }}{comma}",
                 string(&r.branch),
                 r.usage.calls,
                 r.usage.tokens(),
                 r.is_floor(),
                 strings_json(&r.unpriced_models),
-                heuristics_json(&r.uncertain)
+                heuristics_json(&r.uncertain),
+                r.undated_calls
             );
         }
         o.push_str("  ],\n");
@@ -424,6 +447,12 @@ pub fn project_svg(report: &ProjectReport) -> String {
         footer.push(format!(
             "{} undated branch(es) not shown",
             report.undated_branches
+        ));
+    }
+    if report.totals.undated_calls > 0 {
+        footer.push(format!(
+            "{} call(s) with no usable timestamp, branch dates may be early",
+            report.totals.undated_calls
         ));
     }
     let mut y = HEIGHT - 28.0;
@@ -894,5 +923,50 @@ mod tests {
         assert!(md.contains("100 tokens, at least $0.50)"), "{md}");
         let v: serde_json::Value = serde_json::from_str(&project_json(&r)).unwrap();
         assert_eq!(v["overlap"]["costIsFloor"], true);
+    }
+
+    /// `feat/a` is dated but has 2 calls with no usable timestamp; `scratch` is wholly undated.
+    fn with_undated_calls() -> ProjectReport {
+        let mut r = exact();
+        r.rows[0].undated_calls = 2;
+        r.rows.push(row("scratch", None, 1, 10, 0.0));
+        r.rows[2].undated_calls = 1;
+        r.totals.undated_calls = 3;
+        r.undated_branches = 1;
+        r
+    }
+
+    #[test]
+    fn markdown_names_dated_branches_whose_date_may_be_early() {
+        let md = project_markdown(&with_undated_calls());
+        assert!(
+            md.contains(
+                "- 3 call(s) have no usable timestamp. These branches may end later than their \
+                 last call shown, because those calls could not be dated: `feat/a` (2 call(s))"
+            ),
+            "{md}"
+        );
+        assert!(!md.contains("`scratch` (1 call(s))"), "{md}");
+        assert!(!project_markdown(&exact()).contains("no usable timestamp"));
+    }
+
+    #[test]
+    fn json_carries_undated_call_counts_on_branches_and_top_level() {
+        let v: serde_json::Value =
+            serde_json::from_str(&project_json(&with_undated_calls())).unwrap();
+        assert_eq!(v["undatedCalls"], 3);
+        assert_eq!(v["branches"][0]["undatedCalls"], 2);
+        assert_eq!(v["branches"][1]["undatedCalls"], 0);
+        assert_eq!(v["branches"][2]["undatedCalls"], 1);
+    }
+
+    #[test]
+    fn svg_footer_mentions_undated_calls_only_when_non_zero() {
+        let s = project_svg(&with_undated_calls());
+        assert!(
+            s.contains("3 call(s) with no usable timestamp, branch dates may be early"),
+            "{s}"
+        );
+        assert!(!project_svg(&exact()).contains("no usable timestamp"));
     }
 }

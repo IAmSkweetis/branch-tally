@@ -397,3 +397,108 @@ fn overlap_on_an_unpriced_model_is_a_floor_and_names_the_model() {
     assert!(report.totals.is_floor());
     assert_eq!(report.totals.unpriced_models, vec!["mystery".to_owned()]);
 }
+
+/// The work-branch rule only drives live timeline attribution. A ledger-only read never applies
+/// it, so a custom rule changes neither `run_from_ledger` nor the project row, and `build` needs
+/// no rule parameter.
+#[test]
+fn a_custom_work_branch_rule_does_not_change_ledger_only_numbers() {
+    use branch_tally_core::report::WorkBranch;
+    let f = Fixture::new();
+    f.record(
+        "feat/a",
+        &[
+            plain("a1", "priced", Some("2026-01-01T00:00:00Z")),
+            sel(
+                "a2",
+                "priced",
+                Some("2026-01-02T00:00:00Z"),
+                BranchBasis::TimelineAmbiguous,
+            ),
+        ],
+    );
+    let git = FakeGit::new().with_worktrees(
+        "/repo",
+        vec![Worktree {
+            path: PathBuf::from("/repo"),
+            branch: "main".to_owned(),
+        }],
+    );
+    let nothing = |_: &str| false;
+    let default_rule = Options::new(Mode::Timeline);
+    let custom_rule = Options::new(Mode::Timeline).with_work_branch(WorkBranch::Custom {
+        pattern: "^never$",
+        matches: &nothing,
+    });
+    let run = |options: &Options<'_>| {
+        run_from_ledger(
+            &git,
+            None,
+            Path::new("/projects"),
+            Path::new("/repo"),
+            Some("feat/a"),
+            options,
+            &f.path,
+            &table(),
+        )
+        .unwrap()
+    };
+    let (with_default, with_custom) = (run(&default_rule), run(&custom_rule));
+    assert_eq!(with_default.summary, with_custom.summary);
+    assert_eq!(with_default.costs, with_custom.costs);
+    assert_eq!(with_custom.summary.work_branch, None);
+
+    let report = branch_tally_core::project::build(
+        &f.read(),
+        Some(Path::new("/repo")),
+        Mode::Timeline,
+        &table(),
+    );
+    let row = &report.rows[0];
+    assert_eq!(row.usage, with_custom.summary.total);
+    assert_eq!(row.uncertain, with_custom.summary.footnote.heuristics);
+    assert!((row.cost.known - with_custom.costs.total).abs() < 1e-12);
+}
+
+#[test]
+fn calls_without_a_usable_ts_are_counted_per_branch_and_project_wide() {
+    let f = Fixture::new();
+    f.record(
+        "feat/a",
+        &[
+            plain("a1", "priced", Some("2026-01-05T00:00:00Z")),
+            plain("a2", "priced", None),
+            plain("a3", "priced", Some("garbage")),
+        ],
+    );
+    f.record(
+        "feat/b",
+        &[plain("b1", "priced", Some("2026-01-06T00:00:00Z"))],
+    );
+    f.record("feat/c", &[plain("c1", "priced", None)]);
+    let report = build(&f);
+    let count = |name: &str| {
+        report
+            .rows
+            .iter()
+            .find(|r| r.branch == name)
+            .unwrap()
+            .undated_calls
+    };
+    assert_eq!(count("feat/a"), 2);
+    assert_eq!(count("feat/b"), 0);
+    assert_eq!(count("feat/c"), 1);
+    assert_eq!(report.totals.undated_calls, 3);
+}
+
+#[test]
+fn a_request_shared_by_two_branches_with_no_ts_is_counted_once_project_wide() {
+    let f = Fixture::new();
+    let shared = plain("s", "priced", None);
+    f.record("feat/a", std::slice::from_ref(&shared));
+    f.record("feat/b", &[shared]);
+    let report = build(&f);
+    assert_eq!(report.rows[0].undated_calls, 1);
+    assert_eq!(report.rows[1].undated_calls, 1);
+    assert_eq!(report.totals.undated_calls, 1);
+}

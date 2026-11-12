@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 mod attributed;
 mod capture;
 mod costs;
+pub(crate) mod instant;
 mod project;
 mod subagent;
 mod summary;
