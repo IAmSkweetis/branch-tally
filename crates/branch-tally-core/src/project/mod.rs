@@ -10,12 +10,11 @@
 //! copy) and the overlap says what was counted twice. The series adds each request at the
 //! earliest dated branch that claims it, so its last point equals the total over dated branches.
 
-mod instant;
-
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::ledger::{Ledger, LedgerEntry};
+use crate::model::instant::parse_ts;
 use crate::model::{
     BranchRow, Costs, HeuristicBreakdown, Mode, ProjectReport, ProjectTotals, RowCost, SeriesPoint,
     SharedOverlap, Summary,
@@ -73,6 +72,14 @@ impl Priced {
     }
 }
 
+/// Entries whose `ts` is missing or does not parse: they count in the row but cannot date it.
+fn undated_calls(entries: &[&LedgerEntry]) -> u64 {
+    entries
+        .iter()
+        .filter(|e| e.ts.as_deref().and_then(parse_ts).is_none())
+        .count() as u64
+}
+
 /// Builds the project report from a read ledger. Pure: nothing here touches git, the clock or
 /// the filesystem.
 ///
@@ -83,7 +90,9 @@ impl Priced {
 /// Rows are ordered by `last_call` ascending, compared as parsed instants (RFC 3339 with any
 /// offset or fractional precision), ties by branch name, undated rows last. `last_call` keeps the
 /// original string of the latest call. A timestamp that does not parse never counts as the
-/// latest; its call is still in the row's usage and cost. A branch with no parseable timestamp
+/// latest; its call is still in the row's usage and cost, and is counted in the row's
+/// `undated_calls` (project-wide in `totals.undated_calls`, once per request id), because
+/// `last_call` may then be earlier than the real last call. A branch with no parseable timestamp
 /// (none at all, or only unparsable ones) is undated: it stays in `rows`, is left off the series
 /// and is counted in `undated_branches`.
 #[must_use]
@@ -111,7 +120,7 @@ pub fn build(
             // several equal instants is kept, and the original string is what is reported.
             let mut latest: Option<(i128, &str)> = None;
             for ts in entries.iter().filter_map(|e| e.ts.as_deref()) {
-                if let Some(at) = instant::parse_ts(ts)
+                if let Some(at) = parse_ts(ts)
                     && latest.is_none_or(|(best, _)| at > best)
                 {
                     latest = Some((at, ts));
@@ -125,11 +134,12 @@ pub fn build(
                 cost: priced.row_cost(),
                 unpriced_models: priced.unpriced_names(),
                 uncertain: priced.uncertain(),
+                undated_calls: undated_calls(&entries),
             };
             (row, entries)
         })
         .collect();
-    let at = |row: &BranchRow| row.last_call.as_deref().and_then(instant::parse_ts);
+    let at = |row: &BranchRow| row.last_call.as_deref().and_then(parse_ts);
     rows.sort_by(|(a, _), (b, _)| {
         (at(a).is_none(), at(a), &a.branch).cmp(&(at(b).is_none(), at(b), &b.branch))
     });
@@ -162,6 +172,7 @@ pub fn build(
             tokens: overlap.summary.total.tokens(),
             cost: overlap.row_cost(),
         },
+        undated_calls: undated_calls(&deduped),
     };
 
     let mut series = Vec::new();
