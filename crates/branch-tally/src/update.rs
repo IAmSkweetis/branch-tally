@@ -333,6 +333,10 @@ fn match_permissions(file: &std::fs::File, exe: &Path) -> io::Result<()> {
 
 /// Windows has no mode bits to carry over.
 #[cfg(not(unix))]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "keeps the signature of the Unix version, which can fail"
+)]
 fn match_permissions(_file: &std::fs::File, _exe: &Path) -> io::Result<()> {
     Ok(())
 }
