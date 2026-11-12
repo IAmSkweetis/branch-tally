@@ -18,7 +18,4 @@ reports read both files the same way.
 
 The integrations record usage. They don't publish it. To put the table on a pull request, run
 `branch-tally report --pr`, or `branch-tally report --pr --from-ledger` to publish from a committed
-ledger. See [Updating a pull request](../cli.md#updating-a-pull-request) in the CLI reference. A
-Claude Code skill that records and publishes a PR's usage
-([#11](https://github.com/IAmSkweetis/branch-tally/issues/11)) and a GitHub Action
-([#12](https://github.com/IAmSkweetis/branch-tally/issues/12)) are planned and not available yet.
+ledger. See [Updating a pull request](../cli.md#updating-a-pull-request) in the CLI reference.
