@@ -32,7 +32,8 @@ A cost table is only useful if it says what it could not see. branch-tally holds
 
 - **Uncertain usage is counted and reported, never dropped or guessed.** When calls can't be
   assigned to a branch with certainty, the report says how many, and the token total is labelled
-  "at least".
+  "at least". Calls in the repository that carry no branch stamp and can't be placed on any branch
+  are counted in their own line, never put on a branch to make the numbers add up.
 - **Heuristics are named.** When a call was assigned to the branch by a heuristic, such as the
   session that claimed it or the dispatcher a subagent rolled up to, the report's footnote lists
   each heuristic with its call and token counts.

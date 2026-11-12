@@ -165,7 +165,7 @@ What a ledger report tells you on stderr, as counts only:
 
 | Note | Meaning |
 | ---- | ------- |
-| `note: unattributed counts unavailable from the ledger` | A live report can say how many calls in the repository could not be attributed to any branch. The ledger only holds the requested branch's calls, so it can't. |
+| `note: unattributed counts unavailable from the ledger` | A live report can say how many calls in the repository could not be attributed to any branch: the [unstamped calls](cli.md#unstamped-calls) line (the JSON `unstamped` key) and the subagent section's unattributed counts. The ledger only holds the requested branch's calls, so it can't, and those counts are left out. With `--with-live` they come from the live transcripts and the note is not printed. |
 | `note: ledger mixes modes (claim, timeline); the numbers combine them` | The branch was recorded under more than one attribution mode. |
 | `note: skipped N ledger line(s): …` | Lines that were malformed or written by an unsupported ledger version were skipped and counted. |
 | `note: N ledger request(s) had conflicting lines; kept the latest` | Two lines with the same key held different data. The one with the latest `recorded_at` is used. |

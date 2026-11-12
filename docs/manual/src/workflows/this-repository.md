@@ -155,8 +155,9 @@ runs `/create-gh-pr`. That skill:
 The skill reads the total as printed. It says "at least $X" when some calls could not be
 attributed with certainty or a model has no price. A report from the ledger also prints
 `note: unattributed counts unavailable from the ledger` on stderr, because the ledger holds only
-this branch's calls. A ledger that is missing lines can understate the total without the "at
-least" label, so an unlabelled number is not presented as complete.
+this branch's calls, so the report can't include the line counting the repository's
+[unstamped calls](../cli.md#unstamped-calls). A ledger that is missing lines can understate the
+total without the "at least" label, so an unlabelled number is not presented as complete.
 
 `record` must run on the machine that did the work, within Claude Code's transcript retention
 period, from sessions whose working directory was this repository.
