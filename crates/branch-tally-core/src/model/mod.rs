@@ -13,12 +13,14 @@ use serde::{Deserialize, Serialize};
 mod attributed;
 mod capture;
 mod costs;
+mod project;
 mod subagent;
 mod summary;
 
 pub use attributed::{AttributedRecord, BranchBasis, SelectedRecord, Selection};
 pub use capture::{CAPTURE_SCHEMA_VERSION, CaptureEvent, CaptureKind};
 pub use costs::{Costs, PriceTableInfo, PriceTableSource, RowCost};
+pub use project::{BranchRow, ProjectReport, ProjectTotals, SeriesPoint, SharedOverlap};
 pub use subagent::{Dispatch, SubagentRow, SubagentSummary, SubagentTags, Workspace};
 pub use summary::{
     Bucket, DefaultBranchSource, Footnote, HeuristicBreakdown, HeuristicCount, Mode, SessionRow,
