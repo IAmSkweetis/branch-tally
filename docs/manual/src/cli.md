@@ -582,6 +582,7 @@ that a release with that tag exists, so it reports `update available` for any ve
 `BRANCH_TALLY_INSTALL_BASE_URL`, the variable the installers read, points `update` at a mirror with
 the same layout as the releases page (`<base>/latest/download/…` and `<base>/download/<tag>/…`).
 The default is `https://github.com/IAmSkweetis/branch-tally/releases`. A `file://` URL naming a
-local directory also works.
+local directory also works. Any other scheme, including plain `http://`, is refused before any
+network call.
 
 `update` sends no account or identifying data, only a `branch-tally/<version>` User-Agent.

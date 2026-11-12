@@ -47,3 +47,28 @@ fn upgrade_is_an_alias_for_update() {
 fn an_unknown_flag_is_a_usage_error() {
     assert_eq!(run(&["update", "--bogus"]).status.code(), Some(2));
 }
+
+fn run_with_base(base: &str) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_branch-tally"))
+        .args(["update", "--check"])
+        .env("BRANCH_TALLY_INSTALL_BASE_URL", base)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn a_plain_http_mirror_is_refused_before_any_network_call() {
+    let out = run_with_base("http://127.0.0.1:9/releases");
+    assert_eq!(out.status.code(), Some(1));
+    let err = text(&out.stderr);
+    assert!(err.contains("BRANCH_TALLY_INSTALL_BASE_URL"), "{err}");
+    assert!(err.contains("https://"), "{err}");
+    assert_eq!(err.trim().lines().count(), 1, "{err}");
+}
+
+#[test]
+fn a_file_mirror_is_accepted_and_reaches_the_dev_build_refusal() {
+    let out = run_with_base("file:///nonexistent");
+    assert_eq!(out.status.code(), Some(1));
+    assert!(text(&out.stderr).contains("development build"));
+}
