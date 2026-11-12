@@ -49,6 +49,7 @@ dependencies = [
  "insta",
  "libc",
  "ring",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",
