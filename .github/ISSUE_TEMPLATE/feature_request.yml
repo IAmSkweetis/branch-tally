@@ -2,11 +2,12 @@ name: Feature request
 description: Suggest a new capability or a change to an existing one.
 title: "feat: "
 labels: [enhancement]
+type: Feature
 body:
   - type: markdown
     attributes:
       value: |
-        Check the [roadmap](https://github.com/IAmSkweetis/branch-tally/issues/16) first: it may
+        Check the [roadmap](https://github.com/IAmSkweetis/branch-tally/milestone/1) first: it may
         already be planned. Name the issue as a Conventional Commit, for example
         `feat(cli): add --json output to branch-tally report`. Issues are public, so don't paste
         transcript content.

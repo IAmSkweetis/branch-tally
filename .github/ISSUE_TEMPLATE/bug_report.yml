@@ -1,7 +1,7 @@
 name: Bug report
 description: Something is broken, or a reported number looks wrong.
 title: "fix: "
-labels: [bug]
+type: Bug
 body:
   - type: markdown
     attributes:

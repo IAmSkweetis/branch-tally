@@ -9,7 +9,7 @@ in git worktrees. Claude Code is the first harness supported; others follow.
 > **Status: pre-alpha.** Prebuilt binaries ship on the
 > [releases page](https://github.com/IAmSkweetis/branch-tally/releases), and this repository's own
 > PR token reports are produced by branch-tally. Follow the
-> [roadmap](https://github.com/IAmSkweetis/branch-tally/issues/16) for progress.
+> [roadmap](https://github.com/IAmSkweetis/branch-tally/milestone/1) for progress.
 
 ## Why build branch-tally?
 
@@ -159,7 +159,7 @@ output = 25.0
 
 | | |
 | - | - |
-| Roadmap | [#16](https://github.com/IAmSkweetis/branch-tally/issues/16) and its `roadmap` sub-issues |
+| Roadmap | the [`v1` milestone](https://github.com/IAmSkweetis/branch-tally/milestone/1) |
 | Project board | [branch-tally](https://github.com/users/IAmSkweetis/projects/2) |
 | Contributing | [CONTRIBUTING.md](CONTRIBUTING.md): workspace setup and how a change lands |
 | Code of conduct | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) |

@@ -359,13 +359,43 @@ Its two assets, `mermaid.min.js` and `mermaid-init.js`, are committed beside `bo
 Fixtures deserve extra care here. They are derived from real transcripts, and a secret that
 survived scrubbing is a real leak, not a false positive ([testing.md](testing.md#fixtures)).
 
+## Issues
+
+The roadmap is the [`v1` milestone](https://github.com/IAmSkweetis/branch-tally/milestone/1), and
+every issue also goes on the `branch-tally` project board (#2). There is no `roadmap` label and no
+tracking issue with sub-issues. Each issue has a Conventional Commit title and carries:
+
+- **an issue type.** `fix` is **Bug**, `feat` is **Feature**, and every other commit type is
+  **Task**. Bug-type issues don't also carry the `bug` label.
+- **the kind label for its commit type**, from the table below. `fix` issues get none, because the
+  Bug type already says it. Add `security` for security findings.
+- **a Priority**, the repository issue field: `0 - Critical` to `4 - Info`.
+- **the `v1` milestone**, when it is planned work for v1.
+
+| Commit type | Kind label |
+| ----------- | ---------- |
+| `feat` | `enhancement` |
+| `fix` | none on issues; `bug` on PRs |
+| `docs` | `documentation` |
+| `build` | `build` |
+| `ci` | `ci` |
+| `test` | `test` |
+| `perf` | `perf` |
+| `refactor` | `refactor` |
+| `chore`, `style` | `chore` |
+
+The issue forms set the type and label themselves. `gh issue create` can set the label
+and milestone but not the type or the Priority. Set those in the web UI, or through the GraphQL
+`updateIssue` (`issueTypeId`) and `setIssueFieldValue` mutations.
+
 ## Pull requests
 
 Every PR:
 
 - has a Conventional Commit title;
 - links its issue with `Fixes #N`, or `Refs #N` when it only partly resolves it;
-- carries the label its branch type implies (`enhancement`, `bug`, `documentation`);
+- carries the kind label for its title's commit type ([Issues](#issues)), with `bug` for `fix`,
+  and the linked issue's milestone;
 - records its own token usage (dogfooding, see below).
 - **updates the manual** when it changes a CLI flag, a config key or an install method: edit the
   affected page under `docs/manual/src/` in the same PR. The manual documents what ships on
