@@ -293,7 +293,7 @@ identifiers.
 | `No ledger records found for branch '…'. …` | `--from-ledger` found no lines for the branch. |
 | `no ledger at <path>` | `--from-ledger` and the ledger file does not exist. |
 | `refusing to use <path>: it is …` | A default `.tally/` path is a symbolic link or the wrong kind of file. See [Symbolic links are refused](ledger.md#symbolic-links-are-refused). |
-| `cannot read price table <path>: …` | The price override or cache could not be read. A refused `.tally/prices.toml` shows here; see [Which price table is used](#which-price-table-is-used). |
+| `cannot read price table <path>: …` | The price override or cache could not be read. A refused `.tally/prices.toml` shows as `refusing to use …` instead; see [Which price table is used](#which-price-table-is-used). |
 | `config file <path> …` | The config file is invalid. See [Config reference](config.md#errors). |
 
 ## `branch-tally record`
@@ -373,7 +373,7 @@ is printed on stdout.
 | ------------------------ | ----- |
 | `no ledger at <path>` | The ledger file does not exist, or the checkout has no `.tally/` directory. |
 | `refusing to use <path>: it is …` | The default `.tally/ledger.jsonl`, or `.tally` itself, is a symbolic link or the wrong kind of file. It is not read. `--ledger <PATH>` is exempt. See [Symbolic links are refused](ledger.md#symbolic-links-are-refused). |
-| `cannot read price table <path>: …` | The price override or cache could not be read, including a refused `.tally/prices.toml`. See [Which price table is used](#which-price-table-is-used). |
+| `cannot read price table <path>: …` | The price override or cache could not be read. A refused `.tally/prices.toml` or `.tally` prints the `refusing to use …` line above instead. See [Which price table is used](#which-price-table-is-used). |
 | `cannot place the default ledger: <path> is not inside a git checkout …; pass --ledger <path>` | Outside a git checkout there is no default ledger, so `--ledger` is required. |
 | `cannot write graph <path>: <error>` | `--export-graph` could not write the file, for example because its directory does not exist. |
 | `config file <path> …` | The config file is missing (with `--config`) or invalid. See [Config reference](config.md#errors). |
@@ -474,11 +474,14 @@ The override is read only from a real `.tally/` directory, and never through a s
 [Symbolic links are refused](ledger.md#symbolic-links-are-refused)). With no `.tally/` directory
 there is no override, and the next table in the list is used. When `.tally` or
 `.tally/prices.toml` is a link, or is the wrong kind of file, `report`, `project` and `prices show`
-stop with exit 1 and this message, which names the file but not the reason:
+stop with exit 1 and the refusal, which names the path and the reason:
 
 ```text
-cannot read price table <main checkout>/.tally/prices.toml: other error
+refusing to use <main checkout>/.tally/prices.toml: it is not a regular file
 ```
+
+A linked `.tally` ends `it is a symbolic link`, and a `.tally` that is a file ends
+`it is not a directory`.
 
 Replace the link with a real file, or remove it.
 

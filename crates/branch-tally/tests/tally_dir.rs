@@ -153,7 +153,28 @@ fn a_symlinked_prices_toml_is_refused() {
     link(&target, &world.repo.join(".tally").join("prices.toml"));
     let out = world.run(&["report", BRANCH]);
     assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
-    assert!(stderr(&out).contains("prices.toml"), "{}", stderr(&out));
+    let err = stderr(&out);
+    assert!(err.contains("prices.toml"), "{err}");
+    // Core words a linked file as "not a regular file"; only a linked directory says "symbolic link".
+    assert!(err.contains("refusing to use"), "{err}");
+    assert!(err.contains("not a regular file"), "{err}");
+    assert!(!err.contains("other error"), "{err}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_tally_dir_is_refused_with_its_reason_by_report_and_project() {
+    let world = World::scenario("main-then-branch");
+    let elsewhere = world.home.join("elsewhere");
+    fs::create_dir(&elsewhere).unwrap();
+    link(&elsewhere, &world.repo.join(".tally"));
+    for args in [&["report", BRANCH][..], &["project"][..]] {
+        let out = world.run(args);
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {}", stdout(&out));
+        let err = stderr(&out);
+        assert!(err.contains("symbolic link"), "{args:?}: {err}");
+        assert!(!err.contains("other error"), "{args:?}: {err}");
+    }
 }
 
 #[cfg(unix)]
