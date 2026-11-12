@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 
 use branch_tally_core::config::{self, Flags, Format};
 use branch_tally_core::git::{Git, SystemGit, normalize_path};
-use branch_tally_core::ledger::{CAPTURES_PATH, CaptureReadStats, Identity, SystemClock};
+use branch_tally_core::ledger::{
+    CAPTURES_PATH, CaptureReadStats, Identity, LedgerTarget, SystemClock,
+};
 use branch_tally_core::model::Mode;
 use branch_tally_core::pr::{PrError, PrOutcome, SystemGh, update_pr};
 use branch_tally_core::redact::RedactOptions;
@@ -64,21 +66,11 @@ fn projects_root() -> Result<PathBuf, String> {
     Ok(home.join(".claude").join("projects"))
 }
 
-/// The ledger file: `--ledger`, else `.tally/ledger.jsonl` at the root of the checkout containing
-/// `dir`. A directory outside any repository is an error: falling back to `dir` would write a
-/// stray ledger.
-pub(crate) fn ledger_path(flag: Option<&Path>, dir: &Path) -> Result<PathBuf, String> {
-    if let Some(flag) = flag {
-        return Ok(flag.to_path_buf());
-    }
-    let top = SystemGit.toplevel(dir).map_err(|e| {
-        format!(
-            "cannot place the default ledger: {} is not inside a git checkout ({e}); \
-             pass --ledger <path>",
-            dir.display()
-        )
-    })?;
-    Ok(top.join(".tally").join("ledger.jsonl"))
+/// The ledger a command uses: `--ledger` as given (the user's own choice, read and written as
+/// is), else the guarded default `.tally/ledger.jsonl` at the checkout's top level, which core
+/// opens without following links and never creates (#94).
+pub(crate) fn ledger_target(flag: Option<&Path>) -> LedgerTarget<'_> {
+    flag.map_or(LedgerTarget::Default, LedgerTarget::Explicit)
 }
 
 /// Runs the command. `Err` carries the one-line message for stderr.
@@ -116,14 +108,14 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), String> {
     );
     let result = if args.from_ledger {
         let source: Option<&dyn Source> = args.with_live.then_some(&ClaudeCode as &dyn Source);
-        branch_tally_core::report::run_from_ledger(
+        branch_tally_core::report::run_from_ledger_at(
             &SystemGit,
             source,
             &projects,
             &cwd,
             args.branch.as_deref(),
             &options,
-            &ledger_path(args.ledger.as_deref(), &cwd)?,
+            &ledger_target(args.ledger.as_deref()),
             &table,
         )
     } else {
@@ -202,14 +194,14 @@ pub(crate) fn record(args: &RecordArgs) -> Result<(), String> {
         args.work_branch.as_ref(),
     )?;
     let matches = |branch: &str| args.work_branch.as_ref().is_some_and(|p| p.matches(branch));
-    let recorded = branch_tally_core::report::record(
+    let recorded = branch_tally_core::report::record_at(
         &SystemGit,
         &ClaudeCode,
         &projects,
         &cwd,
         args.branch.as_deref(),
         &options(settings.mode.value, pattern.as_ref(), &matches, None),
-        &ledger_path(args.ledger.as_deref(), &cwd)?,
+        &ledger_target(args.ledger.as_deref()),
         &Identity,
         &SystemClock,
     )
@@ -221,6 +213,11 @@ pub(crate) fn record(args: &RecordArgs) -> Result<(), String> {
     })?;
     note_skipped(&recorded.read_stats);
     note_captures(&recorded.capture_stats);
+    if recorded.outcome.tally_absent {
+        // Not an error: the repository has not opted in, so nothing was written or created.
+        stdout("no .tally/ directory: nothing recorded (create it to opt in)\n");
+        return Ok(());
+    }
     if recorded.worktrees_unavailable.is_some() {
         stderr("note: git worktree list was unavailable, so worktree recovery was skipped");
     }

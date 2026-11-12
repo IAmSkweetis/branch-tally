@@ -158,6 +158,7 @@ fn a_missing_ledger_is_an_error_naming_the_path() {
 #[test]
 fn the_default_ledger_is_the_checkouts() {
     let world = World::scenario("main-then-branch");
+    fs::create_dir(world.repo.join(".tally")).unwrap();
     assert_eq!(world.run(&["record", BRANCH]).status.code(), Some(0));
     let out = world.run(&["project"]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
@@ -167,6 +168,7 @@ fn the_default_ledger_is_the_checkouts() {
 #[test]
 fn repo_flag_selects_the_checkout_for_the_default_ledger() {
     let world = World::scenario("main-then-branch");
+    fs::create_dir(world.repo.join(".tally")).unwrap();
     assert_eq!(world.run(&["record", BRANCH]).status.code(), Some(0));
     let elsewhere = world.home.join("elsewhere");
     fs::create_dir_all(&elsewhere).unwrap();

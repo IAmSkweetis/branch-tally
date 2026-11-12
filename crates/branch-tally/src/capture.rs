@@ -8,7 +8,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use branch_tally_core::git::{Git, SystemGit, normalize_path};
-use branch_tally_core::ledger::{Clock, SystemClock, append_captures};
+use branch_tally_core::ledger::{Clock, LedgerError, SystemClock, append_captures};
 use branch_tally_core::model::{CAPTURE_SCHEMA_VERSION, CaptureEvent, CaptureKind, Harness};
 use branch_tally_core::paths::windows_drive_form;
 use branch_tally_core::sources::claude_code::hook::{
@@ -36,8 +36,16 @@ pub(crate) fn run() -> Result<(), String> {
         return Ok(());
     };
     let root = SystemGit.main_checkout(&dir);
-    append_captures(&root, &[event])
-        .map_err(|_| "capture: could not write .tally/captures.jsonl".to_owned())?;
+    // No `.tally/` directory means the repository has not opted in: write nothing, say nothing.
+    // The message is fixed: the refused path holds the cwd, which is never echoed.
+    append_captures(&root, &[event]).map_err(|e| match e {
+        LedgerError::Refused { .. } => {
+            "capture: refusing to write: .tally/ or its captures file is a symlink or not a \
+             regular file"
+                .to_owned()
+        }
+        _ => "capture: could not write .tally/captures.jsonl".to_owned(),
+    })?;
     Ok(())
 }
 
