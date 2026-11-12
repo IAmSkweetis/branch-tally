@@ -220,6 +220,16 @@ hard failure with nothing replaced. A dev build (`0.0.0-dev`) and an unwritable 
 refused, with the installer one-liner in the message. `--check` downloads nothing; `--version` may
 downgrade; `--force` reinstalls the current version; `--yes` skips the prompt.
 
+`BRANCH_TALLY_INSTALL_BASE_URL` (the installers' mirror variable) is honoured, but only for
+`https://` and `file://`; any other scheme, plain `http://` included, is a one-line error before a
+network call. Downloads and the extracted binary are capped at 256 MiB, and exceeding the cap is an
+error, never a truncated install. The new binary is staged beside the old one with an exclusive
+create (a planted symlink is not followed), flushed to disk, given the old binary's permission bits
+(`0o755` if unreadable) and renamed into place. On Windows the running exe is first renamed to
+`branch-tally.exe.old`; the next update that actually installs removes it, and says so if it cannot
+(for example because it is still running). If moving the new binary in and restoring the old one
+both fail, the error states that the binary now lives at `<path>.old` and to rename it back.
+
 ### Proving an install works
 
 Two layers. `installers.yml` runs on a pull request or push to `main` that changes `install.sh`,

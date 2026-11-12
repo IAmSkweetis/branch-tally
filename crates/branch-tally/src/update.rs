@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use branch_tally_core::update::{
-    Confirmer, FetchError, Installer, ReleaseClient, SUMS_NAME, UpdateOptions, run as run_update,
+    Confirmer, FetchError, Installer, ReleaseClient, SUMS_NAME, UpdateOptions, current_target,
+    is_binary_entry, latest_version_from_sums, run as run_update,
 };
 
 use crate::cli::{UpdateArgs, VERSION};
@@ -28,78 +29,29 @@ const BIN_NAME: &str = if cfg!(windows) {
     "branch-tally"
 };
 
-/// The release target this binary was built for, or a value core reports as unsupported.
-fn target_triple() -> String {
-    let known = if cfg!(all(
-        target_arch = "x86_64",
-        target_os = "linux",
-        target_env = "musl"
-    )) {
-        Some("x86_64-unknown-linux-musl")
-    } else if cfg!(all(
-        target_arch = "aarch64",
-        target_os = "linux",
-        target_env = "musl"
-    )) {
-        Some("aarch64-unknown-linux-musl")
-    } else if cfg!(all(target_arch = "x86_64", target_os = "macos")) {
-        Some("x86_64-apple-darwin")
-    } else if cfg!(all(target_arch = "aarch64", target_os = "macos")) {
-        Some("aarch64-apple-darwin")
-    } else if cfg!(all(
-        target_arch = "x86_64",
-        target_os = "windows",
-        target_env = "msvc"
-    )) {
-        Some("x86_64-pc-windows-msvc")
-    } else if cfg!(all(
-        target_arch = "aarch64",
-        target_os = "windows",
-        target_env = "msvc"
-    )) {
-        Some("aarch64-pc-windows-msvc")
-    } else {
-        None
-    };
-    known.map_or_else(
-        || {
-            format!(
-                "{}-{}-{}",
-                std::env::consts::ARCH,
-                std::env::consts::OS,
-                if cfg!(target_env = "gnu") {
-                    "gnu"
-                } else {
-                    "other"
-                }
-            )
-        },
-        str::to_owned,
-    )
-}
-
 /// Run `update`. `Ok` is the line for stdout; `Err` is the line for stderr (exit 1).
 pub(crate) fn run(args: &UpdateArgs) -> Result<String, String> {
-    let exe = current_exe();
-    if cfg!(windows) {
-        remove_leftover(&exe);
-    }
     let base = std::env::var(BASE_URL_ENV)
         .ok()
         .filter(|v| !v.trim().is_empty())
         .unwrap_or_else(|| DEFAULT_BASE_URL.to_owned());
+    let base = check_base_url(&base)?;
     let options = UpdateOptions {
         check: args.check,
         version: args.version.clone(),
         yes: args.yes,
         force: args.force,
     };
+    let target = current_target();
     let outcome = run_update(
         VERSION,
-        &target_triple(),
+        target,
         &options,
         &HttpClient::new(&base),
-        &FsInstaller { exe },
+        &FsInstaller {
+            exe: current_exe(),
+            target,
+        },
         &TerminalConfirmer,
     )
     .map_err(|e| e.to_string())?;
@@ -107,6 +59,18 @@ pub(crate) fn run(args: &UpdateArgs) -> Result<String, String> {
         Err(outcome.message())
     } else {
         Ok(outcome.message())
+    }
+}
+
+/// Accept only `https://` and `file://` mirrors, before any network call.
+fn check_base_url(base: &str) -> Result<String, String> {
+    let base = base.trim();
+    if base.starts_with("https://") || base.starts_with("file://") {
+        Ok(base.to_owned())
+    } else {
+        Err(format!(
+            "{BASE_URL_ENV} must start with https:// or file:// (plain http is not accepted)"
+        ))
     }
 }
 
@@ -134,7 +98,7 @@ impl HttpClient {
     fn fetch(&self, path: &str) -> Result<Vec<u8>, FetchError> {
         match self.base.strip_prefix("file://") {
             Some(dir) => read_local(dir, path),
-            None => fetch_http(&format!("{}/{path}", self.base)),
+            None => fetch_http(&format!("{}/{path}", self.base), MAX_DOWNLOAD_BYTES),
         }
     }
 }
@@ -142,8 +106,9 @@ impl HttpClient {
 impl ReleaseClient for HttpClient {
     fn latest_tag(&self) -> Result<String, FetchError> {
         let sums = self.fetch(&format!("latest/download/{SUMS_NAME}"))?;
-        tag_from_sums(&String::from_utf8_lossy(&sums))
-            .ok_or_else(|| FetchError::Failed("the latest release lists no archives".to_owned()))
+        latest_version_from_sums(&String::from_utf8_lossy(&sums))
+            .map(|v| v.tag())
+            .map_err(|e| FetchError::Failed(e.to_string()))
     }
 
     fn download(&self, tag: &str, asset: &str) -> Result<Vec<u8>, FetchError> {
@@ -163,13 +128,14 @@ fn read_local(dir: &str, path: &str) -> Result<Vec<u8>, FetchError> {
     let file = path
         .split('/')
         .fold(PathBuf::from(dir), |acc, part| acc.join(part));
-    std::fs::read(file).map_err(|e| match e.kind() {
+    let handle = std::fs::File::open(file).map_err(|e| match e.kind() {
         io::ErrorKind::NotFound => FetchError::NotFound,
         kind => FetchError::Failed(format!("could not read the release files: {kind}")),
-    })
+    })?;
+    read_capped(handle, MAX_DOWNLOAD_BYTES).map_err(FetchError::Failed)
 }
 
-fn fetch_http(url: &str) -> Result<Vec<u8>, FetchError> {
+fn fetch_http(url: &str, cap: u64) -> Result<Vec<u8>, FetchError> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_connect(Some(Duration::from_secs(10)))
         .timeout_global(Some(Duration::from_secs(120)))
@@ -187,24 +153,7 @@ fn fetch_http(url: &str) -> Result<Vec<u8>, FetchError> {
             ureq::Error::StatusCode(code) => FetchError::Failed(format!("HTTP status {code}")),
             other => FetchError::Failed(other.to_string()),
         })?;
-    let mut bytes = Vec::new();
-    response
-        .body_mut()
-        .as_reader()
-        .take(MAX_DOWNLOAD_BYTES)
-        .read_to_end(&mut bytes)
-        .map_err(|e| FetchError::Failed(format!("could not read the response: {}", e.kind())))?;
-    Ok(bytes)
-}
-
-/// The release tag named by the first archive in a `SHA256SUMS` body (`branch-tally-v1.2.3-...`).
-fn tag_from_sums(sums: &str) -> Option<String> {
-    sums.lines().find_map(|line| {
-        let name = line.split_whitespace().nth(1)?.trim_start_matches('*');
-        let rest = name.strip_prefix("branch-tally-")?;
-        let (tag, _) = rest.split_once('-')?;
-        tag.starts_with('v').then(|| tag.to_owned())
-    })
+    read_capped(response.body_mut().as_reader(), cap).map_err(FetchError::Failed)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -213,6 +162,7 @@ fn tag_from_sums(sums: &str) -> Option<String> {
 /// Replaces the executable at `exe`.
 struct FsInstaller {
     exe: PathBuf,
+    target: &'static str,
 }
 
 impl Installer for FsInstaller {
@@ -221,8 +171,8 @@ impl Installer for FsInstaller {
     }
 
     fn install(&self, asset: &str, archive: &[u8]) -> Result<(), String> {
-        let bytes = extract_binary(asset, archive)?;
-        replace_binary(&self.exe, &bytes)
+        let bytes = extract_binary(asset, archive, self.target, MAX_DOWNLOAD_BYTES)?;
+        replace_binary(&self.exe, &bytes, cfg!(windows))
     }
 }
 
@@ -240,38 +190,42 @@ fn check_dir_writable(exe: &Path) -> Result<(), String> {
 
 /// Pull the binary out of the archive by file name only. No archive path is ever joined onto a
 /// filesystem path, and entries with `..` or absolute components are skipped.
-fn extract_binary(asset: &str, archive: &[u8]) -> Result<Vec<u8>, String> {
+fn extract_binary(asset: &str, archive: &[u8], target: &str, cap: u64) -> Result<Vec<u8>, String> {
     let found = if asset.ends_with(".tar.gz") {
-        extract_from_tar_gz(archive)?
+        extract_from_tar_gz(archive, target, cap)?
     } else if Path::new(asset)
         .extension()
         .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
     {
-        extract_from_zip(archive)?
+        extract_from_zip(archive, target, cap)?
     } else {
         return Err("unknown archive type".to_owned());
     };
-    found.ok_or_else(|| format!("the archive does not contain {BIN_NAME}"))
+    found.ok_or_else(|| format!("the archive does not contain {}", binary_name(target)))
 }
 
-/// True when `path` (either separator) is a plain relative path whose last part is the binary.
-fn is_the_binary(path: &str) -> bool {
-    let parts: Vec<&str> = path.split(['/', '\\']).collect();
-    parts.last() == Some(&BIN_NAME)
-        && !parts.iter().any(|p| *p == ".." || p.contains(':'))
-        && !path.starts_with(['/', '\\'])
+fn binary_name(target: &str) -> &'static str {
+    if target.contains("-windows-") {
+        "branch-tally.exe"
+    } else {
+        "branch-tally"
+    }
 }
 
-fn read_capped(reader: impl Read) -> Result<Vec<u8>, String> {
+/// Read all of `reader`, failing when it holds more than `cap` bytes rather than truncating.
+fn read_capped(reader: impl Read, cap: u64) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     reader
-        .take(MAX_DOWNLOAD_BYTES)
+        .take(cap.saturating_add(1))
         .read_to_end(&mut bytes)
-        .map_err(|e| format!("could not read the archive: {}", e.kind()))?;
+        .map_err(|e| format!("could not read the download: {}", e.kind()))?;
+    if bytes.len() as u64 > cap {
+        return Err(format!("the download is larger than the {cap}-byte limit"));
+    }
     Ok(bytes)
 }
 
-fn extract_from_tar_gz(archive: &[u8]) -> Result<Option<Vec<u8>>, String> {
+fn extract_from_tar_gz(archive: &[u8], target: &str, cap: u64) -> Result<Option<Vec<u8>>, String> {
     let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(archive));
     let unreadable = |e: io::Error| format!("could not read the archive: {}", e.kind());
     for entry in tar.entries().map_err(unreadable)? {
@@ -280,57 +234,137 @@ fn extract_from_tar_gz(archive: &[u8]) -> Result<Option<Vec<u8>>, String> {
             continue;
         }
         let path = String::from_utf8_lossy(&entry.path_bytes()).into_owned();
-        if is_the_binary(&path) {
-            return read_capped(entry).map(Some);
+        if is_binary_entry(&path, target) {
+            return read_capped(entry, cap).map(Some);
         }
     }
     Ok(None)
 }
 
-fn extract_from_zip(archive: &[u8]) -> Result<Option<Vec<u8>>, String> {
+fn extract_from_zip(archive: &[u8], target: &str, cap: u64) -> Result<Option<Vec<u8>>, String> {
     let unreadable = |e: zip::result::ZipError| format!("could not read the archive: {e}");
     let mut zip = zip::ZipArchive::new(io::Cursor::new(archive)).map_err(unreadable)?;
     for index in 0..zip.len() {
         let file = zip.by_index(index).map_err(unreadable)?;
-        if file.is_file() && file.name().is_ok_and(|name| is_the_binary(&name)) {
-            return read_capped(file).map(Some);
+        if file.is_file() && file.name().is_ok_and(|name| is_binary_entry(&name, target)) {
+            return read_capped(file, cap).map(Some);
         }
     }
     Ok(None)
 }
 
 /// Write `bytes` beside `exe` and move it into place so the old binary is never half-replaced.
-fn replace_binary(exe: &Path, bytes: &[u8]) -> Result<(), String> {
-    let fail = |what: &str, e: io::Error| format!("{what}: {}", e.kind());
+fn replace_binary(exe: &Path, bytes: &[u8], windows: bool) -> Result<(), String> {
+    replace_binary_with(exe, bytes, windows, &|from, to| std::fs::rename(from, to))
+}
+
+type Rename<'a> = &'a dyn Fn(&Path, &Path) -> io::Result<()>;
+
+fn replace_binary_with(
+    exe: &Path,
+    bytes: &[u8],
+    windows: bool,
+    rename: Rename<'_>,
+) -> Result<(), String> {
     let dir = exe.parent().ok_or("the binary has no parent directory")?;
-    let staged = dir.join(format!(".branch-tally-new-{}", std::process::id()));
-    let result = (|| {
-        std::fs::write(&staged, bytes).map_err(|e| fail("could not write the new binary", e))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))
-                .map_err(|e| fail("could not mark the new binary executable", e))?;
-        }
-        if cfg!(windows) {
-            // A running exe cannot be overwritten but can be renamed.
-            let old = old_path(exe);
-            let _ = std::fs::remove_file(&old);
-            std::fs::rename(exe, &old)
-                .map_err(|e| fail("could not move the old binary aside", e))?;
-            if let Err(e) = std::fs::rename(&staged, exe) {
-                let _ = std::fs::rename(&old, exe);
-                return Err(fail("could not move the new binary into place", e));
-            }
-            Ok(())
-        } else {
-            std::fs::rename(&staged, exe).map_err(|e| fail("could not replace the binary", e))
-        }
-    })();
+    let staged = stage_new_binary(dir, exe, bytes)?;
+    let result = if windows {
+        swap_aside(exe, &staged, rename)
+    } else {
+        rename(&staged, exe).map_err(|e| fail("could not replace the binary", &e))
+    };
     if result.is_err() {
         let _ = std::fs::remove_file(&staged);
     }
     result
+}
+
+fn fail(what: &str, e: &io::Error) -> String {
+    format!("{what}: {}", e.kind())
+}
+
+/// Create the staged file exclusively (never through a planted symlink), fill it, and flush it to
+/// disk. A failure removes whatever was created.
+fn stage_new_binary(dir: &Path, exe: &Path, bytes: &[u8]) -> Result<PathBuf, String> {
+    let mut attempt = 0u32;
+    let (staged, mut file) = loop {
+        let candidate = dir.join(format!(
+            ".branch-tally-new-{}{}",
+            std::process::id(),
+            if attempt == 0 {
+                String::new()
+            } else {
+                format!("-{attempt}")
+            }
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => break (candidate, file),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists && attempt < 8 => attempt += 1,
+            Err(e) => return Err(fail("could not create the new binary", &e)),
+        }
+    };
+    let written = (|| {
+        file.write_all(bytes)
+            .map_err(|e| fail("could not write the new binary", &e))?;
+        match_permissions(&file, exe)
+            .map_err(|e| fail("could not mark the new binary executable", &e))?;
+        file.sync_all()
+            .map_err(|e| fail("could not flush the new binary to disk", &e))
+    })();
+    drop(file);
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&staged);
+        return Err(e);
+    }
+    Ok(staged)
+}
+
+/// Give the staged file the old binary's permission bits, or `0o755` when those cannot be read.
+#[cfg(unix)]
+fn match_permissions(file: &std::fs::File, exe: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(exe).map_or(0o755, |m| m.permissions().mode() & 0o7777);
+    file.set_permissions(std::fs::Permissions::from_mode(mode))
+}
+
+/// Windows has no mode bits to carry over.
+#[cfg(not(unix))]
+fn match_permissions(_file: &std::fs::File, _exe: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+/// Windows cannot overwrite a running exe but can rename it: move it to `.old`, then the new one
+/// into place, restoring `.old` if that fails.
+fn swap_aside(exe: &Path, staged: &Path, rename: Rename<'_>) -> Result<(), String> {
+    let old = old_path(exe);
+    if old.exists()
+        && let Err(e) = std::fs::remove_file(&old)
+    {
+        return Err(format!(
+            "could not remove the stale {} left by a previous update (is it still running?): {}",
+            old.display(),
+            e.kind()
+        ));
+    }
+    rename(exe, &old).map_err(|e| fail("could not move the old binary aside", &e))?;
+    let Err(e) = rename(staged, exe) else {
+        return Ok(());
+    };
+    match rename(&old, exe) {
+        Ok(()) => Err(fail("could not move the new binary into place", &e)),
+        Err(restore) => Err(format!(
+            "could not move the new binary into place ({}), and restoring the old one failed ({}). \
+             The old binary was moved to {}; rename it back to {} to restore it.",
+            e.kind(),
+            restore.kind(),
+            old.display(),
+            exe.display()
+        )),
+    }
 }
 
 /// `branch-tally.exe` becomes `branch-tally.exe.old`.
@@ -338,11 +372,6 @@ fn old_path(exe: &Path) -> PathBuf {
     let mut name = exe.as_os_str().to_owned();
     name.push(".old");
     PathBuf::from(name)
-}
-
-/// Best-effort removal of the `.old` file a previous Windows update left behind.
-fn remove_leftover(exe: &Path) {
-    let _ = std::fs::remove_file(old_path(exe));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -373,10 +402,13 @@ impl Confirmer for TerminalConfirmer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use branch_tally_core::update::sha256_hex;
     use branch_tally_core::update::{Outcome, UpdateError};
-    use std::fmt::Write as _;
 
     const TARGET: &str = "x86_64-unknown-linux-musl";
+    /// Tests always model a Linux archive, so entry and file names do not depend on the host.
+    const BIN_NAME: &str = "branch-tally";
+    const CAP: u64 = MAX_DOWNLOAD_BYTES;
     const GOOD: &[u8] = b"new binary bytes";
 
     // --- fixtures built in the test ---
@@ -409,147 +441,6 @@ mod tests {
             writer.write_all(data).unwrap();
         }
         writer.finish().unwrap().into_inner()
-    }
-
-    /// SHA-256, written out here because the binary crate has no digest dependency.
-    #[expect(
-        clippy::many_single_char_names,
-        clippy::too_many_lines,
-        reason = "the SHA-256 spec names its working variables a to h"
-    )]
-    fn sha256_hex(data: &[u8]) -> String {
-        const K: [u32; 64] = [
-            0x428a_2f98,
-            0x7137_4491,
-            0xb5c0_fbcf,
-            0xe9b5_dba5,
-            0x3956_c25b,
-            0x59f1_11f1,
-            0x923f_82a4,
-            0xab1c_5ed5,
-            0xd807_aa98,
-            0x1283_5b01,
-            0x2431_85be,
-            0x550c_7dc3,
-            0x72be_5d74,
-            0x80de_b1fe,
-            0x9bdc_06a7,
-            0xc19b_f174,
-            0xe49b_69c1,
-            0xefbe_4786,
-            0x0fc1_9dc6,
-            0x240c_a1cc,
-            0x2de9_2c6f,
-            0x4a74_84aa,
-            0x5cb0_a9dc,
-            0x76f9_88da,
-            0x983e_5152,
-            0xa831_c66d,
-            0xb003_27c8,
-            0xbf59_7fc7,
-            0xc6e0_0bf3,
-            0xd5a7_9147,
-            0x06ca_6351,
-            0x1429_2967,
-            0x27b7_0a85,
-            0x2e1b_2138,
-            0x4d2c_6dfc,
-            0x5338_0d13,
-            0x650a_7354,
-            0x766a_0abb,
-            0x81c2_c92e,
-            0x9272_2c85,
-            0xa2bf_e8a1,
-            0xa81a_664b,
-            0xc24b_8b70,
-            0xc76c_51a3,
-            0xd192_e819,
-            0xd699_0624,
-            0xf40e_3585,
-            0x106a_a070,
-            0x19a4_c116,
-            0x1e37_6c08,
-            0x2748_774c,
-            0x34b0_bcb5,
-            0x391c_0cb3,
-            0x4ed8_aa4a,
-            0x5b9c_ca4f,
-            0x682e_6ff3,
-            0x748f_82ee,
-            0x78a5_636f,
-            0x84c8_7814,
-            0x8cc7_0208,
-            0x90be_fffa,
-            0xa450_6ceb,
-            0xbef9_a3f7,
-            0xc671_78f2,
-        ];
-        let mut h: [u32; 8] = [
-            0x6a09_e667,
-            0xbb67_ae85,
-            0x3c6e_f372,
-            0xa54f_f53a,
-            0x510e_527f,
-            0x9b05_688c,
-            0x1f83_d9ab,
-            0x5be0_cd19,
-        ];
-        let mut msg = data.to_vec();
-        msg.push(0x80);
-        while msg.len() % 64 != 56 {
-            msg.push(0);
-        }
-        msg.extend_from_slice(&((data.len() as u64) * 8).to_be_bytes());
-        for block in msg.chunks(64) {
-            let mut w = [0u32; 64];
-            for (i, word) in block.chunks(4).enumerate() {
-                w[i] = u32::from_be_bytes([word[0], word[1], word[2], word[3]]);
-            }
-            for i in 16..64 {
-                let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
-                let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
-                w[i] = w[i - 16]
-                    .wrapping_add(s0)
-                    .wrapping_add(w[i - 7])
-                    .wrapping_add(s1);
-            }
-            let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut hh] = h;
-            for i in 0..64 {
-                let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
-                let ch = (e & f) ^ (!e & g);
-                let t1 = hh
-                    .wrapping_add(s1)
-                    .wrapping_add(ch)
-                    .wrapping_add(K[i])
-                    .wrapping_add(w[i]);
-                let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
-                let maj = (a & b) ^ (a & c) ^ (b & c);
-                let t2 = s0.wrapping_add(maj);
-                hh = g;
-                g = f;
-                f = e;
-                e = d.wrapping_add(t1);
-                d = c;
-                c = b;
-                b = a;
-                a = t1.wrapping_add(t2);
-            }
-            for (slot, v) in h.iter_mut().zip([a, b, c, d, e, f, g, hh]) {
-                *slot = slot.wrapping_add(v);
-            }
-        }
-        h.iter().fold(String::new(), |mut hex, v| {
-            let _ = write!(hex, "{v:08x}");
-            hex
-        })
-    }
-
-    #[test]
-    fn the_test_sha256_matches_a_known_digest() {
-        assert_eq!(
-            sha256_hex(b"abc"),
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        );
     }
 
     /// A fake release directory holding `v1.1.0` for [`TARGET`], plus a `latest` alias of it.
@@ -590,7 +481,7 @@ mod tests {
     fn extracts_only_the_binary_from_a_tar_gz() {
         let archive = release_archive();
         assert_eq!(
-            extract_binary("branch-tally-v1.1.0-x.tar.gz", &archive).unwrap(),
+            extract_binary("branch-tally-v1.1.0-x.tar.gz", &archive, TARGET, CAP).unwrap(),
             GOOD
         );
     }
@@ -602,7 +493,7 @@ mod tests {
             (&format!("branch-tally-v1.1.0/{BIN_NAME}"), GOOD),
         ]);
         assert_eq!(
-            extract_binary("branch-tally-v1.1.0-x.zip", &archive).unwrap(),
+            extract_binary("branch-tally-v1.1.0-x.zip", &archive, TARGET, CAP).unwrap(),
             GOOD
         );
     }
@@ -615,16 +506,22 @@ mod tests {
             (&format!("../{BIN_NAME}"), decoy),
             (&format!("dir/{BIN_NAME}"), GOOD),
         ];
-        assert_eq!(extract_binary("a.tar.gz", &tar_gz(&entries)).unwrap(), GOOD);
-        assert_eq!(extract_binary("a.zip", &zip_of(&entries)).unwrap(), GOOD);
+        assert_eq!(
+            extract_binary("a.tar.gz", &tar_gz(&entries), TARGET, CAP).unwrap(),
+            GOOD
+        );
+        assert_eq!(
+            extract_binary("a.zip", &zip_of(&entries), TARGET, CAP).unwrap(),
+            GOOD
+        );
     }
 
     #[test]
     fn an_archive_without_the_binary_is_an_error() {
         let archive = tar_gz(&[("dir/LICENSE", b"license")]);
-        assert!(extract_binary("a.tar.gz", &archive).is_err());
-        assert!(extract_binary("a.tar.gz", b"not an archive").is_err());
-        assert!(extract_binary("a.rar", b"").is_err());
+        assert!(extract_binary("a.tar.gz", &archive, TARGET, CAP).is_err());
+        assert!(extract_binary("a.tar.gz", b"not an archive", TARGET, CAP).is_err());
+        assert!(extract_binary("a.rar", b"", TARGET, CAP).is_err());
     }
 
     // --- replacement ---
@@ -634,7 +531,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let exe = dir.path().join(BIN_NAME);
         std::fs::write(&exe, b"old").unwrap();
-        replace_binary(&exe, GOOD).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        replace_binary(&exe, GOOD, false).unwrap();
         assert_eq!(std::fs::read(&exe).unwrap(), GOOD);
         #[cfg(unix)]
         {
@@ -657,19 +559,8 @@ mod tests {
         let exe = dir.path().join(BIN_NAME);
         std::fs::create_dir(&exe).unwrap();
         std::fs::write(exe.join("keep"), b"x").unwrap();
-        assert!(replace_binary(&exe, GOOD).is_err());
+        assert!(replace_binary(&exe, GOOD, false).is_err());
         assert!(exe.join("keep").exists());
-    }
-
-    #[test]
-    fn remove_leftover_deletes_the_old_file_and_tolerates_its_absence() {
-        let dir = tempfile::tempdir().unwrap();
-        let exe = dir.path().join(BIN_NAME);
-        let old = dir.path().join(format!("{BIN_NAME}.old"));
-        std::fs::write(&old, b"old").unwrap();
-        remove_leftover(&exe);
-        assert!(!old.exists());
-        remove_leftover(&exe);
     }
 
     #[test]
@@ -707,6 +598,7 @@ mod tests {
             &HttpClient::new(base),
             &FsInstaller {
                 exe: exe.to_path_buf(),
+                target: TARGET,
             },
             &Yes,
         )
@@ -796,21 +688,265 @@ mod tests {
     }
 
     #[test]
-    fn the_tag_comes_from_the_first_archive_in_the_sums() {
-        let sums = "abc  install.sh\nabc  branch-tally-v2.10.3-x86_64-apple-darwin.tar.gz\n";
-        assert_eq!(tag_from_sums(sums).as_deref(), Some("v2.10.3"));
-        assert_eq!(tag_from_sums("abc  install.sh\n"), None);
-    }
-
-    #[test]
     fn a_missing_file_release_is_not_found() {
         let dir = tempfile::tempdir().unwrap();
         let client = HttpClient::new(&format!("file://{}", dir.path().to_string_lossy()));
         assert_eq!(client.download("v1.0.0", "x"), Err(FetchError::NotFound));
     }
 
+    // --- download cap ---
+
     #[test]
-    fn the_target_is_never_empty() {
-        assert_ne!(target_triple(), "");
+    fn a_body_over_the_cap_is_an_error_not_a_truncation() {
+        let err = read_capped(&[7u8; 11][..], 10).unwrap_err();
+        assert!(err.contains("larger than"), "{err}");
+        assert_eq!(read_capped(&[7u8; 10][..], 10).unwrap(), vec![7u8; 10]);
+    }
+
+    #[test]
+    fn an_extracted_binary_over_the_cap_is_an_error_in_tar_and_zip() {
+        let entries: [(&str, &[u8]); 1] = [("d/branch-tally", GOOD)];
+        let cap = GOOD.len() as u64 - 1;
+        let tar_err = extract_binary("a.tar.gz", &tar_gz(&entries), TARGET, cap).unwrap_err();
+        let zip_err = extract_binary("a.zip", &zip_of(&entries), TARGET, cap).unwrap_err();
+        assert!(tar_err.contains("larger than"), "{tar_err}");
+        assert!(zip_err.contains("larger than"), "{zip_err}");
+        let exact = GOOD.len() as u64;
+        assert_eq!(
+            extract_binary("a.zip", &zip_of(&entries), TARGET, exact).unwrap(),
+            GOOD
+        );
+    }
+
+    #[test]
+    fn an_http_body_over_the_cap_is_an_error() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/x", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut conn, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 2048];
+            let _ = conn.read(&mut buf);
+            let _ = conn.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\n01234567890123456789",
+            );
+        });
+        let err = fetch_http(&url, 10).unwrap_err();
+        server.join().unwrap();
+        assert!(format!("{err:?}").contains("larger than"), "{err:?}");
+    }
+
+    // --- mirror scheme ---
+
+    #[test]
+    fn only_https_and_file_mirrors_are_accepted() {
+        assert!(check_base_url("https://mirror.example/releases").is_ok());
+        assert!(check_base_url("file:///tmp/release").is_ok());
+        for bad in [
+            "http://mirror.example",
+            "ftp://x",
+            "mirror.example",
+            "HTTP://x",
+        ] {
+            let err = check_base_url(bad).unwrap_err();
+            assert!(err.contains(BASE_URL_ENV), "{err}");
+            assert!(err.contains("https://"), "{err}");
+            assert!(!err.contains('\n'), "{err}");
+        }
+    }
+
+    // --- extraction: links, odd names, corrupt archives ---
+
+    fn tar_gz_link(name: &str, kind: tar::EntryType, link: &str) -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header.set_path(name).unwrap();
+        header.set_entry_type(kind);
+        header.set_link_name(link).unwrap();
+        header.set_size(0);
+        header.set_mode(0o755);
+        header.set_cksum();
+        builder.append(&header, io::empty()).unwrap();
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        gz.write_all(&builder.into_inner().unwrap()).unwrap();
+        gz.finish().unwrap()
+    }
+
+    #[test]
+    fn a_tar_symlink_or_hardlink_named_like_the_binary_is_skipped() {
+        for kind in [tar::EntryType::Symlink, tar::EntryType::Link] {
+            let archive = tar_gz_link("d/branch-tally", kind, "/etc/passwd");
+            let err = extract_binary("a.tar.gz", &archive, TARGET, CAP).unwrap_err();
+            assert!(err.contains("does not contain"), "{kind:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn absolute_backslash_and_drive_names_are_ignored_in_tar_and_zip() {
+        let decoy: &[u8] = b"decoy";
+        let entries: [(&str, &[u8]); 5] = [
+            ("/branch-tally", decoy),
+            ("\\branch-tally", decoy),
+            ("..\\branch-tally", decoy),
+            ("C:\\branch-tally", decoy),
+            ("C:branch-tally", decoy),
+        ];
+        for result in [
+            extract_binary("a.tar.gz", &tar_gz(&entries), TARGET, CAP),
+            extract_binary("a.zip", &zip_of(&entries), TARGET, CAP),
+        ] {
+            assert!(result.unwrap_err().contains("does not contain"));
+        }
+    }
+
+    /// Bytes that do not compress, so truncating the archive cuts through the entry.
+    fn noise(len: usize) -> Vec<u8> {
+        let mut x = 0x2545_f491_u32;
+        (0..len)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                x.to_le_bytes()[0]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn corrupt_archives_fail_and_install_nothing() {
+        let big = noise(8000);
+        let tar = tar_gz(&[("d/branch-tally", &big)]);
+        let zip = zip_of(&[("d/branch-tally", &big)]);
+        let corrupt = [
+            ("a.tar.gz", tar[..tar.len() / 2].to_vec()),
+            ("a.zip", zip[..zip.len() / 2].to_vec()),
+        ];
+        for (asset, bytes) in corrupt {
+            let dir = tempfile::tempdir().unwrap();
+            let exe = dir.path().join(BIN_NAME);
+            std::fs::write(&exe, b"old").unwrap();
+            let installer = FsInstaller {
+                exe: exe.clone(),
+                target: TARGET,
+            };
+            assert!(installer.install(asset, &bytes).is_err(), "{asset}");
+            assert_eq!(std::fs::read(&exe).unwrap(), b"old");
+            assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        }
+    }
+
+    // --- replacement hardening ---
+
+    #[cfg(unix)]
+    #[test]
+    fn a_planted_symlink_at_the_staging_name_is_not_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        let victim = dir.path().join("victim");
+        std::fs::write(&victim, b"precious").unwrap();
+        let exe = dir.path().join(BIN_NAME);
+        std::fs::write(&exe, b"old").unwrap();
+        let planted = dir
+            .path()
+            .join(format!(".branch-tally-new-{}", std::process::id()));
+        std::os::unix::fs::symlink(&victim, &planted).unwrap();
+        let _ = replace_binary(&exe, GOOD, false);
+        assert_eq!(std::fs::read(&victim).unwrap(), b"precious");
+        assert_eq!(std::fs::read(&exe).unwrap(), GOOD);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_existing_permission_bits_are_kept_and_0755_is_the_fallback() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join(BIN_NAME);
+        std::fs::write(&exe, b"old").unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o700)).unwrap();
+        replace_binary(&exe, GOOD, false).unwrap();
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&exe), 0o700);
+        let fresh = dir.path().join("fresh");
+        replace_binary(&fresh, GOOD, false).unwrap();
+        assert_eq!(mode(&fresh), 0o755);
+    }
+
+    #[test]
+    fn a_failed_replace_leaves_no_staged_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join(BIN_NAME);
+        std::fs::write(&exe, b"old").unwrap();
+        let err = replace_binary_with(&exe, GOOD, false, &|_, _| {
+            Err(io::Error::from(io::ErrorKind::PermissionDenied))
+        })
+        .unwrap_err();
+        assert!(err.contains("could not replace"), "{err}");
+        assert_eq!(std::fs::read(&exe).unwrap(), b"old");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn the_windows_swap_moves_the_old_binary_aside_and_clears_a_stale_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join(BIN_NAME);
+        let old = dir.path().join(format!("{BIN_NAME}.old"));
+        std::fs::write(&exe, b"v1").unwrap();
+        std::fs::write(&old, b"v0").unwrap();
+        replace_binary(&exe, GOOD, true).unwrap();
+        assert_eq!(std::fs::read(&exe).unwrap(), GOOD);
+        assert_eq!(std::fs::read(&old).unwrap(), b"v1");
+    }
+
+    #[test]
+    fn a_stale_old_file_that_cannot_be_removed_is_named_as_the_problem() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join(BIN_NAME);
+        std::fs::write(&exe, b"v1").unwrap();
+        // A non-empty directory cannot be removed as a file, standing in for a running `.old`.
+        let old = dir.path().join(format!("{BIN_NAME}.old"));
+        std::fs::create_dir(&old).unwrap();
+        std::fs::write(old.join("x"), b"x").unwrap();
+        let err = replace_binary(&exe, GOOD, true).unwrap_err();
+        assert!(err.contains("stale"), "{err}");
+        assert!(err.contains(".old"), "{err}");
+        assert_eq!(std::fs::read(&exe).unwrap(), b"v1");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn a_failed_swap_restores_the_old_binary() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join(BIN_NAME);
+        std::fs::write(&exe, b"v1").unwrap();
+        let calls = std::cell::Cell::new(0);
+        let err = replace_binary_with(&exe, GOOD, true, &|from, to| {
+            calls.set(calls.get() + 1);
+            if calls.get() == 2 {
+                return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+            }
+            std::fs::rename(from, to)
+        })
+        .unwrap_err();
+        assert!(err.contains("could not move the new binary"), "{err}");
+        assert_eq!(std::fs::read(&exe).unwrap(), b"v1");
+    }
+
+    #[test]
+    fn when_the_restore_also_fails_the_error_says_where_the_binary_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join(BIN_NAME);
+        std::fs::write(&exe, b"v1").unwrap();
+        let calls = std::cell::Cell::new(0);
+        let err = replace_binary_with(&exe, GOOD, true, &|from, to| {
+            calls.set(calls.get() + 1);
+            if calls.get() >= 2 {
+                return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+            }
+            std::fs::rename(from, to)
+        })
+        .unwrap_err();
+        let old = format!("{BIN_NAME}.old");
+        assert!(err.contains("moved to"), "{err}");
+        assert!(err.contains(&old), "{err}");
+        assert!(err.contains("rename"), "{err}");
+        assert_eq!(std::fs::read(dir.path().join(&old)).unwrap(), b"v1");
     }
 }
