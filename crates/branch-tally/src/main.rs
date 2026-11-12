@@ -16,6 +16,7 @@ mod prices;
 mod project;
 mod pyrepr;
 mod report;
+mod update;
 
 fn main() -> ExitCode {
     let args = cli::Cli::parse();
@@ -29,6 +30,9 @@ fn main() -> ExitCode {
             let mut out = std::io::stdout().lock();
             let _ = out.write_all(text.as_bytes());
             let _ = out.flush();
+        }),
+        cli::Command::Update(args) => update::run(&args).map(|message| {
+            let _ = writeln!(std::io::stdout().lock(), "{message}");
         }),
         cli::Command::Config(command) => match command {
             cli::ConfigCommand::Show(args) => config::show(&args),
