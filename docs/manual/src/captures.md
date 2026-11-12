@@ -5,9 +5,13 @@ calls carry no branch, and some carry a throwaway `worktree-agent-…` branch. I
 branch-tally recovers those calls from `git worktree list`, which only works while the worktree
 still exists.
 
-The `branch-tally-capture` [plugin](integration.md) closes that gap. Its hooks write down which
-branch each session was on, as the session runs, in `.tally/captures.jsonl`. Reports read that file
-and use it for calls the transcript could not place.
+Hook captures close that gap. While a session runs, the agent harness's hooks call
+`branch-tally capture`, which writes down which branch the session was on in
+`.tally/captures.jsonl`. Reports read that file and use it for calls the transcript could not
+place.
+
+Claude Code is the only harness that writes captures today. To turn them on, see
+[Set up captures](integration/claude-code.md#set-up-captures) on the Claude Code page.
 
 ## The captures file
 
@@ -22,9 +26,9 @@ and use it for calls the transcript could not place.
 | Field | Holds |
 | ----- | ----- |
 | `v` | The captures schema version, currently `1`. |
-| `harness` | The agent harness, `claude-code`. |
+| `harness` | The agent harness that wrote the line. Today always `claude-code`. |
 | `kind` | The hook moment: `session-start`, `subagent-stop` or `stop`. |
-| `session_id` | The Claude Code session id. |
+| `session_id` | The harness's session id. |
 | `agent_id` | The subagent's id. Present on `subagent-stop` lines. |
 | `branch` | The branch checked out in the session's working directory at that moment. |
 | `worktree_branch` | `subagent-stop` only: the branch of the subagent's worktree, when one is found. |
