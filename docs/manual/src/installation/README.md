@@ -30,7 +30,7 @@ The installers download the archive for your platform from GitHub, check it agai
 `PATH`.
 
 Package managers (crates.io, Homebrew, npm) are not available yet; they are tracked on the
-[roadmap](https://github.com/IAmSkweetis/branch-tally/issues/16).
+[roadmap](https://github.com/IAmSkweetis/branch-tally/milestone/1).
 
 ## Updating
 

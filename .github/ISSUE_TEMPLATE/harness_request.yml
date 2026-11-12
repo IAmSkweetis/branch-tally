@@ -2,12 +2,13 @@ name: Support another agent harness
 description: Ask branch-tally to read transcripts from an agent other than Claude Code.
 title: "feat(sources): support "
 labels: [enhancement]
+type: Feature
 body:
   - type: markdown
     attributes:
       value: |
         Claude Code is supported today; Codex, Gemini CLI and OpenCode are planned on the
-        [roadmap](https://github.com/IAmSkweetis/branch-tally/issues/16). Issues are public:
+        [roadmap](https://github.com/IAmSkweetis/branch-tally/milestone/1). Issues are public:
         describe the transcript format, but **never paste a real transcript**.
   - type: input
     id: harness

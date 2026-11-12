@@ -1,9 +1,10 @@
 # Issue forms only: maintainers open roadmap issues with `gh issue create`, which bypasses this.
+# Those issues still need the type, kind label, Priority and milestone; see dev_workflow.md#issues.
 blank_issues_enabled: false
 contact_links:
   - name: Report a security vulnerability
     url: https://github.com/IAmSkweetis/branch-tally/security/advisories/new
     about: Report privately. Never open a public issue for a vulnerability; see SECURITY.md.
   - name: Roadmap
-    url: https://github.com/IAmSkweetis/branch-tally/issues/16
+    url: https://github.com/IAmSkweetis/branch-tally/milestone/1
     about: Planned work. Check here before requesting a feature.
