@@ -139,6 +139,12 @@ If the ledger has no lines for the branch, `report --from-ledger` fails with
 `No ledger records found for branch '…'` (exit 1). If the ledger file does not exist, it fails with
 `no ledger at <path>` (exit 1).
 
+## The whole project
+
+`branch-tally project` reads the whole ledger and reports every recorded branch at once: the
+project total, a row per branch, and a chart of cumulative cost over time. See
+[Project Cost Over Time](project.md).
+
 ## Where the file lives
 
 The default is `.tally/ledger.jsonl` at the root of the git checkout that contains the current

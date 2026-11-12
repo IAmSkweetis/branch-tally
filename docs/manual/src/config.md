@@ -25,8 +25,8 @@ macOS uses the same rule as Linux: `~/.config/branch-tally/config.toml` unless `
 is set.
 
 A missing file at the default location is normal: the defaults apply. `--config <path>` on
-`report`, `record` and `config show` reads that file instead, and then the file must exist (exit 1
-if it does not).
+`report`, `record`, `project` and `config show` reads that file instead, and then the file must
+exist (exit 1 if it does not).
 
 Run `branch-tally config show` to see which path applies on your machine.
 
@@ -38,7 +38,7 @@ The file is TOML. Every key is optional.
 | --- | ---- | ------- | ----- | ------- |
 | `mode` | string: `"claim"`, `"strict"` or `"timeline"` | `"claim"` | `--mode`, `--strict`, `--timeline` | How calls are assigned to branches. See [Attribution modes](cli.md#attribution-modes). |
 | `work-branch` | string (a regex) | not set | `--work-branch` | In timeline mode, which branches count as work branches. Not set means every branch except the default branch and `worktree-agent-*`. Ignored in the other modes. |
-| `format` | string: `"md"` or `"json"` | `"md"` | `--format`, `--md`, `--json` | Output format of `report`. |
+| `format` | string: `"md"` or `"json"` | `"md"` | `--format`, `--md`, `--json` | Output format of `report` and `project`. |
 | `cost` | boolean | `true` | `--cost`, `--no-cost` | Show the estimated-cost column in Markdown output. |
 | `redact` | boolean | `false` | `--redact`, `--no-redact` | Hide identifiers in the report. See [Redaction](cli.md#redaction). |
 | `redact-names` | boolean | `true` | `--redact-names`, `--keep-names` | With `redact = true`, replace agent and skill names with generic labels (`true`) or keep the real names (`false`). No effect when `redact` is off. |
@@ -53,7 +53,11 @@ redact = true
 ```
 
 `record` reads the same file but uses only `mode` and `work-branch`; the output settings don't
-apply to it.
+apply to it. [`project`](project.md) also reads it and uses `mode` and `format`. As with
+`report --from-ledger`, `mode` there doesn't change any number, because the ledger already holds
+each call's branch; in `strict` mode the report leaves out the attribution heuristics. `project`
+ignores `cost`, `redact` and `redact-names`. A bad config file stops `project` just as it stops
+`report`.
 
 A `work-branch` in the file while the effective mode is not timeline is ignored, not an error.
 `config show` marks it `[inactive: mode is not timeline]`. A `--work-branch` *flag* outside
