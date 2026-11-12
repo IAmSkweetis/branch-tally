@@ -73,6 +73,9 @@ checked against the release's `SHA256SUMS`. The installers never edit your `PATH
 line to add. Their options, verifying a download by hand and building from source are in the
 manual's [Installation](https://branch-tally.io/installation/) chapter.
 
+To move to a newer release later, run `branch-tally update`. It checks the download against
+`SHA256SUMS` and asks before replacing the binary.
+
 Then, inside a repository where you have worked with Claude Code:
 
 ```sh
@@ -129,7 +132,7 @@ The cache is `branch-tally/prices.toml` under `%LOCALAPPDATA%` on Windows, `$HOM
 on macOS, and `$XDG_CACHE_HOME` (default `$HOME/.cache`) elsewhere.
 
 ```bash
-branch-tally prices update   # refresh the cache from LiteLLM's price list (the only network call)
+branch-tally prices update   # refresh the cache from LiteLLM's price list
 branch-tally prices show     # which table reports would use: source, date, model count, path
 ```
 
