@@ -606,10 +606,11 @@ pub fn record(
     )
 }
 
-/// [`record`] with the ledger chosen by a [`LedgerTarget`]: [`LedgerTarget::Default`] writes the
-/// main checkout's `.tally/ledger.jsonl` through the guarded accessor (#94), only when `.tally/`
-/// exists, and says so in `outcome.tally_absent` when it does not; [`LedgerTarget::Explicit`] is
-/// the plain write to a user-supplied path.
+/// [`record`] with the ledger chosen by a [`LedgerTarget`]: [`LedgerTarget::Default`] writes
+/// `.tally/ledger.jsonl` at `git.toplevel(repo_dir)` through the guarded accessor (#94), so a
+/// linked worktree writes its own ledger, not the main checkout's. It writes only when that
+/// checkout's `.tally/` exists, and says so in `outcome.tally_absent` when it does not.
+/// [`LedgerTarget::Explicit`] is the plain write to a user-supplied path.
 ///
 /// # Errors
 ///
@@ -718,8 +719,9 @@ pub fn run_from_ledger(
 }
 
 /// [`run_from_ledger`] with the ledger chosen by a [`LedgerTarget`]: [`LedgerTarget::Default`]
-/// reads the main checkout's `.tally/ledger.jsonl` through the guarded accessor (#94) and
-/// refuses a symlink, [`LedgerTarget::Explicit`] is the plain read of a user-supplied path.
+/// reads `.tally/ledger.jsonl` at `git.toplevel(repo_dir)` through the guarded accessor (#94), so
+/// a linked worktree reads its own ledger, and refuses a symlink. [`LedgerTarget::Explicit`] is
+/// the plain read of a user-supplied path.
 ///
 /// # Errors
 ///

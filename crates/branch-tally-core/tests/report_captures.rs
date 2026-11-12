@@ -297,6 +297,20 @@ fn default_ledger_outside_a_checkout_is_a_git_error_not_a_fallback() {
     assert!(matches!(err, ReportError::Git(_)), "{err}");
 }
 
+/// The result is the guard's refusal, not some other error such as a missing ledger.
+#[cfg(unix)]
+fn assert_refused(result: &Result<(), ReportError>) {
+    assert!(
+        matches!(
+            result,
+            Err(ReportError::Ledger(
+                branch_tally_core::ledger::LedgerError::Refused { .. }
+            ))
+        ),
+        "expected a refusal, got: {result:?}"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn default_record_refuses_a_planted_ledger_symlink() {
@@ -314,7 +328,7 @@ fn default_record_refuses_a_planted_ledger_symlink() {
         "{err}"
     );
     assert_eq!(std::fs::read(&victim).unwrap(), b"precious");
-    assert!(report_default(&git, None, dir.path()).is_err());
+    assert_refused(&report_default(&git, None, dir.path()).map(|_| ()));
 }
 
 #[cfg(unix)]
@@ -324,7 +338,7 @@ fn a_planted_captures_symlink_is_an_error_not_an_empty_read() {
     let victim = dir.path().join("victim");
     std::fs::write(&victim, b"precious").unwrap();
     std::os::unix::fs::symlink(&victim, captures_path(dir.path())).unwrap();
-    assert!(live(&git, &source, dir.path(), "feat/cap").is_err());
-    assert!(record_default(&git, &source, dir.path()).is_err());
+    assert_refused(&live(&git, &source, dir.path(), "feat/cap").map(|_| ()));
+    assert_refused(&record_default(&git, &source, dir.path()).map(|_| ()));
     assert_eq!(std::fs::read(&victim).unwrap(), b"precious");
 }

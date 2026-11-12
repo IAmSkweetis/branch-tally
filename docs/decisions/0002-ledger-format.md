@@ -87,8 +87,9 @@ that.
 
 - **Writes need an opt-in.** `capture` and `record` write only when `.tally/` already exists as a
   real directory. Neither creates it. Without it, `capture` exits 0 silently and `record` exits 0
-  with a one-line note that nothing was recorded. A repository opts in by committing `.tally/`,
-  which also gives every clone and worktree the directory.
+  with a one-line note that nothing was recorded. Git does not track an empty directory, so a
+  repository opts in by committing a file inside it: `.tally/.gitkeep`, or an existing ledger.
+  That gives every clone and worktree the directory.
 - **Links are refused, never followed.** Every read and write of a default `.tally/*` path goes
   through one guarded accessor (`ledger::TallyDir`). That covers the ledger, the captures file and
   the `prices.toml` override. It refuses `.tally` if it is a link, is not a directory, or does
