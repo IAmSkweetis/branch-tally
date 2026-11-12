@@ -77,3 +77,32 @@ order, LF endings, `merge=union` in `.gitattributes`.
   event may both write it; the reader collapses it. Distinct events are never lost.
 - **Honest reading:** malformed lines, unknown schema versions and unknown kinds are counted
   separately, with line numbers, never dropped silently.
+
+## Addendum: opting in, and refusing links (#94)
+
+`.tally/` is part of the repository, and git tracks symbolic links. A checkout could ship
+`.tally/captures.jsonl`, `.tally/ledger.jsonl` or `.tally` itself as a link to a file outside the
+repository, and hook-driven writes would land there (security assessment F-01). Two rules close
+that.
+
+- **Writes need an opt-in.** `capture` and `record` write only when `.tally/` already exists as a
+  real directory. Neither creates it. Without it, `capture` exits 0 silently and `record` exits 0
+  with a one-line note that nothing was recorded. A repository opts in by committing `.tally/`,
+  which also gives every clone and worktree the directory.
+- **Links are refused, never followed.** Every read and write of a default `.tally/*` path goes
+  through one guarded accessor (`ledger::TallyDir`). That covers the ledger, the captures file and
+  the `prices.toml` override. It refuses `.tally` if it is a link, is not a directory, or does
+  not resolve inside the checkout it is opened for. It refuses any target that is not a regular
+  file. Files are opened without following links, and the opened handle is checked again. A
+  refusal is an error that names the path, never an empty read, so a planted link can't make a
+  total look smaller without saying so.
+- **No check-then-use gap on `.tally`.** On Unix the accessor holds a directory handle for
+  `.tally` and opens every file relative to it (`openat`, through `rustix`, because std has no
+  safe `openat` and the workspace forbids `unsafe`). Swapping `.tally` for a link after the check
+  therefore changes nothing. On Windows the handle is held without delete sharing, so `.tally`
+  cannot be renamed or replaced while files in it are opened.
+- **The checkout root is the trust anchor.** The accessor defends `.tally` and the files in it,
+  not the directories above the checkout.
+- **An explicit `--ledger <path>` is exempt.** A path the user typed is the user's choice, links
+  included. The default ledger's location is unchanged: the git top level's `.tally/`, so each
+  worktree keeps its own ledger, as above. Captures and `prices.toml` stay in the main checkout's.
