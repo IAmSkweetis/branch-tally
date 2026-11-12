@@ -8,7 +8,6 @@ use std::path::Path;
 
 use branch_tally_core::config::{Flags, Format};
 use branch_tally_core::git::{Git, SystemGit};
-use branch_tally_core::model::Mode;
 use branch_tally_core::{ledger, project, render};
 
 use crate::cli::ProjectArgs;
@@ -46,7 +45,7 @@ pub(crate) fn run(args: &ProjectArgs) -> Result<(), String> {
         ));
     }
     let main = SystemGit.main_checkout(&cwd);
-    let report = project::build(&read, Some(&main), Mode::Claim, &table);
+    let report = project::build(&read, Some(&main), settings.mode.value, &table);
 
     // Export first: a failed export must not leave a half-reported run behind a zero exit.
     if let Some(target) = &args.export_graph {
