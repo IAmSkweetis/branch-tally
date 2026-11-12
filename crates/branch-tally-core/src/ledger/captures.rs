@@ -16,17 +16,24 @@
 //! reads the file first, so two hooks racing on the *same* event can both write it. That is
 //! harmless: the reader collapses it and counts it as a duplicate. Nothing is locked.
 //!
+//! **Guarded (#94):** both functions go through [`TallyDir`]: they do nothing when `.tally/` does
+//! not exist (the repository has not opted in), and refuse a symlink or non-regular file at
+//! `.tally` or at the captures file instead of following it.
+//!
 //! Bad input is counted in [`CaptureReadStats`], never dropped silently and never a panic. Errors
 //! name a path, never line content.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use super::LedgerError;
+use super::{LedgerError, TallyDir};
 use crate::model::{CAPTURE_SCHEMA_VERSION, CaptureEvent};
 
 /// Where the captures live, relative to the repository root.
 pub const CAPTURES_PATH: &str = ".tally/captures.jsonl";
+
+/// The captures file's name inside `.tally/`.
+const CAPTURES_FILE: &str = "captures.jsonl";
 
 /// The captures file under the repository root `root`.
 #[must_use]
@@ -87,14 +94,22 @@ pub struct CaptureAppendOutcome {
     pub appended: u64,
     /// Events skipped because the file (or an earlier event in the call) already held them.
     pub skipped: u64,
+    /// Nothing was written because the repository has no `.tally/` directory: it has not opted
+    /// in (#94). Not an error; the caller can stay quiet.
+    pub tally_absent: bool,
 }
 
-/// Reads the captures file under `root`. A missing file is no captures.
+/// Reads the captures file under the main checkout `root`. A missing `.tally/` or file is no
+/// captures.
 ///
 /// # Errors
+/// [`LedgerError::Refused`] when `.tally` or the file is a symlink or the wrong kind of file;
 /// [`LedgerError::Read`] when the file exists but cannot be read.
 pub fn read_captures(root: &Path) -> Result<Captures, LedgerError> {
-    read_path(&captures_path(root))
+    let Some(tally) = TallyDir::open(root)? else {
+        return Ok(Captures::default());
+    };
+    Ok(parse(&tally.read(CAPTURES_FILE)?.unwrap_or_default()))
 }
 
 /// The kinds this build knows, as they appear on disk.
@@ -129,17 +144,7 @@ fn parse_line(bytes: &[u8]) -> Result<CaptureEvent, Bad> {
     serde_json::from_value(value).map_err(|_| Bad::Malformed)
 }
 
-fn read_path(path: &Path) -> Result<Captures, LedgerError> {
-    let bytes = match std::fs::read(path) {
-        Ok(b) => b,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Captures::default()),
-        Err(source) => {
-            return Err(LedgerError::Read {
-                path: path.to_owned(),
-                source,
-            });
-        }
-    };
+fn parse(bytes: &[u8]) -> Captures {
     let mut out = Captures::default();
     let mut seen: HashSet<String> = HashSet::new();
     for (i, raw) in bytes.split(|b| *b == b'\n').enumerate() {
@@ -167,25 +172,28 @@ fn read_path(path: &Path) -> Result<Captures, LedgerError> {
         }
     }
     out.stats.events = out.events.len() as u64;
-    Ok(out)
+    out
 }
 
-/// Appends the events the captures file does not already hold. Creates `.tally/`. Idempotent.
+/// Appends the events the captures file does not already hold. Idempotent. Writes only when
+/// `.tally/` already exists in the main checkout `root`; otherwise nothing is written and the
+/// outcome says [`CaptureAppendOutcome::tally_absent`].
 ///
 /// # Errors
-/// [`LedgerError`] when the file cannot be read or written.
+/// [`LedgerError::Refused`] when `.tally` or the file is a symlink or the wrong kind of file;
+/// [`LedgerError`] otherwise when the file cannot be read or written.
 pub fn append_captures(
     root: &Path,
     events: &[CaptureEvent],
 ) -> Result<CaptureAppendOutcome, LedgerError> {
-    use std::io::Write;
-
-    let path = captures_path(root);
-    let write_err = |source| LedgerError::Write {
-        path: path.clone(),
-        source,
+    let Some(tally) = TallyDir::open(root)? else {
+        return Ok(CaptureAppendOutcome {
+            tally_absent: true,
+            ..CaptureAppendOutcome::default()
+        });
     };
-    let mut seen: HashSet<String> = read_path(&path)?.events.iter().map(key).collect();
+    let existing = tally.read(CAPTURES_FILE)?.unwrap_or_default();
+    let mut seen: HashSet<String> = parse(&existing).events.iter().map(key).collect();
     let mut out = CaptureAppendOutcome::default();
     let mut buf = String::new();
     for event in events {
@@ -202,18 +210,10 @@ pub fn append_captures(
     if out.appended == 0 {
         return Ok(out);
     }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(write_err)?;
-    }
-    if std::fs::read(&path).is_ok_and(|b| !b.is_empty() && !b.ends_with(b"\n")) {
+    if !existing.is_empty() && !existing.ends_with(b"\n") {
         buf.insert(0, '\n');
     }
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(write_err)?;
-    file.write_all(buf.as_bytes()).map_err(write_err)?;
+    tally.append(CAPTURES_FILE, buf.as_bytes())?;
     Ok(out)
 }
 
@@ -235,8 +235,11 @@ mod tests {
         }
     }
 
+    /// A checkout that has opted in: `.tally/` exists.
     fn root() -> tempfile::TempDir {
-        tempfile::tempdir().expect("tempdir")
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(dir.path().join(".tally")).expect("mkdir");
+        dir
     }
 
     fn file(root: &Path) -> Vec<u8> {
@@ -257,7 +260,7 @@ mod tests {
     }
 
     #[test]
-    fn append_creates_dir_writes_lf_lines_and_reads_back() {
+    fn append_writes_lf_lines_and_reads_back() {
         let dir = root();
         let evs = [
             event("s1", CaptureKind::SubagentStop),
@@ -345,6 +348,54 @@ mod tests {
         std::fs::create_dir_all(captures_path(dir.path())).unwrap();
         let err = read_captures(dir.path()).unwrap_err();
         assert!(err.to_string().contains("captures.jsonl"));
+    }
+
+    #[test]
+    fn absent_tally_dir_writes_nothing_and_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = append_captures(dir.path(), &[event("s1", CaptureKind::Stop)]).unwrap();
+        assert_eq!((out.appended, out.skipped), (0, 0));
+        assert!(out.tally_absent);
+        assert!(!dir.path().join(".tally").exists());
+        assert!(read_captures(dir.path()).unwrap().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_planted_symlink_at_the_captures_file_is_not_followed() {
+        let dir = root();
+        let victim = dir.path().join("victim");
+        std::fs::write(&victim, b"precious").unwrap();
+        std::os::unix::fs::symlink(&victim, captures_path(dir.path())).unwrap();
+        let err = append_captures(dir.path(), &[event("s1", CaptureKind::Stop)]).unwrap_err();
+        assert!(matches!(err, LedgerError::Refused { .. }), "{err}");
+        assert_eq!(std::fs::read(&victim).unwrap(), b"precious");
+        let err = read_captures(dir.path()).unwrap_err();
+        assert!(matches!(err, LedgerError::Refused { .. }), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_symlink_at_the_captures_file_is_not_created() {
+        let dir = root();
+        let target = dir.path().join("created-by-attacker");
+        std::os::unix::fs::symlink(&target, captures_path(dir.path())).unwrap();
+        assert!(append_captures(dir.path(), &[event("s1", CaptureKind::Stop)]).is_err());
+        assert!(!target.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_tally_dir_is_refused_for_captures() {
+        let dir = tempfile::tempdir().unwrap();
+        let elsewhere = dir.path().join("elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, repo.join(".tally")).unwrap();
+        assert!(append_captures(&repo, &[event("s1", CaptureKind::Stop)]).is_err());
+        assert!(read_captures(&repo).is_err());
+        assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 0);
     }
 
     #[test]
