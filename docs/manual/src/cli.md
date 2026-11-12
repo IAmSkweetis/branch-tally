@@ -160,8 +160,10 @@ stays on no branch, and a report says how many there are:
 Both are left out when there are no such calls. The count covers the whole repository, not the
 branch you asked about, so it is the same in every branch's report. It is reported in every mode,
 `strict` included. These calls are in no branch's totals, and they are not counted again in the
-ambiguous total or in the subagent section's unattributed counts. To list every call with no
-branch stamp, including those claim mode did place, report on `(none)` in strict mode:
+subagent section's unattributed counts. In timeline mode, an ambiguous call that kept no branch is
+counted here and, when its session is in the report, in the ambiguous total too. To list every
+call with no branch stamp, including those claim mode did place, report on `(none)` in strict
+mode:
 
 ```sh
 branch-tally report '(none)' --strict
