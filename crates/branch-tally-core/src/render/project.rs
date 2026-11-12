@@ -380,6 +380,21 @@ const WIDTH: f64 = 640.0;
 const HEIGHT: f64 = 360.0;
 const LEFT: f64 = 72.0;
 const RIGHT: f64 = 24.0;
+/// Baseline of the first footer line and the step between footer lines.
+const FOOTER_FIRST_Y: f64 = HEIGHT - 28.0;
+const FOOTER_STEP: f64 = 16.0;
+/// Room kept below the last footer baseline for descenders.
+const FOOTER_MARGIN: f64 = 12.0;
+
+/// Canvas height for `n` footer lines: the base height, grown so the last line stays inside.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "footer line counts are at most a handful, far below 2^53"
+)]
+fn footer_canvas_height(n: usize) -> f64 {
+    let last = FOOTER_FIRST_Y + FOOTER_STEP * n.saturating_sub(1) as f64;
+    HEIGHT.max(last + FOOTER_MARGIN)
+}
 const TOP: f64 = 56.0;
 const BOTTOM: f64 = 72.0;
 
@@ -398,11 +413,28 @@ pub fn project_svg(report: &ProjectReport) -> String {
         ),
         None => "Cumulative cost".to_owned(),
     };
+    let mut footer = Vec::new();
+    if report.series.iter().any(|p| p.is_floor) {
+        footer.push("hollow = floor (at least), dashed line leads to a floor".to_owned());
+    }
+    if report.undated_branches > 0 {
+        footer.push(format!(
+            "{} undated branch(es) not shown",
+            report.undated_branches
+        ));
+    }
+    if report.totals.undated_calls > 0 {
+        footer.push(format!(
+            "{} call(s) with no usable timestamp, branch dates may be early",
+            report.totals.undated_calls
+        ));
+    }
+    let height = footer_canvas_height(footer.len());
     let mut o = String::new();
     let _ = writeln!(
         o,
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {WIDTH:.0} {HEIGHT:.0}\" \
-         width=\"{WIDTH:.0}\" height=\"{HEIGHT:.0}\" role=\"img\">"
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {WIDTH:.0} {height:.0}\" \
+         width=\"{WIDTH:.0}\" height=\"{height:.0}\" role=\"img\">"
     );
     let _ = writeln!(o, "<title>{}</title>", xml(&heading));
     o.push_str(
@@ -439,30 +471,14 @@ pub fn project_svg(report: &ProjectReport) -> String {
     } else {
         series_svg(report, plot_w, plot_h, &mut o);
     }
-    let mut footer = Vec::new();
-    if report.series.iter().any(|p| p.is_floor) {
-        footer.push("hollow = floor (at least), dashed line leads to a floor".to_owned());
-    }
-    if report.undated_branches > 0 {
-        footer.push(format!(
-            "{} undated branch(es) not shown",
-            report.undated_branches
-        ));
-    }
-    if report.totals.undated_calls > 0 {
-        footer.push(format!(
-            "{} call(s) with no usable timestamp, branch dates may be early",
-            report.totals.undated_calls
-        ));
-    }
-    let mut y = HEIGHT - 28.0;
+    let mut y = FOOTER_FIRST_Y;
     for line in &footer {
         let _ = writeln!(
             o,
             "<text class=\"t\" x=\"{LEFT:.1}\" y=\"{y:.1}\">{}</text>",
             xml(line)
         );
-        y += 16.0;
+        y += FOOTER_STEP;
     }
     o.push_str("</svg>\n");
     o
@@ -968,5 +984,60 @@ mod tests {
             "{s}"
         );
         assert!(!project_svg(&exact()).contains("no usable timestamp"));
+    }
+
+    /// Parse `(viewBox height, height attribute, footer-line baselines)` from the SVG text.
+    fn svg_geometry(s: &str) -> (f64, f64, Vec<f64>) {
+        let after = |key: &str| s.split(key).nth(1).unwrap_or_default().to_owned();
+        let first = |text: String| text.split('"').next().unwrap_or_default().to_owned();
+        let vb_h = first(after("viewBox=\""))
+            .split(' ')
+            .nth(3)
+            .and_then(|h| h.parse().ok())
+            .unwrap_or(f64::NAN);
+        let attr_h = first(after(" height=\"")).parse().unwrap_or(f64::NAN);
+        let ys = s
+            .lines()
+            .filter(|l| l.starts_with("<text class=\"t\" x=\"72.0\"") && !l.contains("text-anchor"))
+            .filter_map(|l| l.split(" y=\"").nth(1))
+            .filter_map(|y| y.split('"').next()?.parse().ok())
+            .collect();
+        (vb_h, attr_h, ys)
+    }
+
+    fn with_all_footers() -> ProjectReport {
+        let mut r = with_undated_calls();
+        r.series[0].is_floor = true;
+        r
+    }
+
+    #[test]
+    fn every_footer_line_is_inside_the_view_box() {
+        let s = project_svg(&with_all_footers());
+        for text in [
+            "hollow = floor",
+            "undated branch(es) not shown",
+            "no usable timestamp",
+        ] {
+            assert!(s.contains(text), "missing footer {text}: {s}");
+        }
+        let (vb_h, attr_h, ys) = svg_geometry(&s);
+        assert_eq!(ys.len(), 3, "{s}");
+        assert!((vb_h - attr_h).abs() < f64::EPSILON, "{s}");
+        for y in ys {
+            assert!(y < vb_h, "footer baseline {y} outside viewBox {vb_h}: {s}");
+        }
+    }
+
+    #[test]
+    fn footer_canvas_fits_any_line_count_and_small_reports_keep_360() {
+        let (vb_h, _, _) = svg_geometry(&project_svg(&exact()));
+        assert!((vb_h - 360.0).abs() < f64::EPSILON);
+        for n in 1..12_u8 {
+            let h = footer_canvas_height(usize::from(n));
+            let last = 332.0 + 16.0 * f64::from(n - 1);
+            assert!(last < h, "n={n} last={last} h={h}");
+            assert!(h >= 360.0);
+        }
     }
 }
