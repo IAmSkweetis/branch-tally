@@ -10,7 +10,8 @@ transcripts. They are separate plugins so you install only the ones you want.
 
 ## Install
 
-Both need the `branch-tally` binary on your `PATH`. Without it the hooks do nothing.
+Both need the `branch-tally` binary on your `PATH`. Without it the hooks do nothing. Installing a
+plugin does not turn recording on for a repository: see [Opt a repository in](#opt-a-repository-in).
 
 ```text
 /plugin marketplace add IAmSkweetis/branch-tally
@@ -20,6 +21,27 @@ Both need the `branch-tally` binary on your `PATH`. Without it the hooks do noth
 
 Install either, both or neither. To opt out later, run `/plugin disable <name>` or
 `/plugin uninstall <name>`.
+
+## Opt a repository in
+
+The hooks never create `.tally/`. They write only when `.tally/` already exists as a real
+directory, and otherwise exit quietly and create nothing. Opt a repository in once, from its root:
+
+```text
+mkdir .tally
+touch .tally/.gitkeep
+```
+
+Commit the directory (the `.gitkeep`, or an existing ledger) to the default branch, so it is there
+in every clone and on every branch cut from it. Captures use the main checkout's `.tally/` even
+when the session runs in a linked worktree, so the main checkout needs the directory as well.
+
+- `branch-tally capture` writes `.tally/captures.jsonl` in the main checkout's `.tally/`.
+- `branch-tally record` writes `.tally/ledger.jsonl` in the git top level's `.tally/`.
+- A symlink at `.tally`, `.tally/captures.jsonl`, `.tally/ledger.jsonl` or `.tally/prices.toml`,
+  or any file there that is not a regular file, is refused on read and on write. Nothing is
+  followed or created through a link. Replace the link with a real directory or file.
+- An explicit `--ledger <path>` is exempt from both rules.
 
 ## What the hooks do and do not do
 

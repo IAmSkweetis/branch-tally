@@ -20,8 +20,11 @@
 //! a path, never line content.
 
 mod captures;
+mod tally_dir;
 
 use std::path::{Path, PathBuf};
+
+pub use tally_dir::{TALLY_DIR, TallyDir};
 
 pub use captures::{
     CAPTURES_PATH, CaptureAppendOutcome, CaptureReadStats, Captures, append_captures,
@@ -36,6 +39,9 @@ use crate::model::{
 
 /// Where the ledger lives, relative to the repository root.
 pub const LEDGER_PATH: &str = ".tally/ledger.jsonl";
+
+/// The ledger's file name inside `.tally/`.
+const LEDGER_FILE: &str = "ledger.jsonl";
 
 /// The schema version written in each line's `v` field.
 pub const SCHEMA_VERSION: u32 = 1;
@@ -377,6 +383,17 @@ impl Ledger {
     }
 }
 
+/// Which ledger a report or record operation uses. The default is guarded; an explicit path is
+/// the user's own choice and keeps the plain behaviour (#94).
+#[derive(Debug, Clone, Copy)]
+pub enum LedgerTarget<'a> {
+    /// `.tally/ledger.jsonl` at the top level of the checkout being run from (a linked worktree has its own), through [`TallyDir`]: written only when
+    /// `.tally/` exists, and a symlink is refused.
+    Default,
+    /// A path the user gave with `--ledger`. Read and written as is.
+    Explicit(&'a Path),
+}
+
 /// A ledger operation failed.
 #[derive(Debug, thiserror::Error)]
 pub enum LedgerError {
@@ -395,6 +412,15 @@ pub enum LedgerError {
         path: PathBuf,
         /// The underlying error.
         source: std::io::Error,
+    },
+    /// A `.tally/` path was refused because it is a symbolic link, not the kind of file expected,
+    /// or outside the main checkout (#94). Nothing was read or written through it.
+    #[error("refusing to use {}: {reason}", path.display())]
+    Refused {
+        /// The refused path.
+        path: PathBuf,
+        /// Why, in words that contain no file content.
+        reason: &'static str,
     },
 }
 
@@ -433,6 +459,25 @@ pub fn read(path: &Path) -> Result<Ledger, LedgerError> {
             });
         }
     };
+    Ok(parse_ledger(&bytes))
+}
+
+/// Reads the default ledger, `.tally/ledger.jsonl` under the checkout `root` (the git top level), through the
+/// guarded [`TallyDir`] accessor (#94). A missing `.tally/` or file is an empty ledger.
+///
+/// Use this for the default location; [`read`] is for an explicit `--ledger <path>`.
+///
+/// # Errors
+/// [`LedgerError::Refused`] when `.tally` or the ledger is a symlink or the wrong kind of file;
+/// [`LedgerError::Read`] when the file exists but cannot be read.
+pub fn read_default(root: &Path) -> Result<Ledger, LedgerError> {
+    let Some(tally) = TallyDir::open(root)? else {
+        return Ok(Ledger::default());
+    };
+    Ok(parse_ledger(&tally.read(LEDGER_FILE)?.unwrap_or_default()))
+}
+
+fn parse_ledger(bytes: &[u8]) -> Ledger {
     let mut ledger = Ledger::default();
     let mut index: std::collections::HashMap<EntryKey, usize> = std::collections::HashMap::new();
     let mut conflicted: std::collections::HashSet<EntryKey> = std::collections::HashSet::new();
@@ -474,7 +519,7 @@ pub fn read(path: &Path) -> Result<Ledger, LedgerError> {
         }
     }
     ledger.stats.entries = ledger.entries.len() as u64;
-    Ok(ledger)
+    ledger
 }
 
 /// What an append did.
@@ -487,11 +532,57 @@ pub struct AppendOutcome {
     /// Entries written whose worktree origin is unnamed: the session's slug was not inside the
     /// main checkout's, so no name could be stored.
     pub unnamed_origins: u64,
+    /// Nothing was written because the repository has no `.tally/` directory: it has not opted
+    /// in (#94). Only [`append_default`] sets it. Not an error; the caller can stay quiet.
+    pub tally_absent: bool,
 }
 
-/// Appends the records whose request ids the ledger does not hold, after passing each through
-/// `redact`. Creates the parent directory. Idempotent: appending the same records again writes
-/// nothing. The id compared is the one after redaction, since that is what gets stored.
+/// What [`plan_append`] decided: the bytes to add and the outcome.
+struct Plan {
+    buf: String,
+    out: AppendOutcome,
+}
+
+/// Works out what to append to a ledger whose current bytes are `existing`.
+fn plan_append(
+    existing: &[u8],
+    records: &[SelectedRecord],
+    recorded_for: &str,
+    mode: Mode,
+    main: Option<&Path>,
+    redact: &dyn Redact,
+    clock: &dyn Clock,
+) -> Plan {
+    let held = parse_ledger(existing);
+    let mut seen: std::collections::HashSet<EntryKey> =
+        held.entries().iter().map(LedgerEntry::key).collect();
+    let recorded_at = clock.now();
+    let mut out = AppendOutcome::default();
+    let mut buf = String::new();
+    for rec in records {
+        let mut entry = redact.redact(LedgerEntry::from_selected(rec, recorded_for, mode, main));
+        entry.recorded_at = Some(recorded_at.clone());
+        if !seen.insert(entry.key()) {
+            out.skipped += 1;
+            continue;
+        }
+        buf.push_str(&line_text(&entry));
+        buf.push('\n');
+        out.appended += 1;
+        out.unnamed_origins += u64::from(entry.origin == Some(StoredOrigin::Worktree(None)));
+    }
+    if out.appended > 0 && !existing.is_empty() && !existing.ends_with(b"\n") {
+        buf.insert(0, '\n');
+    }
+    Plan { buf, out }
+}
+
+/// Appends the records whose request ids the ledger at `path` does not hold, after passing each
+/// through `redact`. Creates the parent directory. Idempotent: appending the same records again
+/// writes nothing. The id compared is the one after redaction, since that is what gets stored.
+///
+/// This is the plain, path-taking form, for an explicit `--ledger <path>` the user chose: it
+/// follows symlinks as it always has. The default location goes through [`append_default`].
 ///
 /// # Errors
 /// [`LedgerError`] when the ledger cannot be read or written.
@@ -510,33 +601,24 @@ pub fn append(
         path: path.to_owned(),
         source,
     };
-    let existing = read(path)?;
-    let mut seen: std::collections::HashSet<EntryKey> =
-        existing.entries().iter().map(LedgerEntry::key).collect();
-    let recorded_at = clock.now();
-    let mut out = AppendOutcome::default();
-    let mut buf = String::new();
-    for rec in records {
-        let mut entry = redact.redact(LedgerEntry::from_selected(rec, recorded_for, mode, main));
-        entry.recorded_at = Some(recorded_at.clone());
-        if !seen.insert(entry.key()) {
-            out.skipped += 1;
-            continue;
+    // Read once, for both the dedupe keys and the trailing-newline check. A missing file is empty.
+    let existing = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(source) => {
+            return Err(LedgerError::Read {
+                path: path.to_owned(),
+                source,
+            });
         }
-        buf.push_str(&line_text(&entry));
-        buf.push('\n');
-        out.appended += 1;
-        out.unnamed_origins += u64::from(entry.origin == Some(StoredOrigin::Worktree(None)));
-    }
+    };
+    let Plan { buf, out } =
+        plan_append(&existing, records, recorded_for, mode, main, redact, clock);
     if out.appended == 0 {
         return Ok(out);
     }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(write_err)?;
-    }
-    let needs_break = std::fs::read(path).is_ok_and(|b| !b.is_empty() && !b.ends_with(b"\n"));
-    if needs_break {
-        buf.insert(0, '\n');
     }
     let mut file = std::fs::OpenOptions::new()
         .create(true)
@@ -544,6 +626,41 @@ pub fn append(
         .open(path)
         .map_err(write_err)?;
     file.write_all(buf.as_bytes()).map_err(write_err)?;
+    Ok(out)
+}
+
+/// Appends to the default ledger, `.tally/ledger.jsonl` under the checkout `root` (the git top level:
+/// a linked worktree keeps its own ledger, decision 0002), through
+/// the guarded [`TallyDir`] accessor (#94). Writes only when `.tally/` already exists; otherwise
+/// nothing is written or created and the outcome has [`AppendOutcome::tally_absent`] set.
+/// Idempotent, like [`append`].
+///
+/// Use this for the default location; [`append`] is for an explicit `--ledger <path>`.
+///
+/// # Errors
+/// [`LedgerError::Refused`] when `.tally` or the ledger is a symlink or the wrong kind of file;
+/// [`LedgerError`] otherwise when the ledger cannot be read or written.
+pub fn append_default(
+    root: &Path,
+    records: &[SelectedRecord],
+    recorded_for: &str,
+    mode: Mode,
+    main: Option<&Path>,
+    redact: &dyn Redact,
+    clock: &dyn Clock,
+) -> Result<AppendOutcome, LedgerError> {
+    let Some(tally) = TallyDir::open(root)? else {
+        return Ok(AppendOutcome {
+            tally_absent: true,
+            ..AppendOutcome::default()
+        });
+    };
+    let existing = tally.read(LEDGER_FILE)?.unwrap_or_default();
+    let Plan { buf, out } =
+        plan_append(&existing, records, recorded_for, mode, main, redact, clock);
+    if out.appended > 0 {
+        tally.append(LEDGER_FILE, buf.as_bytes())?;
+    }
     Ok(out)
 }
 

@@ -46,7 +46,24 @@ working directory has a detached HEAD.
 
 The file is always at `.tally/captures.jsonl` in the repository's **main checkout**, even when the
 session runs in a git worktree. Every session's captures land in one file, and that file outlives
-the worktrees. `capture` creates `.tally/` and the file when they are missing.
+the worktrees.
+
+`capture` never creates `.tally/`. It writes only when the main checkout already has a `.tally/`
+directory, which is how a repository [opts in](ledger.md#opt-the-repository-in). Without one it
+writes nothing, prints nothing and exits 0. With one, it creates `captures.jsonl` inside it when
+the file is missing.
+
+A symbolic link at `.tally` or `.tally/captures.jsonl`, or a captures path that is not a regular
+file, is refused rather than followed: `capture` writes nothing, prints one fixed line on stderr
+and exits 1. The line names no path, since the path holds the working directory:
+
+```text
+capture: refusing to write: .tally/ or its captures file is a symlink or not a regular file
+```
+
+`record`, and any `report` that reads live transcripts (`--from-ledger` alone does not), refuse a
+linked captures file on read too, with an error naming the file and exit 1. See
+[Symbolic links are refused](ledger.md#symbolic-links-are-refused) for why.
 
 Reports and `record` read it from the main checkout of the repository they run in (the `--repo`
 directory, `.` by default). `--ledger` does not move it.
@@ -86,7 +103,8 @@ stderr, with counts only:
 note: skipped 3 capture line(s) in .tally/captures.jsonl: 1 malformed, 1 unsupported version, 1 unknown kind
 ```
 
-A missing file is not an error: reports run as if there were no captures.
+A missing file, or a missing `.tally/` directory, is not an error: reports run as if there were no
+captures.
 
 ## How captures change a report
 

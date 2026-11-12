@@ -408,7 +408,9 @@ Every PR:
 `.tally/` is exempt from every "working tree must be clean" check in the skills
 (`git status --short -- . ':!.tally'`), because the capture and record plugins append to
 `.tally/captures.jsonl` and `.tally/ledger.jsonl` in the main checkout on whatever branch is checked
-out, so it is routinely dirty. Anything else dirty still stops the skill.
+out, so it is routinely dirty. Anything else dirty still stops the skill. Those writes happen only
+when `.tally/` already exists as a real directory: `capture` and `record` never create it, and
+neither follows a symlink in it (#94).
 
 `/create-gh-pr` handles the first four. Tick test-plan boxes honestly. An unticked box tells the
 reviewer something. A falsely ticked one is a lie they can't see.

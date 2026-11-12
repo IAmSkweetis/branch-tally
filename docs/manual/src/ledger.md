@@ -29,6 +29,39 @@ flowchart LR
 
 ## Set up your repository
 
+### Opt the repository in
+
+branch-tally never creates `.tally/`. `record` and the [hook captures](captures.md) write only when
+the directory already exists as a real directory, so a repository opts in by having one. Create it
+once, from the repository's root, and commit it:
+
+```sh
+mkdir .tally
+touch .tally/.gitkeep
+git add .tally/.gitkeep
+git commit -m "chore: opt in to branch-tally"
+```
+
+Git does not track empty directories, which is what the `.gitkeep` is for. Once the ledger itself
+is committed, it keeps the directory in place on its own.
+
+Committing the directory matters because every clone and every git worktree gets its own copy of
+it. A worktree, or a clone, whose checked-out commit has no `.tally/` is not opted in, and `record`
+writes nothing there. [Hook captures](captures.md) always go to the main checkout's `.tally/`, so
+the main checkout needs the directory too. A worktree that opted in on its own branch still
+captures nothing while the main checkout is on a branch without `.tally/`. Commit the opt-in to the
+default branch, so every branch cut from it has the directory.
+
+Without the directory, `record` writes nothing, creates nothing, prints this on stdout and exits 0:
+
+```text
+no .tally/ directory: nothing recorded (create it to opt in)
+```
+
+`--ledger <path>` is exempt: an explicit ledger file is written whether or not `.tally/` exists.
+
+### Keep both sides' lines on merge
+
 Add this line to your repository's `.gitattributes`:
 
 ```text
@@ -63,7 +96,9 @@ appended 3, skipped 0, branch feat/x
 - **It is safe to run again.** Each line is keyed by the API call's request id and the branch it
   was recorded for. `record` appends only keys the ledger does not hold yet, so a second run
   reports `appended 0, skipped 3`.
-- **It creates the file** and the `.tally/` directory when they are missing.
+- **It creates the file, not the directory.** In an [opted-in](#opt-the-repository-in) repository
+  it creates `ledger.jsonl` inside `.tally/` when the file is missing. It never creates `.tally/`
+  itself.
 - **It stores the mode.** `record` takes the same `--mode`, `--strict`, `--timeline` and
   `--work-branch` options as `report`, and the [config file](config.md)'s `mode` and
   `work-branch`. Each line stores the mode it was selected under.
@@ -88,9 +123,10 @@ Remembering to run `record` before `cleanupPeriodDays` runs out is easy to get w
 
 The hook records the branch the session's directory has checked out when the session ends, with
 the `mode` and `work-branch` from your [config file](config.md). It is the same command as above,
-so the same rules hold: it only writes the file, a second run appends nothing new, and you still
-commit and push the ledger yourself. It needs `branch-tally` on your `PATH`, and it never blocks
-the session, even when `record` fails.
+so the same rules hold: it writes only in a repository that has
+[opted in](#opt-the-repository-in), it only writes the file, a second run appends nothing new, and
+you still commit and push the ledger yourself. Installing the plugin does not opt a repository in.
+It needs `branch-tally` on your `PATH`, and it never blocks the session, even when `record` fails.
 
 Claude Code gives a `SessionEnd` hook 1.5 seconds by default, and a plugin can't raise that.
 `record` reads every transcript for the repository, so a long history can need more. Set
@@ -138,8 +174,9 @@ A duplicate line, such as one left by a union merge or by recording twice, is co
 it is not a conflict.
 
 If the ledger has no lines for the branch, `report --from-ledger` fails with
-`No ledger records found for branch '…'` (exit 1). If the ledger file does not exist, it fails with
-`no ledger at <path>` (exit 1).
+`No ledger records found for branch '…'` (exit 1). If the ledger file, or the `.tally/` directory,
+does not exist, it fails with `no ledger at <path>` (exit 1). A linked default ledger is refused
+(see [Symbolic links are refused](#symbolic-links-are-refused)).
 
 ## The whole project
 
@@ -151,13 +188,45 @@ project total, a row per branch, and a chart of cumulative cost over time. See
 
 The default is `.tally/ledger.jsonl` at the root of the git checkout that contains the current
 directory (or the `--repo` directory). Run from inside a git worktree, that is the worktree's own
-root, so the ledger is committed on the worktree's branch and merges back with it.
+root, so the ledger is committed on the worktree's branch and merges back with it. `record` writes
+there only when that checkout has a `.tally/` directory: see
+[Opt the repository in](#opt-the-repository-in).
 
 `--ledger <path>` uses another file, on both `record` and `report --from-ledger`. Outside a git
 checkout, `--ledger` is required: without it, `record` and `report --from-ledger` fail (exit 1)
 rather than write a stray ledger.
 
 `--ledger` only has an effect on `report` together with `--from-ledger`.
+
+### Symbolic links are refused
+
+`.tally/` is part of the repository, and git can store a symbolic link. A cloned repository could
+therefore ship `.tally/ledger.jsonl`, or `.tally` itself, as a link to a file somewhere else on
+your machine, and a hook that followed it would write there. So branch-tally does not follow links
+in the default `.tally/` location, on read or on write.
+
+The guard covers `.tally`, `.tally/ledger.jsonl`, `.tally/captures.jsonl` and `.tally/prices.toml`.
+When one of them is a symbolic link, or is not the kind of file it should be (`.tally` must be a
+directory, the others regular files), nothing is followed or created through it, and the command
+fails with exit 1 and a message naming the path:
+
+```text
+refusing to use <path>: it is a symbolic link
+refusing to use <path>: it is not a directory
+refusing to use <path>: it does not resolve inside the main checkout
+refusing to use <path>: it is not a regular file
+```
+
+The first three are about `.tally` itself: a link, a file, or a directory that resolves somewhere
+other than the checkout. The last is for anything inside `.tally/` that is a link or not a regular
+file. `record`, `report` and `project` print these. The captures hook and the price override print
+their own messages instead, listed under [`capture`](cli.md#branch-tally-capture) and
+[Which price table is used](cli.md#which-price-table-is-used). `report` and `project` read the
+price override first, so a linked `.tally` stops them with the price table's message.
+
+To fix it, replace the link with a real directory or file. An explicit `--ledger <path>` is your
+own choice, so it is exempt: it is read and written as given, a link included. The guard still
+applies to the captures file and the price override, which `--ledger` does not move.
 
 ## What is stored
 

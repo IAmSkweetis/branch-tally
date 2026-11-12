@@ -102,6 +102,20 @@ whose transcript carries no branch. `branch-tally-record` fills the ledger befor
 transcripts. The manual's [Claude Code](https://branch-tally.io/integration/claude-code.html) page
 covers both.
 
+Installing a plugin does not turn recording on. branch-tally never creates `.tally/`, and both
+hooks write only in a repository that already has it, so opt a repository in once and commit it:
+
+```sh
+mkdir .tally
+touch .tally/.gitkeep
+git add .tally/.gitkeep
+git commit -m "chore: opt in to branch-tally"
+```
+
+A symbolic link at `.tally` or at a file in it is refused, never followed, so a cloned repository
+can't point those writes elsewhere on your machine. The manual's
+[ledger page](https://branch-tally.io/ledger.html#opt-the-repository-in) has the details.
+
 ## Documentation
 
 The user manual is at **<https://branch-tally.io/>**:
@@ -126,7 +140,8 @@ ground.
 The table is chosen by the first of these that exists, and that one is used whole, with no
 per-model merging:
 
-1. `.tally/prices.toml` in the repository's main checkout (the override).
+1. `.tally/prices.toml` in the repository's main checkout (the override). It must be a regular
+   file in a real `.tally/` directory: a symbolic link there is refused, and stops the report.
 2. The per-user cache written by `branch-tally prices update`.
 3. The table built into the binary.
 
