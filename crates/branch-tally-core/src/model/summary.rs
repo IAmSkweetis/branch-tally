@@ -231,14 +231,17 @@ pub struct Footnote {
 /// The branch attribution gives a record whose transcript carried no `gitBranch` stamp.
 const NO_BRANCH: &str = "(none)";
 
-/// Calls that carry no branch stamp and that nothing could place on a branch (#60): the record's
-/// assigned branch is still the literal `(none)` after attribution, on the raw stamp
-/// ([`BranchBasis::Stamped`]). Counted over the **full attributed set before selection**, so it is
-/// repository-wide and the same for every branch's report.
+/// Calls that no branch was assigned (#60): the record's branch is still the literal `(none)`
+/// after attribution, whatever its basis except [`BranchBasis::SubagentUnlinked`]. Counted over
+/// the **full attributed set before selection**, so it is repository-wide and the same for every
+/// branch's report. That leaves no `(none)` record outside every count.
 ///
-/// Disjoint from the other uncertainty counts: a subagent record with no dispatch link
-/// ([`BranchBasis::SubagentUnlinked`]) is in [`SubagentSummary`]'s `unattributed_*`, and a
-/// timeline-ambiguous record is in the ambiguous heuristic count, so neither is counted again here.
+/// Not double-counted against [`SubagentSummary`]'s `unattributed_*`: a subagent record with no
+/// dispatch link is excluded here. It does overlap the ambiguous heuristic: a
+/// [`BranchBasis::TimelineAmbiguous`] record that kept `(none)` is counted here, and also in
+/// `footnote.heuristics.ambiguous` when its session has a record selected for the branch. That
+/// count is session-scoped, so it can't be excluded here without making this one differ by
+/// branch. Read `unstamped` as "on no branch" and `ambiguous` as "might change this total".
 /// In the ledger-only path the full set is unknown and this stays zero (not "none exist").
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Unstamped {
@@ -254,7 +257,7 @@ impl Unstamped {
     pub fn count(attributed: &[AttributedRecord]) -> Self {
         attributed
             .iter()
-            .filter(|a| a.basis == BranchBasis::Stamped && a.branch == NO_BRANCH)
+            .filter(|a| a.basis != BranchBasis::SubagentUnlinked && a.branch == NO_BRANCH)
             .fold(Self::default(), |acc, a| Self {
                 calls: acc.calls + 1,
                 tokens: acc.tokens + a.record.usage.tokens(),
@@ -321,22 +324,25 @@ mod tests {
     }
 
     #[test]
-    fn unstamped_counts_only_none_on_the_raw_stamp() {
+    fn unstamped_counts_every_none_record_except_unlinked_subagents() {
         let recs = [
             attributed("(none)", BranchBasis::Stamped, 7),
             attributed("(none)", BranchBasis::Stamped, 3),
             // Recovered, or on a real branch: placed, not unstamped.
             attributed("feat/x", BranchBasis::OriginRecovered, 100),
             attributed("feat/x", BranchBasis::Stamped, 100),
-            // Counted by their own uncertainty counts instead.
+            // Counted by `subagents.unattributed*` instead.
             attributed("(none)", BranchBasis::SubagentUnlinked, 50),
+            // Ambiguous, but still on no branch: counted here whichever session it is in.
             attributed("(none)", BranchBasis::TimelineAmbiguous, 60),
+            // Ambiguous between real branches: has a stamp, so not unstamped.
+            attributed("feat/x", BranchBasis::TimelineAmbiguous, 70),
         ];
         assert_eq!(
             Unstamped::count(&recs),
             Unstamped {
-                calls: 2,
-                tokens: 10
+                calls: 3,
+                tokens: 70
             }
         );
         assert_eq!(Unstamped::count(&[]), Unstamped::default());

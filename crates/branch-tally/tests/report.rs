@@ -203,6 +203,10 @@ fn strip_heuristics_divergence(payload: &mut serde_json::Value, strict: bool) {
     );
 }
 
+/// Exact claim-mode `unstamped` `(calls, tokens)` per scenario (#60); a scenario not listed must
+/// report none. Copy of `CLAIM_UNSTAMPED` in `branch-tally-core/tests/parity_claude_code.rs`.
+const CLAIM_UNSTAMPED: &[(&str, (u64, u64))] = &[("unstamped-main", (2, 2_221))];
+
 /// The reference's own `(none)` bucket for a scenario, from its strict golden: `(calls, tokens)` of
 /// every call that carries no branch stamp. `(0, 0)` when the golden has no such key.
 fn reference_none(scenario: &str) -> (u64, u64) {
@@ -227,7 +231,7 @@ fn reference_none(scenario: &str) -> (u64, u64) {
 /// #60: a payload with unstamped calls carries a top-level `unstamped` object the reference does
 /// not emit. A report-field divergence, stripped deliberately after its values are checked so no
 /// other key is loosened. Strict mode is raw, so its count is exactly the reference's `(none)`
-/// bucket; claim mode can only place calls, never add them, so it is at most that. Mirrors
+/// bucket; claim mode is the exact `CLAIM_UNSTAMPED` entry. Mirrors
 /// `without_unstamped_divergence` in `branch-tally-core/tests/parity_claude_code.rs`.
 fn strip_unstamped_divergence(payload: &mut serde_json::Value, scenario: &str, strict: bool) {
     let (raw_calls, raw_tokens) = reference_none(scenario);
@@ -246,13 +250,15 @@ fn strip_unstamped_divergence(payload: &mut serde_json::Value, scenario: &str, s
             "{scenario}: strict is raw"
         );
     } else {
+        let want = CLAIM_UNSTAMPED
+            .iter()
+            .find(|(s, _)| *s == scenario)
+            .map_or((0, 0), |(_, v)| *v);
+        assert_eq!((calls, tokens), want, "{scenario}: claim-mode unstamped");
         assert!(
-            calls <= raw_calls && tokens <= raw_tokens,
-            "{scenario}: claim mode counted more unstamped calls than the transcripts hold"
+            want.0 <= raw_calls && want.1 <= raw_tokens,
+            "{scenario}: expected more unstamped calls than the transcripts hold"
         );
-    }
-    if scenario == "unstamped-main" {
-        assert_eq!((calls, tokens), (2, 2_221));
     }
 }
 

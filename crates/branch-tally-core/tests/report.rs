@@ -830,3 +830,37 @@ fn run_with_a_custom_rule_reports_the_pattern_and_ignores_git_defaults() {
         })
     );
 }
+
+#[test]
+fn timeline_ambiguous_unstamped_call_in_an_unselected_session_is_still_counted() {
+    // #60 audit: an unstamped call with no parseable timestamp is timeline-ambiguous and keeps
+    // `(none)`. Its session has no record on `feat/x`, so the session-scoped ambiguous count
+    // never sees it; `unstamped` must.
+    let mut stray = rec("s2", "z", None);
+    stray.ts = None;
+    let records = vec![
+        rec_at("s1", "a", "feat/x", "2026-01-01T00:00:01Z"),
+        rec_at("s2", "y", "feat/y", "2026-01-01T00:00:01Z"),
+        stray,
+    ];
+    let opts = Options::new(Mode::Timeline).with_default_branch(DefaultBranch {
+        name: "main".to_owned(),
+        source: DefaultBranchSource::OriginHead,
+    });
+    let r = build(
+        records,
+        &[],
+        ReadStats::default(),
+        Path::new("/repo"),
+        &[],
+        "feat/x",
+        &opts,
+        bundled(),
+    )
+    .unwrap();
+    assert_eq!(r.summary.footnote.heuristics.ambiguous.calls, 0);
+    assert_eq!(
+        (r.summary.unstamped.calls, r.summary.unstamped.tokens),
+        (1, 15)
+    );
+}

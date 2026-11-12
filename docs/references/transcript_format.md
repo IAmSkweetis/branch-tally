@@ -128,10 +128,12 @@ What follows for attribution:
   only says what is checked out now, not what was checked out when the call was made. So an
   unstamped main-checkout record stays `(none)` (#37). The reference recovers it. Fixture:
   `unstamped-main`. Such a record is never dropped silently (#60): the report counts every record
-  that is still `(none)` on the raw stamp, repository-wide and before selection, as `unstamped`
+  that is still `(none)` after attribution, repository-wide and before selection, as `unstamped`
   calls and tokens (JSON key `unstamped`, a Markdown footer line). In `unstamped-main` that is
   `req_2` and `req_5`, 2 calls and 2,221 tokens, on any branch's report. A subagent record with no
-  dispatch link is counted under `subagents.unattributed*` instead, never in both.
+  dispatch link is counted under `subagents.unattributed*` instead, never in both. A
+  timeline-ambiguous record that kept `(none)` is in `unstamped` always, and also in the
+  session-scoped ambiguous count when its session has a selected record.
 
 ### Captured attribution (#13)
 
