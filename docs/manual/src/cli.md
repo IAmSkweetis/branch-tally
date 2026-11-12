@@ -8,6 +8,7 @@ branch-tally <COMMAND>
 | ------- | ---- |
 | [`report`](#branch-tally-report) | Report Claude Code token usage for a git branch. |
 | [`record`](#branch-tally-record) | Append this branch's attributed usage to the repository ledger (write only). |
+| [`project`](#branch-tally-project) | Report project-wide totals and the cost-over-time series from the ledger. |
 | [`capture`](#branch-tally-capture) | Record this session's branch from a Claude Code hook payload on stdin. Run by the [capture plugin](integration.md), not by hand. |
 | [`prices update`](#branch-tally-prices-update) | Refresh the per-user price cache from the LiteLLM model price list. |
 | [`prices show`](#branch-tally-prices-show) | Show which price table reports would use, with its source, date and path. |
@@ -315,6 +316,29 @@ the [ledger](ledger.md). It writes only the ledger file: no `git add`, no commit
 
 The same conflict rules as `report` apply to the mode flags and `--work-branch`. From the config
 file, `record` uses `mode` and `work-branch` and ignores the rest.
+
+## `branch-tally project`
+
+```text
+branch-tally project [OPTIONS]
+```
+
+Reads the [ledger](ledger.md) only (never the live transcripts) and prints the project total, a
+per-branch breakdown and a Mermaid cost-over-time chart, or the same data as JSON. A missing
+ledger is an error, as for `report --from-ledger`. A total that includes any figure with an
+unpriced model is labelled as a floor.
+
+| Option | Default | Does |
+| ------ | ------- | ---- |
+| `--repo <PATH>` | `.` | The repository, used to find the default ledger and the price table. |
+| `--ledger <PATH>` | `.tally/ledger.jsonl` | The ledger file. The default is at the root of the current checkout. |
+| `--format <FORMAT>` | `md` | Output format: `md` or `json`. |
+| `--md` | | Same as `--format md`. |
+| `--json` | | Same as `--format json`. |
+| `--config <PATH>` | user config path | Read this config file instead of the default location. It must exist. |
+| `--export-graph <PATH>` | | Also write the chart as an SVG file to `PATH`. The file is written whole or not at all, and the parent directory must exist. The report still prints. |
+
+`--format`, `--md` and `--json` conflict with each other, as for `report`.
 
 ## `branch-tally capture`
 

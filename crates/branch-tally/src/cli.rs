@@ -31,6 +31,13 @@ pub(crate) enum Command {
     /// Report Claude Code token usage for a git branch.
     Report(ReportArgs),
 
+    /// Report project-wide totals and the cost-over-time series from the ledger.
+    ///
+    /// Reads the ledger only (never the live transcripts) and prints the project total, a
+    /// per-branch breakdown and a Mermaid cost-over-time chart. `--export-graph` also writes the
+    /// same chart as an SVG file.
+    Project(ProjectArgs),
+
     /// Append this branch's attributed usage to the repository ledger (write only).
     Record(RecordArgs),
 
@@ -226,6 +233,57 @@ pub(crate) struct ReportArgs {
     pub(crate) ledger: Option<PathBuf>,
 }
 
+/// `project`: the ledger-wide report.
+#[derive(Debug, Args)]
+pub(crate) struct ProjectArgs {
+    /// Repository path (default: cwd), used to find the default ledger and the price table.
+    #[arg(long, default_value = ".", value_name = "PATH")]
+    pub(crate) repo: PathBuf,
+
+    /// The ledger file (default: .tally/ledger.jsonl at the root of the current checkout).
+    #[arg(long, value_name = "PATH")]
+    pub(crate) ledger: Option<PathBuf>,
+
+    /// Output format: md (default) or json. `--md` and `--json` are shorthands; they cannot be
+    /// combined with `--format`.
+    #[arg(long, value_enum, conflicts_with_all = ["md", "json"])]
+    pub(crate) format: Option<FormatArg>,
+
+    /// Emit Markdown (the default; same as --format md).
+    #[arg(long, conflicts_with = "json")]
+    pub(crate) md: bool,
+
+    /// Emit JSON instead of Markdown (same as --format json).
+    #[arg(long)]
+    pub(crate) json: bool,
+
+    /// Read this config file instead of the default location (it must exist).
+    #[arg(long, value_name = "PATH")]
+    pub(crate) config: Option<PathBuf>,
+
+    /// Also write the cost-over-time chart as an SVG file to PATH (the report still prints). The
+    /// file is written whole or not at all; an existing file is replaced.
+    #[arg(long, value_name = "PATH")]
+    pub(crate) export_graph: Option<PathBuf>,
+}
+
+impl ProjectArgs {
+    /// The format a flag chose (`--format`, `--md` or `--json`), or `None` when none did.
+    pub(crate) fn format_flag(&self) -> Option<Format> {
+        format_from(self.format, self.md, self.json)
+    }
+}
+
+fn format_from(format: Option<FormatArg>, md: bool, json: bool) -> Option<Format> {
+    match format {
+        Some(FormatArg::Md) => Some(Format::Md),
+        Some(FormatArg::Json) => Some(Format::Json),
+        None if json => Some(Format::Json),
+        None if md => Some(Format::Md),
+        None => None,
+    }
+}
+
 /// `record`: the same selection flags as `report`, then append to the ledger.
 #[derive(Debug, Args)]
 pub(crate) struct RecordArgs {
@@ -287,13 +345,7 @@ impl ReportArgs {
 
     /// The format a flag chose (`--format`, `--md` or `--json`), or `None` when none did.
     pub(crate) fn format_flag(&self) -> Option<Format> {
-        match self.format {
-            Some(FormatArg::Md) => Some(Format::Md),
-            Some(FormatArg::Json) => Some(Format::Json),
-            None if self.json => Some(Format::Json),
-            None if self.md => Some(Format::Md),
-            None => None,
-        }
+        format_from(self.format, self.md, self.json)
     }
 
     /// `--cost` or `--no-cost`, or `None` when neither was given.

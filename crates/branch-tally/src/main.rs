@@ -13,6 +13,7 @@ mod capture;
 mod cli;
 mod config;
 mod prices;
+mod project;
 mod pyrepr;
 mod report;
 
@@ -20,6 +21,7 @@ fn main() -> ExitCode {
     let args = cli::Cli::parse();
     let result = match args.command {
         cli::Command::Report(args) => report::run(&args),
+        cli::Command::Project(args) => project::run(&args),
         cli::Command::Record(args) => report::record(&args),
         cli::Command::Capture => capture::run(),
         cli::Command::Prices(command) => prices::run(&command).map(|text| {
