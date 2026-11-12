@@ -37,6 +37,39 @@ fn day(ts: &str) -> String {
         .collect()
 }
 
+/// The value the chart plots (its last point) and whether it must read "at least": the data has
+/// a floor, or undated branches mean the dated-only line under-counts the project.
+fn plotted(report: &ProjectReport) -> Option<(f64, bool)> {
+    let last = report.series.last()?;
+    Some((
+        last.cumulative_cost,
+        report.is_floor() || report.undated_branches > 0,
+    ))
+}
+
+/// Unique, date-based x-axis labels. A day that occurs more than once gets an ordinal (`#1`,
+/// `#2`, ...) on every occurrence, because Mermaid's band scale collapses duplicate categories.
+fn unique_labels(report: &ProjectReport) -> Vec<String> {
+    let days: Vec<String> = report.series.iter().map(|p| day(&p.date)).collect();
+    let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    report
+        .series
+        .iter()
+        .zip(&days)
+        .map(|(p, d)| {
+            let total = days.iter().filter(|x| *x == d).count();
+            let k = seen.entry(d.as_str()).or_insert(0);
+            *k += 1;
+            let ord = if total > 1 {
+                format!(" #{k}")
+            } else {
+                String::new()
+            };
+            format!("\"{d}{ord}{}\"", if p.is_floor { "*" } else { "" })
+        })
+        .collect()
+}
+
 /// A cost as text: "at least $X" for a floor, else "$X". Money is `{:.2}` like the summary.
 fn cost_text(cost: &RowCost, floor: bool) -> String {
     if floor {
@@ -146,7 +179,8 @@ fn notes(report: &ProjectReport, o: &mut String) {
     if report.undated_branches > 0 {
         let _ = writeln!(
             o,
-            "- {} branch(es) have no timestamp and are left off the chart.",
+            "- {} branch(es) have no timestamp and are left off the chart, which covers dated \
+             branches only and so shows at least the cost of those.",
             n(report.undated_branches)
         );
     }
@@ -173,20 +207,15 @@ fn chart(report: &ProjectReport, o: &mut String) {
         1.0
     };
     let any_floor = report.series.iter().any(|p| p.is_floor);
-    let labels: Vec<String> = report
-        .series
-        .iter()
-        .map(|p| format!("\"{}{}\"", day(&p.date), if p.is_floor { "*" } else { "" }))
-        .collect();
+    let labels = unique_labels(report);
     let values: Vec<String> = report
         .series
         .iter()
         .map(|p| format!("{:.2}", p.cumulative_cost))
         .collect();
-    let title = if any_floor {
-        "Cumulative cost (USD, floor)"
-    } else {
-        "Cumulative cost (USD)"
+    let title = match plotted(report) {
+        Some((v, true)) => format!("Cumulative cost (USD, at least ${v:.2})"),
+        _ => "Cumulative cost (USD)".to_owned(),
     };
     o.push_str("```mermaid\nxychart-beta\n");
     let _ = writeln!(o, "    title \"{title}\"");
@@ -339,11 +368,13 @@ const BOTTOM: f64 = 72.0;
 /// Every interpolated string is XML-escaped.
 #[must_use]
 pub fn project_svg(report: &ProjectReport) -> String {
-    let heading = format!(
-        "Cumulative cost: {}${:.2}",
-        if report.is_floor() { "at least " } else { "" },
-        report.totals.cost.known
-    );
+    let heading = match plotted(report) {
+        Some((v, floor)) => format!(
+            "Cumulative cost: {}${v:.2}",
+            if floor { "at least " } else { "" }
+        ),
+        None => "Cumulative cost".to_owned(),
+    };
     let mut o = String::new();
     let _ = writeln!(
         o,
@@ -769,5 +800,99 @@ mod tests {
         let s = project_svg(&r);
         assert!(!s.contains("<script"), "{s}");
         assert!(s.contains("x&lt;script&gt;&amp;&quot;&apos;|"), "{s}");
+    }
+
+    // ---- chart honesty (#87 fix round) ----
+
+    fn mermaid_block(md: &str) -> String {
+        md.split("```mermaid").nth(1).unwrap_or("").to_owned()
+    }
+
+    #[test]
+    fn mermaid_same_day_points_get_distinct_date_based_labels() {
+        let mut r = exact();
+        r.series = vec![
+            point("2026-01-02T01:00:00Z", "feat/a", 1.0, false),
+            point("2026-01-02T05:00:00Z", "feat/b", 2.0, false),
+            point("2026-01-03T05:00:00Z", "feat/c", 3.0, true),
+            point("2026-01-03T06:00:00Z", "feat/d", 4.0, true),
+        ];
+        let chart = mermaid_block(&project_markdown(&r));
+        let line = chart.lines().find(|l| l.contains("x-axis")).unwrap_or("");
+        assert!(
+            line.contains(
+                "x-axis [\"2026-01-02 #1\", \"2026-01-02 #2\", \"2026-01-03 #1*\", \"2026-01-03 #2*\"]"
+            ),
+            "{line}"
+        );
+        assert!(!chart.contains("feat/"), "{chart}");
+    }
+
+    #[test]
+    fn mermaid_title_says_at_least_not_floor_for_a_floor() {
+        let md = project_markdown(&messy());
+        assert!(
+            md.contains("title \"Cumulative cost (USD, at least $3.75)\""),
+            "{md}"
+        );
+        assert!(!md.contains("floor)"), "{md}");
+    }
+
+    #[test]
+    fn mermaid_undated_only_floor_says_at_least_and_shows_last_point() {
+        let mut r = exact();
+        r.rows.push(row("scratch", None, 1, 10, 0.0));
+        r.rows[2].cost = cost(0.5, 1);
+        r.rows[2].unpriced_models = vec!["mystery-1".to_owned()];
+        r.totals.cost = cost(4.25, 1);
+        r.totals.unpriced_models = vec!["mystery-1".to_owned()];
+        r.undated_branches = 1;
+        let md = project_markdown(&r);
+        assert!(md.contains("**at least $4.25**"), "{md}");
+        assert!(
+            md.contains("title \"Cumulative cost (USD, at least $3.75)\""),
+            "{md}"
+        );
+        assert!(md.contains("dated branches only"), "{md}");
+        let s = project_svg(&r);
+        assert!(
+            s.contains("<title>Cumulative cost: at least $3.75</title>"),
+            "{s}"
+        );
+        assert!(s.contains("1 undated branch(es) not shown"), "{s}");
+    }
+
+    #[test]
+    fn undated_exact_branch_makes_chart_at_least_with_last_point_value() {
+        let mut r = exact();
+        r.rows.push(row("scratch", None, 1, 10, 2.0));
+        r.totals.cost = cost(5.75, 0);
+        r.undated_branches = 1;
+        let md = project_markdown(&r);
+        assert!(md.contains("**$5.75**"), "{md}");
+        assert!(
+            md.contains("title \"Cumulative cost (USD, at least $3.75)\""),
+            "{md}"
+        );
+        let s = project_svg(&r);
+        assert!(
+            s.contains("<title>Cumulative cost: at least $3.75</title>"),
+            "{s}"
+        );
+        assert!(!s.contains("5.75"), "{s}");
+    }
+
+    #[test]
+    fn overlap_that_is_a_floor_says_at_least_in_note_and_json() {
+        let mut r = exact();
+        r.totals.overlap = SharedOverlap {
+            calls: 1,
+            tokens: 100,
+            cost: cost(0.5, 1),
+        };
+        let md = project_markdown(&r);
+        assert!(md.contains("100 tokens, at least $0.50)"), "{md}");
+        let v: serde_json::Value = serde_json::from_str(&project_json(&r)).unwrap();
+        assert_eq!(v["overlap"]["costIsFloor"], true);
     }
 }
