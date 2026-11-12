@@ -142,6 +142,11 @@ token-report *args: (_require "branch-tally" "install the latest release: https:
 token-record *args: (_require "branch-tally" "install the latest release: https://github.com/IAmSkweetis/branch-tally/releases/latest")
     branch-tally record {{ args }}
 
+# Regenerate the README's cost-over-time chart from the ledger, with the installed release binary.
+# The SVG's headline is the project total, so this one file keeps the README's chart and total current.
+readme-graph: (_require "branch-tally" "install the latest release: https://github.com/IAmSkweetis/branch-tally/releases/latest")
+    branch-tally project --export-graph docs/assets/project-cost.svg
+
 # The version the next release would get, from the Conventional Commits since the last v* tag.
 # Needs git-cliff at cliff_version and the full history (a shallow clone gets the wrong answer).
 next-version: (_require "git-cliff" ("install it: cargo install git-cliff --version " + cliff_version + " --locked"))

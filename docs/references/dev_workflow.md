@@ -165,6 +165,7 @@ its own lists the recipes.
 | `just package <vX.Y.Z> <target> [binary]` | package a built binary as a release archive in `dist/` ([release.md](release.md#targets)) | `sh scripts/package.sh …` |
 | `just token-record [args…]` | appends this branch's usage to `.tally/ledger.jsonl` with the installed release binary ([Token usage](#token-usage)) | `branch-tally record` |
 | `just token-report [args…]` | this repo's own PR token report, from the installed release binary ([Token usage](#token-usage)) | `branch-tally report` |
+| `just readme-graph` | regenerate `docs/assets/project-cost.svg`, the README's cost-over-time chart, from the ledger with the installed release binary. Run by hand; commit the result | `branch-tally project --export-graph docs/assets/project-cost.svg` |
 
 Recipes run under PowerShell 7 on Windows and `sh` elsewhere, so a recipe line must be a plain tool
 call that reads the same in both. Anything shell-specific goes in a private `_helper` recipe written
