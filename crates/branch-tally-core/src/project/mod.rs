@@ -10,6 +10,8 @@
 //! copy) and the overlap says what was counted twice. The series adds each request at the
 //! earliest dated branch that claims it, so its last point equals the total over dated branches.
 
+mod instant;
+
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -78,9 +80,12 @@ impl Priced {
 /// `mode` is the mode the single-branch report would use (strict leaves the heuristic
 /// breakdown empty, as it does there).
 ///
-/// Rows are ordered by `last_call` ascending (ISO-8601 strings compared as text), ties by branch
-/// name, undated rows last. Branches with no timestamp stay in `rows`, are left off the series
-/// and are counted in `undated_branches`.
+/// Rows are ordered by `last_call` ascending, compared as parsed instants (RFC 3339 with any
+/// offset or fractional precision), ties by branch name, undated rows last. `last_call` keeps the
+/// original string of the latest call. A timestamp that does not parse never counts as the
+/// latest; its call is still in the row's usage and cost. A branch with no parseable timestamp
+/// (none at all, or only unparsable ones) is undated: it stays in `rows`, is left off the series
+/// and is counted in `undated_branches`.
 #[must_use]
 pub fn build(
     ledger: &Ledger,
@@ -102,12 +107,17 @@ pub fn build(
         .into_iter()
         .map(|(branch, entries)| {
             let priced = Priced::of(branch, &entries, main, mode, table);
-            let last_call = entries
-                .iter()
-                .filter_map(|e| e.ts.as_deref())
-                .filter(|ts| !ts.is_empty())
-                .max()
-                .map(str::to_owned);
+            // Latest by parsed instant. A ts that does not parse never wins; the first of
+            // several equal instants is kept, and the original string is what is reported.
+            let mut latest: Option<(i128, &str)> = None;
+            for ts in entries.iter().filter_map(|e| e.ts.as_deref()) {
+                if let Some(at) = instant::parse_ts(ts)
+                    && latest.is_none_or(|(best, _)| at > best)
+                {
+                    latest = Some((at, ts));
+                }
+            }
+            let last_call = latest.map(|(_, ts)| ts.to_owned());
             let row = BranchRow {
                 branch: branch.to_owned(),
                 last_call,
@@ -119,12 +129,9 @@ pub fn build(
             (row, entries)
         })
         .collect();
+    let at = |row: &BranchRow| row.last_call.as_deref().and_then(instant::parse_ts);
     rows.sort_by(|(a, _), (b, _)| {
-        (a.last_call.is_none(), &a.last_call, &a.branch).cmp(&(
-            b.last_call.is_none(),
-            &b.last_call,
-            &b.branch,
-        ))
+        (at(a).is_none(), at(a), &a.branch).cmp(&(at(b).is_none(), at(b), &b.branch))
     });
 
     // Each request id counted once, at its first stored copy.
