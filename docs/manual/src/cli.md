@@ -148,18 +148,20 @@ total is "at least" the figure shown.
 
 #### Unstamped calls
 
-Some calls carry no branch stamp at all, and nothing places them on a branch: no session claim,
+Some calls carry no branch stamp at all, and no report places them on a branch: no session claim,
 no hook captures, no worktree to recover the branch from. branch-tally does not guess. Such a call
 stays on no branch, and a report says how many there are:
 
-- the Markdown output has a line after the footnote, such as "2 call(s) / 2,221 tokens in this
+- the Markdown output has a line after the footnote, such as "1 call(s) / 1,115 tokens in this
   repository carry no branch stamp and are not attributed to any branch";
 - the JSON output has a top-level `unstamped` object, such as
-  `"unstamped": { "calls": 2, "tokens": 2221 }`.
+  `"unstamped": { "calls": 1, "tokens": 1115 }`.
 
 Both are left out when there are no such calls. The count covers the whole repository, not the
 branch you asked about, so it is the same in every branch's report. It is reported in every mode,
-`strict` included. These calls are in no branch's totals, and they are not counted again in the
+`strict` included. A call that a session claim places on a branch is in that branch's total, so it
+is not counted here; in `strict` mode there is no claim, so every call with no stamp is. These
+calls are in no branch's totals, and they are not counted again in the
 subagent section's unattributed counts. In timeline mode, an ambiguous call that kept no branch is
 counted here and, when its session is in the report, in the ambiguous total too. To list every
 call with no branch stamp, including those claim mode did place, report on `(none)` in strict
@@ -187,7 +189,7 @@ and `<!-- token-report:end -->` markers. It has, in order:
 4. a footnote: the branch and mode, session and subagent counts, the heuristics used, the
    work-branch rule in timeline mode, whether identifiers were redacted, the price table's date
    and source, unpriced models, and a reminder that costs are estimates at list API rates;
-5. a line such as "2 call(s) / 2,221 tokens in this repository carry no branch stamp and are not
+5. a line such as "1 call(s) / 1,115 tokens in this repository carry no branch stamp and are not
    attributed to any branch", when there are any (see [Unstamped calls](#unstamped-calls));
 6. a **Subagent usage** section, when subagents did part of the work: one row per subagent and
    model with its workspace, plus how many subagent calls had no dispatch link;

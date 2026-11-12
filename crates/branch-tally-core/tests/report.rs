@@ -478,18 +478,19 @@ fn unstamped_main_checkout_calls_are_not_put_on_the_checkouts_current_branch() {
 
 #[test]
 fn unstamped_calls_are_counted_repository_wide_whichever_branch_is_reported() {
-    // #60: `req_2` and `req_5` stay `(none)`. Both are reported, 2,221 tokens, on either branch.
+    // #60: `req_2` is claimed onto `feat/x` (session `s1`'s only work branch), so only `req_5`
+    // (1,115 tokens) is placed by no branch. The count is the same on either branch.
     for branch in ["main", "feat/x"] {
         let r = fixture_report("unstamped-main", branch, Mode::Claim, &[]).unwrap();
         assert_eq!(
             (r.summary.unstamped.calls, r.summary.unstamped.tokens),
-            (2, 2_221),
+            (1, 1_115),
             "{branch}"
         );
         let json = branch_tally_core::render::json(&r.summary, &r.costs);
         assert!(json.contains("\"unstamped\""), "{branch}: {json}");
     }
-    // Strict is raw too, so it reports the same count.
+    // Strict has no claim, so both `(none)` calls (the reference's bucket) are unplaced.
     let strict = fixture_report("unstamped-main", "main", Mode::Strict, &[]).unwrap();
     assert_eq!(
         (

@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use super::{AttributedRecord, BranchBasis, SessionId, SubagentSummary};
+use super::{SessionId, SubagentSummary};
 
 /// Summed token counts (`Bucket` in `reference/token_report.py`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -228,41 +228,28 @@ pub struct Footnote {
     pub worktree_sessions: u64,
 }
 
-/// The branch attribution gives a record whose transcript carried no `gitBranch` stamp.
-const NO_BRANCH: &str = "(none)";
-
-/// Calls that no branch was assigned (#60): the record's branch is still the literal `(none)`
-/// after attribution, whatever its basis except [`BranchBasis::SubagentUnlinked`]. Counted over
-/// the **full attributed set before selection**, so it is repository-wide and the same for every
-/// branch's report. That leaves no `(none)` record outside every count.
+/// Calls that no branch's report places (#60): a record whose branch is `(none)` after
+/// attribution and that no branch's selection would keep, under the report's mode. In claim mode
+/// a session claim places a `(none)` record on the session's only work-shaped branch, so it is not
+/// counted; in strict and timeline modes there is no claim, so every `(none)` record is.
+/// Subagent records with no dispatch link are excluded (they are in
+/// [`SubagentSummary`]'s `unattributed_*`). Counted by `summary::count_unstamped` over the
+/// **full attributed set before selection**, so it is the same for every branch's report.
 ///
-/// Not double-counted against [`SubagentSummary`]'s `unattributed_*`: a subagent record with no
-/// dispatch link is excluded here. It does overlap the ambiguous heuristic: a
-/// [`BranchBasis::TimelineAmbiguous`] record that kept `(none)` is counted here, and also in
-/// `footnote.heuristics.ambiguous` when its session has a record selected for the branch. That
-/// count is session-scoped, so it can't be excluded here without making this one differ by
-/// branch. Read `unstamped` as "on no branch" and `ambiguous` as "might change this total".
-/// In the ledger-only path the full set is unknown and this stays zero (not "none exist").
+/// It can overlap the ambiguous heuristic: a timeline-ambiguous record that kept `(none)` is
+/// counted here, and also in `footnote.heuristics.ambiguous` when its session has a record
+/// selected for the branch. That count is session-scoped, so it can't be excluded here without
+/// making this one differ by branch.
+///
+/// Present in live and ledger+live reports; a ledger-only report cannot know it and leaves it
+/// zero (not "none exist"). Ledger entries are placed by definition (selected for their
+/// `recorded_for` branch), so only live records are counted.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Unstamped {
     /// Calls with no branch stamp that were not attributed to any branch.
     pub calls: u64,
     /// Tokens of those calls (same definition as [`Bucket::tokens`]).
     pub tokens: u64,
-}
-
-impl Unstamped {
-    /// Counts the records in `attributed` whose branch is `(none)` on the raw stamp.
-    #[must_use]
-    pub fn count(attributed: &[AttributedRecord]) -> Self {
-        attributed
-            .iter()
-            .filter(|a| a.basis != BranchBasis::SubagentUnlinked && a.branch == NO_BRANCH)
-            .fold(Self::default(), |acc, a| Self {
-                calls: acc.calls + 1,
-                tokens: acc.tokens + a.record.usage.tokens(),
-            })
-    }
 }
 
 /// The three tables `summarize` returns, each in first-seen order, plus what render derives.
@@ -303,50 +290,6 @@ pub struct Summary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Harness, Record, RequestId, Usage};
-
-    fn attributed(branch: &str, basis: BranchBasis, output: u64) -> AttributedRecord {
-        let usage = Usage {
-            output,
-            ..Usage::default()
-        };
-        AttributedRecord {
-            record: Record::new(
-                Harness::ClaudeCode,
-                SessionId::new("s"),
-                RequestId::new("r"),
-                usage,
-            ),
-            branch: branch.to_owned(),
-            basis,
-            subagent: None,
-        }
-    }
-
-    #[test]
-    fn unstamped_counts_every_none_record_except_unlinked_subagents() {
-        let recs = [
-            attributed("(none)", BranchBasis::Stamped, 7),
-            attributed("(none)", BranchBasis::Stamped, 3),
-            // Recovered, or on a real branch: placed, not unstamped.
-            attributed("feat/x", BranchBasis::OriginRecovered, 100),
-            attributed("feat/x", BranchBasis::Stamped, 100),
-            // Counted by `subagents.unattributed*` instead.
-            attributed("(none)", BranchBasis::SubagentUnlinked, 50),
-            // Ambiguous, but still on no branch: counted here whichever session it is in.
-            attributed("(none)", BranchBasis::TimelineAmbiguous, 60),
-            // Ambiguous between real branches: has a stamp, so not unstamped.
-            attributed("feat/x", BranchBasis::TimelineAmbiguous, 70),
-        ];
-        assert_eq!(
-            Unstamped::count(&recs),
-            Unstamped {
-                calls: 3,
-                tokens: 70
-            }
-        );
-        assert_eq!(Unstamped::count(&[]), Unstamped::default());
-    }
 
     #[test]
     fn bucket_tokens_exclude_thinking_and_calls() {

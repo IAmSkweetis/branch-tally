@@ -570,3 +570,36 @@ fn a_ledger_report_keeps_each_sessions_origin_like_the_live_one() {
         .collect();
     assert_eq!(origins, ["main", wt_slug.to_lowercase().as_str()]);
 }
+
+#[test]
+fn an_archived_unstamped_ledger_entry_is_placed_so_unstamped_is_the_same_on_every_branch() {
+    // #60 (CodeRabbit): the ledger holds a `(none)` call that a session claim recorded for
+    // `feat/x`, and live no longer has it. It is placed on `feat/x`, so it must not be counted as
+    // unplaced, and the count must not depend on which branch is requested.
+    let dir = tempfile::tempdir().unwrap();
+    let path = ledger_path(&dir);
+    do_record(
+        &FakeSource(vec![
+            rec("s1", "a", "feat/x", 1),
+            rec("s1", "b", "(none)", 2),
+        ]),
+        "feat/x",
+        &path,
+        "2026-01-01T00:00:00Z",
+    );
+    assert_eq!(
+        from_ledger(None, "feat/x", &path)
+            .unwrap()
+            .summary
+            .total
+            .calls,
+        2
+    );
+    // Live holds only an unrelated, stamped call on `main`.
+    let source = FakeSource(vec![rec("s9", "z", "main", 1)]);
+    let on_feat = from_ledger(Some(&source), "feat/x", &path).unwrap();
+    let on_main = from_ledger(Some(&source), "main", &path).unwrap();
+    assert_eq!(on_feat.summary.total.calls, 2);
+    assert_eq!(on_feat.summary.unstamped, on_main.summary.unstamped);
+    assert_eq!(on_feat.summary.unstamped.calls, 0);
+}
