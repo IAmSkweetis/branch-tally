@@ -87,6 +87,7 @@ fn append_creates_dir_writes_lf_lines_and_is_idempotent() {
             appended: 2,
             skipped: 0,
             unnamed_origins: 0,
+            tally_absent: false,
         }
     );
     let text = std::fs::read_to_string(&p).unwrap();
@@ -99,6 +100,7 @@ fn append_creates_dir_writes_lf_lines_and_is_idempotent() {
             appended: 0,
             skipped: 2,
             unnamed_origins: 0,
+            tally_absent: false,
         }
     );
     assert_eq!(std::fs::read_to_string(&p).unwrap(), text);
@@ -116,6 +118,7 @@ fn append_skips_duplicate_ids_within_one_call() {
             appended: 1,
             skipped: 1,
             unnamed_origins: 0,
+            tally_absent: false,
         }
     );
 }
@@ -489,4 +492,98 @@ fn modes_lists_each_distinct_mode_once_in_stable_order() {
     at("r3", Mode::Claim).unwrap();
     let l = read(&p).unwrap();
     assert_eq!(l.modes(), vec![Mode::Claim, Mode::Timeline]);
+}
+
+/// A checkout that has opted in: `.tally/` exists.
+fn opted_in() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(TALLY_DIR)).unwrap();
+    dir
+}
+
+#[test]
+fn default_append_and_read_round_trip_under_an_existing_tally_dir() {
+    let dir = opted_in();
+    let recs = [selected("r1", "b", 1), selected("r2", "b", 2)];
+    let out = append_default(dir.path(), &recs, "b", Mode::Claim, &Identity, &CLOCK).unwrap();
+    assert_eq!((out.appended, out.skipped, out.tally_absent), (2, 0, false));
+    let again = append_default(dir.path(), &recs, "b", Mode::Claim, &Identity, &CLOCK).unwrap();
+    assert_eq!((again.appended, again.skipped), (0, 2));
+    assert_eq!(read_default(dir.path()).unwrap().entries().len(), 2);
+}
+
+#[test]
+fn default_append_with_no_tally_dir_writes_nothing_and_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let recs = [selected("r1", "b", 1)];
+    let out = append_default(dir.path(), &recs, "b", Mode::Claim, &Identity, &CLOCK).unwrap();
+    assert_eq!((out.appended, out.skipped, out.tally_absent), (0, 0, true));
+    assert!(!dir.path().join(TALLY_DIR).exists());
+    assert!(read_default(dir.path()).unwrap().is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_planted_symlink_at_the_ledger_is_not_followed() {
+    let dir = opted_in();
+    let victim = dir.path().join("victim");
+    std::fs::write(&victim, b"precious").unwrap();
+    std::os::unix::fs::symlink(&victim, path(&dir)).unwrap();
+    let recs = [selected("r1", "b", 1)];
+    let err = append_default(dir.path(), &recs, "b", Mode::Claim, &Identity, &CLOCK).unwrap_err();
+    assert!(matches!(err, LedgerError::Refused { .. }), "{err}");
+    assert!(matches!(
+        read_default(dir.path()).unwrap_err(),
+        LedgerError::Refused { .. }
+    ));
+    assert_eq!(std::fs::read(&victim).unwrap(), b"precious");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_dangling_symlink_at_the_ledger_is_not_created() {
+    let dir = opted_in();
+    let target = dir.path().join("created-by-attacker");
+    std::os::unix::fs::symlink(&target, path(&dir)).unwrap();
+    let recs = [selected("r1", "b", 1)];
+    assert!(append_default(dir.path(), &recs, "b", Mode::Claim, &Identity, &CLOCK).is_err());
+    assert!(!target.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_tally_dir_is_refused_for_the_ledger() {
+    let dir = tempfile::tempdir().unwrap();
+    let elsewhere = dir.path().join("elsewhere");
+    std::fs::create_dir(&elsewhere).unwrap();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, repo.join(TALLY_DIR)).unwrap();
+    let recs = [selected("r1", "b", 1)];
+    assert!(append_default(&repo, &recs, "b", Mode::Claim, &Identity, &CLOCK).is_err());
+    assert!(read_default(&repo).is_err());
+    assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 0);
+}
+
+#[test]
+fn a_directory_or_file_kind_mismatch_at_the_ledger_is_refused() {
+    let dir = opted_in();
+    std::fs::create_dir(path(&dir)).unwrap();
+    assert!(matches!(
+        read_default(dir.path()).unwrap_err(),
+        LedgerError::Refused { .. }
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn the_explicit_path_keeps_following_a_symlink() {
+    // `--ledger <path>` is the user's own choice and keeps today's behaviour.
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().join("real.jsonl");
+    let link = dir.path().join("link.jsonl");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let recs = [selected("r1", "b", 1)];
+    append(&link, &recs, "b", Mode::Claim, None, &Identity, &CLOCK).unwrap();
+    assert_eq!(read(&real).unwrap().entries().len(), 1);
 }

@@ -7,14 +7,16 @@ use std::path::{Path, PathBuf};
 
 use branch_tally_core::git::{FakeGit, Worktree};
 use branch_tally_core::ledger::{
-    CaptureReadStats, Clock, Identity, append_captures, captures_path,
+    CaptureReadStats, Clock, Identity, LedgerTarget, append_captures, captures_path,
 };
 use branch_tally_core::model::{
     BranchBasis, CAPTURE_SCHEMA_VERSION, CaptureEvent, CaptureKind, Dispatch, Harness, Origin,
     Record, RequestId, SessionId, Usage,
 };
 use branch_tally_core::pricing::PriceTable;
-use branch_tally_core::report::{Options, Report, ReportError, record, run};
+use branch_tally_core::report::{
+    Options, Report, ReportError, record, record_at, run, run_from_ledger_at,
+};
 use branch_tally_core::sources::{
     ReadStats, RepoIdentity, RootKind, Source, SourceError, TranscriptRoot,
 };
@@ -95,6 +97,8 @@ fn cap_event(kind: CaptureKind, ts: &str) -> CaptureEvent {
 fn setup() -> (tempfile::TempDir, FakeGit, FakeSource) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_owned();
+    // Captures are written only where the repository has opted in by creating `.tally/` (#94).
+    std::fs::create_dir(root.join(".tally")).unwrap();
     let git = FakeGit::new().with_worktrees(
         root.clone(),
         vec![Worktree {
@@ -201,4 +205,97 @@ fn record_uses_captures_and_reports_their_stats() {
             .iter()
             .all(|s| s.attributed.basis == BranchBasis::Captured)
     );
+}
+
+// The default `.tally/` is guarded (#94): `record_at` and `run_from_ledger_at` with
+// `LedgerTarget::Default` write only where `.tally/` exists and refuse planted links.
+
+fn record_default(
+    git: &FakeGit,
+    source: &FakeSource,
+    root: &Path,
+) -> Result<branch_tally_core::report::Recorded, ReportError> {
+    record_at(
+        git,
+        source,
+        Path::new("/projects"),
+        root,
+        Some("feat/cap"),
+        &Options::default(),
+        &LedgerTarget::Default,
+        &Identity,
+        &Tick,
+    )
+}
+
+fn report_default(
+    git: &FakeGit,
+    source: Option<&FakeSource>,
+    root: &Path,
+) -> Result<Report, ReportError> {
+    run_from_ledger_at(
+        git,
+        source.map(|s| s as &dyn Source),
+        Path::new("/projects"),
+        root,
+        Some("feat/cap"),
+        &Options::default(),
+        &LedgerTarget::Default,
+        PriceTable::bundled(),
+    )
+}
+
+#[test]
+fn default_record_writes_the_ledger_under_an_existing_tally_dir_and_reads_it_back() {
+    let (dir, git, source) = setup();
+    write_captures(dir.path());
+    let recorded = record_default(&git, &source, dir.path()).unwrap();
+    assert_eq!(recorded.outcome.appended, 2);
+    assert!(!recorded.outcome.tally_absent);
+    assert!(dir.path().join(".tally").join("ledger.jsonl").is_file());
+    let report = report_default(&git, None, dir.path()).unwrap();
+    assert_eq!(report.ledger.unwrap().ledger_only, 2);
+}
+
+#[test]
+fn default_record_with_no_tally_dir_does_nothing_and_says_so() {
+    let (dir, git, source) = setup();
+    write_captures(dir.path());
+    std::fs::remove_dir_all(dir.path().join(".tally")).unwrap();
+    let recorded = record_default(&git, &source, dir.path()).unwrap();
+    assert_eq!(recorded.outcome.appended, 0);
+    assert!(recorded.outcome.tally_absent);
+    assert!(!dir.path().join(".tally").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn default_record_refuses_a_planted_ledger_symlink() {
+    let (dir, git, source) = setup();
+    write_captures(dir.path());
+    let victim = dir.path().join("victim");
+    std::fs::write(&victim, b"precious").unwrap();
+    std::os::unix::fs::symlink(&victim, dir.path().join(".tally").join("ledger.jsonl")).unwrap();
+    let err = record_default(&git, &source, dir.path()).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            ReportError::Ledger(branch_tally_core::ledger::LedgerError::Refused { .. })
+        ),
+        "{err}"
+    );
+    assert_eq!(std::fs::read(&victim).unwrap(), b"precious");
+    assert!(report_default(&git, None, dir.path()).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_planted_captures_symlink_is_an_error_not_an_empty_read() {
+    let (dir, git, source) = setup();
+    let victim = dir.path().join("victim");
+    std::fs::write(&victim, b"precious").unwrap();
+    std::os::unix::fs::symlink(&victim, captures_path(dir.path())).unwrap();
+    assert!(live(&git, &source, dir.path(), "feat/cap").is_err());
+    assert!(record_default(&git, &source, dir.path()).is_err());
+    assert_eq!(std::fs::read(&victim).unwrap(), b"precious");
 }

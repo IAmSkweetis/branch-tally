@@ -7,6 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::git::{Git, GitError, Worktree};
+use crate::ledger::LedgerTarget;
 use crate::model::{Costs, DefaultBranchSource, Dispatch, Mode, Record, Summary, WorkBranchRule};
 use crate::pricing::PriceTable;
 use crate::redact::RedactOptions;
@@ -592,6 +593,43 @@ pub fn record(
     redact: &dyn crate::ledger::Redact,
     clock: &dyn crate::ledger::Clock,
 ) -> Result<Recorded, ReportError> {
+    record_at(
+        git,
+        source,
+        projects_root,
+        repo_dir,
+        branch,
+        options,
+        &LedgerTarget::Explicit(ledger_path),
+        redact,
+        clock,
+    )
+}
+
+/// [`record`] with the ledger chosen by a [`LedgerTarget`]: [`LedgerTarget::Default`] writes the
+/// main checkout's `.tally/ledger.jsonl` through the guarded accessor (#94), only when `.tally/`
+/// exists, and says so in `outcome.tally_absent` when it does not; [`LedgerTarget::Explicit`] is
+/// the plain write to a user-supplied path.
+///
+/// # Errors
+///
+/// As [`record`]; a refused symlink is [`ReportError::Ledger`] holding
+/// [`LedgerError::Refused`](crate::ledger::LedgerError::Refused).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "mirrors `run` plus the ledger seams"
+)]
+pub fn record_at(
+    git: &dyn Git,
+    source: &dyn Source,
+    projects_root: &Path,
+    repo_dir: &Path,
+    branch: Option<&str>,
+    options: &Options<'_>,
+    target: &LedgerTarget<'_>,
+    redact: &dyn crate::ledger::Redact,
+    clock: &dyn crate::ledger::Clock,
+) -> Result<Recorded, ReportError> {
     let branch = branch_or_current(git, repo_dir, branch)?;
     let live = read_live(git, source, projects_root, repo_dir)?;
     let mut storage = None;
@@ -605,15 +643,25 @@ pub fn record(
         &branch,
         options,
     );
-    let outcome = crate::ledger::append(
-        ledger_path,
-        &sel.selected,
-        &branch,
-        options.mode,
-        Some(&live.main_checkout),
-        redact,
-        clock,
-    )?;
+    let outcome = match target {
+        LedgerTarget::Default => crate::ledger::append_default(
+            &live.main_checkout,
+            &sel.selected,
+            &branch,
+            options.mode,
+            redact,
+            clock,
+        )?,
+        LedgerTarget::Explicit(path) => crate::ledger::append(
+            path,
+            &sel.selected,
+            &branch,
+            options.mode,
+            Some(&live.main_checkout),
+            redact,
+            clock,
+        )?,
+    };
     Ok(Recorded {
         branch,
         outcome,
@@ -653,16 +701,60 @@ pub fn run_from_ledger(
     ledger_path: &Path,
     table: &PriceTable,
 ) -> Result<Report, ReportError> {
+    run_from_ledger_at(
+        git,
+        source,
+        projects_root,
+        repo_dir,
+        branch,
+        options,
+        &LedgerTarget::Explicit(ledger_path),
+        table,
+    )
+}
+
+/// [`run_from_ledger`] with the ledger chosen by a [`LedgerTarget`]: [`LedgerTarget::Default`]
+/// reads the main checkout's `.tally/ledger.jsonl` through the guarded accessor (#94) and
+/// refuses a symlink, [`LedgerTarget::Explicit`] is the plain read of a user-supplied path.
+///
+/// # Errors
+///
+/// As [`run_from_ledger`]; a refused symlink is [`ReportError::Ledger`].
+#[expect(
+    clippy::too_many_arguments,
+    reason = "mirrors `run` plus the ledger path"
+)]
+pub fn run_from_ledger_at(
+    git: &dyn Git,
+    source: Option<&dyn Source>,
+    projects_root: &Path,
+    repo_dir: &Path,
+    branch: Option<&str>,
+    options: &Options<'_>,
+    target: &LedgerTarget<'_>,
+    table: &PriceTable,
+) -> Result<Report, ReportError> {
     let branch = branch_or_current(git, repo_dir, branch)?;
-    if source.is_none() && !ledger_path.exists() {
-        return Err(ReportError::LedgerMissing {
-            path: ledger_path.to_owned(),
-        });
+    let main_checkout = git.main_checkout(repo_dir);
+    let ledger_path = match target {
+        LedgerTarget::Default => main_checkout.join(crate::ledger::LEDGER_PATH),
+        LedgerTarget::Explicit(path) => path.to_path_buf(),
+    };
+    // The default is checked with `symlink_metadata`, so a planted link counts as present and the
+    // guarded read below refuses it, rather than this check calling the ledger missing.
+    let present = match target {
+        LedgerTarget::Default => std::fs::symlink_metadata(&ledger_path).is_ok(),
+        LedgerTarget::Explicit(_) => ledger_path.exists(),
+    };
+    if source.is_none() && !present {
+        return Err(ReportError::LedgerMissing { path: ledger_path });
     }
-    let read = crate::ledger::read(ledger_path)?;
+    let read = match target {
+        LedgerTarget::Default => crate::ledger::read_default(&main_checkout)?,
+        LedgerTarget::Explicit(_) => crate::ledger::read(&ledger_path)?,
+    };
     // Exactly the entries `record` wrote for this branch; the ledger keys on (request, branch).
     let ledger = read.for_branch(&branch);
-    let main_checkout = git.main_checkout(repo_dir);
     let ledger_records = ledger.to_selected(Some(&main_checkout));
     let mut info = LedgerReport {
         ledger_stats: read.stats().clone(),
