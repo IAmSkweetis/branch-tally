@@ -307,3 +307,93 @@ fn each_row_matches_the_single_branch_ledger_report() {
         assert_eq!(row.is_floor(), single.costs.is_floor());
     }
 }
+
+#[test]
+fn last_call_is_the_latest_instant_across_mixed_offsets() {
+    let f = Fixture::new();
+    // 00:30+01:00 is 23:30Z the day before: earlier than 00:00Z, though later as text.
+    f.record(
+        "feat/a",
+        &[
+            plain("a1", "priced", Some("2026-01-02T00:30:00+01:00")),
+            plain("a2", "priced", Some("2026-01-02T00:00:00Z")),
+        ],
+    );
+    let report = build(&f);
+    assert_eq!(
+        report.rows[0].last_call.as_deref(),
+        Some("2026-01-02T00:00:00Z")
+    );
+}
+
+#[test]
+fn mixed_precision_and_offsets_order_the_series_by_instant() {
+    let f = Fixture::new();
+    // As text ".500Z" sorts before "Z" and "+01:00" after; by instant the order is the offset
+    // one (23:30Z), the whole second (00:00:00Z), then the fractional one (00:00:00.5Z).
+    f.record(
+        "feat/frac",
+        &[plain("f1", "priced", Some("2026-01-02T00:00:00.500Z"))],
+    );
+    f.record(
+        "feat/whole",
+        &[plain("w1", "priced", Some("2026-01-02T00:00:00Z"))],
+    );
+    f.record(
+        "feat/offset",
+        &[plain("o1", "priced", Some("2026-01-02T00:30:00+01:00"))],
+    );
+    let report = build(&f);
+    let rows: Vec<&str> = report.rows.iter().map(|r| r.branch.as_str()).collect();
+    assert_eq!(rows, vec!["feat/offset", "feat/whole", "feat/frac"]);
+    let series: Vec<&str> = report.series.iter().map(|p| p.branch.as_str()).collect();
+    assert_eq!(series, rows);
+}
+
+#[test]
+fn unparsable_ts_never_wins_and_an_all_unparsable_branch_is_undated() {
+    let f = Fixture::new();
+    // "9999..." sorts after every real date as text; it must not be picked as latest.
+    f.record(
+        "feat/mixed",
+        &[
+            plain("m1", "priced", Some("2026-01-02T00:00:00Z")),
+            plain("m2", "priced", Some("9999-not-a-time")),
+        ],
+    );
+    f.record(
+        "feat/junk",
+        &[plain("j1", "priced", Some("9999-not-a-time"))],
+    );
+    let report = build(&f);
+    let mixed = report
+        .rows
+        .iter()
+        .find(|r| r.branch == "feat/mixed")
+        .unwrap();
+    assert_eq!(mixed.last_call.as_deref(), Some("2026-01-02T00:00:00Z"));
+    assert_eq!(mixed.usage.calls, 2, "the unparsable call is still counted");
+    let junk = report
+        .rows
+        .iter()
+        .find(|r| r.branch == "feat/junk")
+        .unwrap();
+    assert_eq!(junk.last_call, None);
+    assert_eq!(report.undated_branches, 1);
+    assert_eq!(report.series.len(), 1);
+    assert_eq!(report.rows.last().unwrap().branch, "feat/junk");
+    assert_eq!(report.totals.usage.calls, 3);
+}
+
+#[test]
+fn overlap_on_an_unpriced_model_is_a_floor_and_names_the_model() {
+    let f = Fixture::new();
+    let shared = plain("shared", "mystery", Some("2026-01-02T00:00:00Z"));
+    f.record("feat/a", std::slice::from_ref(&shared));
+    f.record("feat/b", &[shared]);
+    let report = build(&f);
+    assert_eq!(report.totals.overlap.calls, 1);
+    assert!(report.totals.overlap.cost.is_floor());
+    assert!(report.totals.is_floor());
+    assert_eq!(report.totals.unpriced_models, vec!["mystery".to_owned()]);
+}
