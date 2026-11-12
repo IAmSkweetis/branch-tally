@@ -20,7 +20,7 @@ pub const END: &str = "<!-- token-report:end -->";
 pub const HEADING: &str = "## Token usage";
 
 /// Python's `f"{x:,}"` for a non-negative integer.
-fn n(x: u64) -> String {
+pub(super) fn n(x: u64) -> String {
     let digits = x.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (i, ch) in digits.chars().enumerate() {
@@ -52,7 +52,7 @@ fn when(ts: &str, redacted: bool) -> String {
     clippy::cast_precision_loss,
     reason = "token counts are far below 2^53, where u64 to f64 is exact"
 )]
-fn millions(tokens: u64) -> String {
+pub(super) fn millions(tokens: u64) -> String {
     format!("{:.1}M", tokens as f64 / 1e6)
 }
 
@@ -192,7 +192,7 @@ fn escape_pipes(s: &str) -> String {
 /// HTML gets through. `in_table` also escapes pipes, which GFM unescapes even inside code spans;
 /// outside a table a pipe is harmless and a backslash would show. Empty text stays an empty pair
 /// of backticks, as the reference prints it.
-fn code(s: &str, in_table: bool) -> String {
+pub(super) fn code(s: &str, in_table: bool) -> String {
     let line = one_line(s);
     let body = if in_table { escape_pipes(&line) } else { line };
     let mut longest = 0;
