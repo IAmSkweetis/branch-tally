@@ -428,6 +428,10 @@ fn without_heuristics_divergence(mut payload: Value, strict: bool) -> Value {
     payload
 }
 
+/// Exact claim-mode `unstamped` `(calls, tokens)` per scenario (#60); a scenario not listed must
+/// report none. In `unstamped-main` both calls (`req_2`, `req_5`) stay `(none)`.
+const CLAIM_UNSTAMPED: &[(&str, (u64, u64))] = &[("unstamped-main", (2, 2_221))];
+
 /// The reference's own `(none)` bucket for a scenario, from its strict golden: `(calls, tokens)` of
 /// every call that carries no branch stamp. `(0, 0)` when the golden has no such key.
 fn reference_none(dir: &Path) -> (u64, u64) {
@@ -446,8 +450,8 @@ fn reference_none(dir: &Path) -> (u64, u64) {
 
 /// Checks the #60 `unstamped` object, when present, then removes it so the rest of the payload can
 /// be compared with the golden. The reference never emits it. Strict mode is raw, so its count is
-/// exactly the reference's `(none)` bucket; claim mode can only place calls, never add them, so
-/// it is at most that. A zero count must be omitted.
+/// exactly the reference's `(none)` bucket; claim mode is the exact `CLAIM_UNSTAMPED` entry (never
+/// more than that bucket, since it can only place calls). A zero count must be omitted.
 fn without_unstamped_divergence(mut payload: Value, dir: &Path, strict: bool) -> Value {
     let Some(object) = payload.as_object_mut() else {
         return payload;
@@ -464,13 +468,16 @@ fn without_unstamped_divergence(mut payload: Value, dir: &Path, strict: bool) ->
     if strict {
         assert_eq!((calls, tokens), (raw_calls, raw_tokens), "strict is raw");
     } else {
+        let name = dir.file_name().unwrap().to_string_lossy();
+        let want = CLAIM_UNSTAMPED
+            .iter()
+            .find(|(s, _)| *s == name)
+            .map_or((0, 0), |(_, v)| *v);
+        assert_eq!((calls, tokens), want, "{name}: claim-mode unstamped");
         assert!(
-            calls <= raw_calls && tokens <= raw_tokens,
-            "claim mode counted more unstamped calls than the transcripts hold"
+            want.0 <= raw_calls && want.1 <= raw_tokens,
+            "{name}: expected more unstamped calls than the transcripts hold"
         );
-    }
-    if dir.file_name().is_some_and(|n| n == "unstamped-main") {
-        assert_eq!((calls, tokens), (2, 2_221));
     }
     payload
 }
