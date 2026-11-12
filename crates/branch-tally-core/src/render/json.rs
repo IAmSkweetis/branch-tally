@@ -14,7 +14,7 @@ use crate::model::{
 };
 
 /// Python `json.dumps` string escaping with `ensure_ascii=True`.
-fn string(s: &str) -> String {
+pub(super) fn string(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
     for c in s.chars() {
@@ -46,7 +46,7 @@ fn string(s: &str) -> String {
 /// `round(x, 4)` is correctly rounded on the exact binary value, ties to even. Formatting with
 /// `{:.4}` does the same in Rust, and parsing the text back gives the nearest double, which is
 /// what Python's `round` returns. The shortest round-trip digits then come from `{:e}`.
-fn float(x: f64) -> String {
+pub(super) fn float(x: f64) -> String {
     if x.is_nan() {
         return "NaN".to_owned();
     }
