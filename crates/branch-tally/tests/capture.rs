@@ -54,6 +54,13 @@ fn repo() -> Repo {
     }
 }
 
+/// A repository that has opted in to `.tally/`: capture never creates the directory (#94).
+fn opted_in() -> Repo {
+    let r = repo();
+    fs::create_dir(r.root.join(".tally")).unwrap();
+    r
+}
+
 impl Repo {
     fn add_worktree(&self, dir_name: &str, branch: &str) -> PathBuf {
         let path = self.root.join(".claude").join("worktrees").join(dir_name);
@@ -120,7 +127,7 @@ fn text(bytes: &[u8]) -> String {
 
 #[test]
 fn session_start_writes_one_id_only_event_quietly() {
-    let r = repo();
+    let r = opted_in();
     let out = run(&payload("SessionStart", Some(&r.root), None), &r.root);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert_eq!(text(&out.stdout), "");
@@ -144,7 +151,7 @@ fn session_start_writes_one_id_only_event_quietly() {
 
 #[test]
 fn stop_maps_to_stop_kind() {
-    let r = repo();
+    let r = opted_in();
     let out = run(&payload("Stop", Some(&r.root), None), &r.root);
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(r.captures()[0]["kind"], "stop");
@@ -152,7 +159,7 @@ fn stop_maps_to_stop_kind() {
 
 #[test]
 fn subagent_stop_names_the_agent_worktree_branch() {
-    let r = repo();
+    let r = opted_in();
     r.add_worktree("agent-abc123", "feat/from-agent");
     let out = run(
         &payload("SubagentStop", Some(&r.root), Some("abc123")),
@@ -168,7 +175,7 @@ fn subagent_stop_names_the_agent_worktree_branch() {
 
 #[test]
 fn agent_worktree_name_matches_case_insensitively() {
-    let r = repo();
+    let r = opted_in();
     r.add_worktree("agent-AbC123", "feat/case");
     let out = run(
         &payload("SubagentStop", Some(&r.root), Some("abc123")),
@@ -180,7 +187,7 @@ fn agent_worktree_name_matches_case_insensitively() {
 
 #[test]
 fn worktree_session_captures_land_in_the_main_checkout() {
-    let r = repo();
+    let r = opted_in();
     let wt = r.add_worktree("agent-zzz", "feat/wt");
     let out = run(&payload("Stop", Some(&wt), None), &wt);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
@@ -192,7 +199,7 @@ fn worktree_session_captures_land_in_the_main_checkout() {
 
 #[test]
 fn subagent_stop_from_a_worktree_cwd_uses_that_worktrees_branch() {
-    let r = repo();
+    let r = opted_in();
     let wt = r.add_worktree("not-an-agent-dir", "feat/other");
     let out = run(&payload("SubagentStop", Some(&wt), Some("nomatch")), &wt);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
@@ -203,7 +210,7 @@ fn subagent_stop_from_a_worktree_cwd_uses_that_worktrees_branch() {
 
 #[test]
 fn removed_worktree_gives_no_worktree_branch() {
-    let r = repo();
+    let r = opted_in();
     let wt = r.add_worktree("agent-gone", "feat/gone");
     git(
         &r.root,
@@ -220,7 +227,7 @@ fn removed_worktree_gives_no_worktree_branch() {
 
 #[test]
 fn main_checkout_cwd_with_unknown_agent_has_no_worktree_branch() {
-    let r = repo();
+    let r = opted_in();
     let out = run(
         &payload("SubagentStop", Some(&r.root), Some("nobody")),
         &r.root,
@@ -231,7 +238,7 @@ fn main_checkout_cwd_with_unknown_agent_has_no_worktree_branch() {
 
 #[test]
 fn absent_cwd_falls_back_to_the_process_cwd() {
-    let r = repo();
+    let r = opted_in();
     let out = run(&payload("SessionStart", None, None), &r.root);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert_eq!(r.captures()[0]["branch"], "main");

@@ -66,6 +66,7 @@ fn record_writes_no_message_content_and_no_cwd() {
 #[test]
 fn record_defaults_to_the_checkout_ledger() {
     let world = World::scenario("main-then-branch");
+    fs::create_dir(world.repo.join(".tally")).unwrap();
     let out = world.run(&["record", BRANCH]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     let default = world.repo.join(".tally").join("ledger.jsonl");
@@ -246,6 +247,7 @@ fn the_default_ledger_is_at_the_repo_root_when_run_from_a_subdirectory() {
     let world = World::scenario("main-then-branch");
     let sub = world.repo.join("deep").join("er");
     fs::create_dir_all(&sub).unwrap();
+    fs::create_dir(world.repo.join(".tally")).unwrap();
     let out = world.run_in(&sub, &["record", BRANCH]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     let root_ledger = world.repo.join(".tally").join("ledger.jsonl");
@@ -277,6 +279,7 @@ fn the_default_ledger_in_a_linked_worktree_is_that_worktrees_root() {
     let wt = common::canon(&wt);
     let sub = wt.join("src");
     fs::create_dir_all(&sub).unwrap();
+    fs::create_dir(wt.join(".tally")).unwrap();
     let out = world.run_in(&sub, &["record", BRANCH]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert!(

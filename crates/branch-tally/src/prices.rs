@@ -10,9 +10,10 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use branch_tally_core::git::{Git, SystemGit, normalize_path};
+use branch_tally_core::ledger::{LedgerError, TallyDir};
 use branch_tally_core::model::PriceTableSource;
 use branch_tally_core::pricing::{
-    FeedError, FsText, PriceFeed, PriceTable, UpdateError, fetch_table, resolve,
+    FeedError, FsText, PriceFeed, PriceTable, TextSource, UpdateError, fetch_table, resolve,
 };
 
 use crate::cli::{PricesCommand, ShowArgs};
@@ -28,10 +29,40 @@ const FEED_URL_ENV: &str = "BRANCH_TALLY_PRICES_URL";
 /// The largest feed accepted. The real file is a few MB; this only stops a runaway response.
 const MAX_FEED_BYTES: u64 = 64 * 1024 * 1024;
 
+/// The override's file name inside `.tally/`.
+const PRICES_FILE: &str = "prices.toml";
+
+/// Reads the override through [`TallyDir`] (no symlink is followed, `.tally/` is never created,
+/// #94) and every other path, the per-user cache, as a plain file.
+struct GuardedText<'a> {
+    main: &'a Path,
+    override_path: &'a Path,
+}
+
+impl TextSource for GuardedText<'_> {
+    fn read(&self, path: &Path) -> std::io::Result<Option<String>> {
+        if path != self.override_path {
+            return FsText.read(path);
+        }
+        let refused = |e: LedgerError| std::io::Error::other(e.to_string());
+        let Some(tally) = TallyDir::open(self.main).map_err(refused)? else {
+            return Ok(None);
+        };
+        let Some(bytes) = tally.read(PRICES_FILE).map_err(refused)? else {
+            return Ok(None);
+        };
+        String::from_utf8(bytes)
+            .map(Some)
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "not UTF-8"))
+    }
+}
+
 /// Where the override and cache files are looked for.
 pub(crate) struct Locations {
     /// `<main checkout>/.tally/prices.toml`.
     pub(crate) override_path: PathBuf,
+    /// The main checkout, whose `.tally/` the override is read through without following links.
+    main: PathBuf,
     /// The per-user cache file; `None` when the platform's cache directory cannot be determined.
     pub(crate) cache_path: Option<PathBuf>,
 }
@@ -40,7 +71,8 @@ impl Locations {
     pub(crate) fn for_repo(repo: &Path) -> Self {
         let main = SystemGit.main_checkout(repo);
         Self {
-            override_path: main.join(".tally").join("prices.toml"),
+            override_path: main.join(".tally").join(PRICES_FILE),
+            main,
             cache_path: cache_path(),
         }
     }
@@ -50,7 +82,11 @@ impl Locations {
 pub(crate) fn resolve_table(locations: &Locations) -> Result<PriceTable, String> {
     // With no cache directory the cache layer is skipped: an empty path is never found.
     let cache = locations.cache_path.as_deref().unwrap_or(Path::new(""));
-    resolve(&FsText, &locations.override_path, cache)
+    let fs = GuardedText {
+        main: &locations.main,
+        override_path: &locations.override_path,
+    };
+    resolve(&fs, &locations.override_path, cache)
         .map(|resolved| resolved.table)
         .map_err(|e| one_line(&e.to_string()))
 }
