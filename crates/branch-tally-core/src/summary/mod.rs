@@ -179,6 +179,8 @@ pub fn summarize(
         sessions,
         subagents,
         work_branch: None,
+        // Repository-wide, so the caller sets it from the full attributed set.
+        unstamped: crate::model::Unstamped::default(),
         redacted: false,
     }
 }

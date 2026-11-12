@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use super::{SessionId, SubagentSummary};
+use super::{AttributedRecord, BranchBasis, SessionId, SubagentSummary};
 
 /// Summed token counts (`Bucket` in `reference/token_report.py`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -228,6 +228,40 @@ pub struct Footnote {
     pub worktree_sessions: u64,
 }
 
+/// The branch attribution gives a record whose transcript carried no `gitBranch` stamp.
+const NO_BRANCH: &str = "(none)";
+
+/// Calls that carry no branch stamp and that nothing could place on a branch (#60): the record's
+/// assigned branch is still the literal `(none)` after attribution, on the raw stamp
+/// ([`BranchBasis::Stamped`]). Counted over the **full attributed set before selection**, so it is
+/// repository-wide and the same for every branch's report.
+///
+/// Disjoint from the other uncertainty counts: a subagent record with no dispatch link
+/// ([`BranchBasis::SubagentUnlinked`]) is in [`SubagentSummary`]'s `unattributed_*`, and a
+/// timeline-ambiguous record is in the ambiguous heuristic count, so neither is counted again here.
+/// In the ledger-only path the full set is unknown and this stays zero (not "none exist").
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Unstamped {
+    /// Calls with no branch stamp that were not attributed to any branch.
+    pub calls: u64,
+    /// Tokens of those calls (same definition as [`Bucket::tokens`]).
+    pub tokens: u64,
+}
+
+impl Unstamped {
+    /// Counts the records in `attributed` whose branch is `(none)` on the raw stamp.
+    #[must_use]
+    pub fn count(attributed: &[AttributedRecord]) -> Self {
+        attributed
+            .iter()
+            .filter(|a| a.basis == BranchBasis::Stamped && a.branch == NO_BRANCH)
+            .fold(Self::default(), |acc, a| Self {
+                calls: acc.calls + 1,
+                tokens: acc.tokens + a.record.usage.tokens(),
+            })
+    }
+}
+
 /// The three tables `summarize` returns, each in first-seen order, plus what render derives.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Summary {
@@ -253,6 +287,11 @@ pub struct Summary {
     /// Absent in older serialized data.
     #[serde(default)]
     pub work_branch: Option<WorkBranchRule>,
+    /// Calls with no branch stamp that no branch was assigned (#60). Repository-wide. Zero when
+    /// there are none, and also when the count is unknown (ledger-only). Absent in older
+    /// serialized data.
+    #[serde(default)]
+    pub unstamped: Unstamped,
     /// `true` when `redact` replaced identifying detail. Absent in older serialized data.
     #[serde(default)]
     pub redacted: bool,
@@ -261,6 +300,47 @@ pub struct Summary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{Harness, Record, RequestId, Usage};
+
+    fn attributed(branch: &str, basis: BranchBasis, output: u64) -> AttributedRecord {
+        let usage = Usage {
+            output,
+            ..Usage::default()
+        };
+        AttributedRecord {
+            record: Record::new(
+                Harness::ClaudeCode,
+                SessionId::new("s"),
+                RequestId::new("r"),
+                usage,
+            ),
+            branch: branch.to_owned(),
+            basis,
+            subagent: None,
+        }
+    }
+
+    #[test]
+    fn unstamped_counts_only_none_on_the_raw_stamp() {
+        let recs = [
+            attributed("(none)", BranchBasis::Stamped, 7),
+            attributed("(none)", BranchBasis::Stamped, 3),
+            // Recovered, or on a real branch: placed, not unstamped.
+            attributed("feat/x", BranchBasis::OriginRecovered, 100),
+            attributed("feat/x", BranchBasis::Stamped, 100),
+            // Counted by their own uncertainty counts instead.
+            attributed("(none)", BranchBasis::SubagentUnlinked, 50),
+            attributed("(none)", BranchBasis::TimelineAmbiguous, 60),
+        ];
+        assert_eq!(
+            Unstamped::count(&recs),
+            Unstamped {
+                calls: 2,
+                tokens: 10
+            }
+        );
+        assert_eq!(Unstamped::count(&[]), Unstamped::default());
+    }
 
     #[test]
     fn bucket_tokens_exclude_thinking_and_calls() {

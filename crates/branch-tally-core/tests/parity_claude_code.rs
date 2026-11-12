@@ -90,7 +90,7 @@ const CLAIM_DIVERGENCES: &[(&str, &str, &str, &str)] = &[
         "main",
         "#37",
         "the reference recovers unstamped main-checkout calls onto the branch the main checkout \
-         has checked out now; they stay (none) and are reported as unattributed",
+         has checked out now; they stay (none), and the report counts them in `unstamped`",
     ),
 ];
 
@@ -428,6 +428,53 @@ fn without_heuristics_divergence(mut payload: Value, strict: bool) -> Value {
     payload
 }
 
+/// The reference's own `(none)` bucket for a scenario, from its strict golden: `(calls, tokens)` of
+/// every call that carries no branch stamp. `(0, 0)` when the golden has no such key.
+fn reference_none(dir: &Path) -> (u64, u64) {
+    let golden = read_json(&dir.join("goldens").join("strict.json"));
+    let Some(none) = golden.get("(none)") else {
+        return (0, 0);
+    };
+    let tokens = none["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| num(s, "tokens"))
+        .sum();
+    (num(none, "totalCalls"), tokens)
+}
+
+/// Checks the #60 `unstamped` object, when present, then removes it so the rest of the payload can
+/// be compared with the golden. The reference never emits it. Strict mode is raw, so its count is
+/// exactly the reference's `(none)` bucket; claim mode can only place calls, never add them, so
+/// it is at most that. A zero count must be omitted.
+fn without_unstamped_divergence(mut payload: Value, dir: &Path, strict: bool) -> Value {
+    let Some(object) = payload.as_object_mut() else {
+        return payload;
+    };
+    let got = object.remove("unstamped");
+    let (raw_calls, raw_tokens) = reference_none(dir);
+    let (calls, tokens) = got.as_ref().map_or((0, 0), |u| {
+        assert_eq!(u.as_object().unwrap().len(), 2, "unexpected unstamped keys");
+        (num(u, "calls"), num(u, "tokens"))
+    });
+    if got.is_some() {
+        assert!(calls > 0, "a zero unstamped count must be omitted");
+    }
+    if strict {
+        assert_eq!((calls, tokens), (raw_calls, raw_tokens), "strict is raw");
+    } else {
+        assert!(
+            calls <= raw_calls && tokens <= raw_tokens,
+            "claim mode counted more unstamped calls than the transcripts hold"
+        );
+    }
+    if dir.file_name().is_some_and(|n| n == "unstamped-main") {
+        assert_eq!((calls, tokens), (2, 2_221));
+    }
+    payload
+}
+
 /// Checks the #6 `subagents` object, when present, adds up on its own terms, then removes it so
 /// the rest of the payload can be compared with the golden. Strict mode never carries it (it
 /// stays raw), and the reference never has it.
@@ -474,8 +521,12 @@ fn rust_payload(dir: &Path, manifest: &Value, branch: &str, strict: bool) -> Val
     ) {
         Ok(r) => without_subagent_divergence(
             without_heuristics_divergence(
-                without_price_divergences(
-                    serde_json::from_str(&render::json(&r.summary, &r.costs)).unwrap(),
+                without_unstamped_divergence(
+                    without_price_divergences(
+                        serde_json::from_str(&render::json(&r.summary, &r.costs)).unwrap(),
+                    ),
+                    dir,
+                    strict,
                 ),
                 strict,
             ),

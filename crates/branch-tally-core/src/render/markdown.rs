@@ -480,6 +480,17 @@ pub fn markdown(summary: &Summary, costs: &Costs, show_cost: bool) -> String {
     o.push(note);
     o.push(String::new());
 
+    // #60: usage no branch could claim. Repository-wide, so it is not part of this branch's total.
+    if summary.unstamped.calls > 0 {
+        o.push(format!(
+            "<sub>{} call(s) / {} tokens in this repository carry no branch stamp and are not \
+             attributed to any branch.</sub>",
+            n(summary.unstamped.calls),
+            n(summary.unstamped.tokens),
+        ));
+        o.push(String::new());
+    }
+
     subagent_section(summary, costs, show_cost, &mut o);
 
     attribution_details(summary, &mut o);

@@ -216,6 +216,19 @@ expected behaviour directly, next to the same issue number. `malformed-and-keyle
   `defaultBranch` and `source`, or `custom` with `pattern`), and the footnote names the default
   branch when it did not come from `origin/HEAD` and any custom pattern; neither appears in claim
   or strict output.
+- Output divergence #60 (unstamped calls): the JSON report has a top-level
+  `"unstamped": {"calls", "tokens"}` object that the reference lacks, and the Markdown gains a
+  footer line "N call(s) / T tokens in this repository carry no branch stamp and are not attributed
+  to any branch". Both are omitted when N is 0. The count is repository-wide (taken over the full
+  attributed set before selection), so it is the same for every branch's report; in `unstamped-main`
+  it is 2 calls (`req_2`, `req_5`) and 2,221 tokens on `main` and on `feat/x`. Strict mode reports
+  it too (it is raw). It counts records whose branch is `(none)` on the raw stamp, so it is disjoint
+  from the subagent `unattributed*` count and from the ambiguous count. A ledger-only report cannot
+  know it and omits it (the CLI already notes that unattributed counts are unavailable from the
+  ledger). No `CLAIM_DIVERGENCES` pair is added. `without_unstamped_divergence` (and
+  `strip_unstamped_divergence` in `branch-tally/tests/report.rs`) removes only that key, after
+  checking it against the strict golden's `(none)` bucket: exactly equal in strict mode, at most
+  that in claim mode, never a zero, and pinned to 2 / 2,221 for `unstamped-main`.
 - A redacted summary (`Summary.redacted`, #9) is rendered by reading that flag only. JSON gains
   `"redacted": true` right after `mode`, omitted when false so parity with the reference holds.
   Markdown adds the segment `identifiers redacted` to the footnote (with or without cost), and
