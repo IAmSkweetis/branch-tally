@@ -38,20 +38,26 @@ $ARGUMENTS
 
 Only this branch is pushed, never an agent's worktree branch.
 
-## Step 1: Derive the kind label from the branch
+## Step 1: Derive the kind label from the commit type
 
-| Branch prefix | Label |
-| ------------- | ----- |
-| `feat/`, `feature/` | `enhancement` |
-| `fix/`, `bugfix/`, `hotfix/` | `bug` |
-| `chore/` with only `docs:` commits | `documentation` |
-| `chore/` otherwise, `release/` | none: this repository has no matching label |
+The label follows the commit type of the PR title (Step 3), which the branch prefix narrows down:
 
-Check with `git log --oneline origin/main..HEAD`. If the branch matches no prefix, ask with
-`AskUserQuestion`. Don't guess and don't rename the branch.
+| Commit type | Label |
+| ----------- | ----- |
+| `feat` | `enhancement` |
+| `fix` | `bug` |
+| `docs` | `documentation` |
+| `build`, `ci`, `test`, `perf`, `refactor` | the label of the same name |
+| `chore`, `style` | `chore` |
+
+A `feat/` or `feature/` branch is `feat`, and a `fix/`, `bugfix/` or `hotfix/` branch is `fix`. A
+`chore/` branch can be any of the other types: read `git log --oneline origin/main..HEAD`, and when
+its commits mix types, use the type the title will carry. If the branch matches no prefix, or the
+type is unclear, ask with `AskUserQuestion`. Don't guess and don't rename the branch. A `release/`
+branch gets no label.
 
 Never create a label without being asked. If none fits, open the PR unlabelled rather than
-substituting a wrong one. Also apply `roadmap` when the linked issue carries it.
+substituting a wrong one. When the linked issue has a milestone, give the PR the same one.
 
 ## Step 2: Issue link
 
@@ -108,7 +114,7 @@ Write the body to a temp file outside the repository and pass `--body-file`. Inl
 mangles backticks and the markers.
 
 ```bash
-gh pr create --title "<title>" --body-file <path> --label "<kind>" [--label roadmap]
+gh pr create --title "<title>" --body-file <path> --label "<kind>" [--milestone v1]
 ```
 
 Don't pass `--project` to `gh pr create`. A missing token scope would fail the whole command. Add

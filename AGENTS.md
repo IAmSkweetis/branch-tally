@@ -6,7 +6,8 @@ publishes a cost table on the PR. That includes work done by subagents in git wo
 is the first harness supported; others follow. It is written in Rust and ships as a CLI, a Claude
 Code plugin/skill and a GitHub Action.
 
-The roadmap is GitHub issue #16. Each item is a sub-issue labelled `roadmap`.
+The roadmap is the GitHub milestone `v1`. Each item is an issue in that milestone, with an issue
+type (Feature, Bug or Task), a kind label and a Priority.
 
 ## Governance
 
@@ -133,7 +134,7 @@ describes, update the page. When you write a new page, add a row here and in the
 | Page | Read it when |
 | ---- | ------------ |
 | [project_layout.md](docs/references/project_layout.md) | Adding a file and deciding where it goes: which crate, which module, where its tests and fixtures live. |
-| [dev_workflow.md](docs/references/dev_workflow.md) | Naming a branch, writing a commit message, running or adding a `just` recipe, opening a PR, or asking what has to be green before something lands. |
+| [dev_workflow.md](docs/references/dev_workflow.md) | Naming a branch, writing a commit message, filing or labelling an issue, running or adding a `just` recipe, opening a PR, or asking what has to be green before something lands. |
 | [testing.md](docs/references/testing.md) | Writing or running a test, adding a fixture, touching a snapshot, or checking parity against the Python reference. |
 | [agent_workflow.md](docs/references/agent_workflow.md) | Dispatching a subagent, running work in parallel worktrees, reading an agent report, or routing an escalation. |
 | [agents.md](docs/references/agents.md) | Deciding which agent owns a file, or what a given agent may write. |

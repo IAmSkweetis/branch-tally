@@ -12,7 +12,7 @@ Linux, macOS and Windows, plus two optional Claude Code plugins whose hooks keep
 after transcripts are purged (see [Claude Code integration](integration/claude-code.md)).
 
 > **Status: pre-alpha.** The flags, output and ledger format may still change between releases.
-> Follow the [roadmap](https://github.com/IAmSkweetis/branch-tally/issues/16) for what is planned.
+> Follow the [roadmap](https://github.com/IAmSkweetis/branch-tally/milestone/1) for what is planned.
 
 ## The problem
 

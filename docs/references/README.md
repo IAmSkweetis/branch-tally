@@ -14,7 +14,7 @@ with the code is worse than no page, because people trust it.
 | Page | Read it when |
 | ---- | ------------ |
 | [project_layout.md](project_layout.md) | Adding a file and deciding where it goes: which crate, which module, where its tests and fixtures live. |
-| [dev_workflow.md](dev_workflow.md) | Naming a branch, writing a commit message, running or adding a `just` recipe, opening a PR, or asking what has to be green before something lands. |
+| [dev_workflow.md](dev_workflow.md) | Naming a branch, writing a commit message, filing or labelling an issue, running or adding a `just` recipe, opening a PR, or asking what has to be green before something lands. |
 | [testing.md](testing.md) | Writing or running a test, adding a fixture, touching a snapshot, or checking parity against the Python reference. |
 | [agent_workflow.md](agent_workflow.md) | Dispatching a subagent, running work in parallel worktrees, reading an agent report, or routing an escalation. |
 | [agents.md](agents.md) | Deciding which agent owns a file, or what a given agent may write. |
@@ -36,8 +36,9 @@ Not everything is a reference page:
 - **`docs/decisions/`**: architecture decision records, one per significant choice, numbered and
   never rewritten. A later decision supersedes an earlier one rather than editing it. The first is
   the language decision, [0001-language.md](../decisions/0001-language.md).
-- **GitHub issues**: the roadmap (#16 and its sub-issues). Planned work lives there, not in a
-  `ROADMAP.md`.
+- **GitHub issues**: the roadmap (the `v1` milestone). Planned work lives there, not in a
+  `ROADMAP.md`. How issues are typed, labelled and prioritised is in
+  [dev_workflow.md](dev_workflow.md#issues).
 - **`.claude/skills/`**: procedures rather than decisions.
   - `feature` orchestrates a piece of work from interview to merge.
   - `worktree-bootstrap` prepares a worktree.
