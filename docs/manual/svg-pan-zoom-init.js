@@ -102,6 +102,15 @@
             if (box.width === 0 || box.height === 0) {
                 throw new Error('the diagram is not laid out yet');
             }
+            // Mermaid sizes the <svg> only by width="100%" and a max-width; its height comes from
+            // the viewBox's aspect ratio. svg-pan-zoom removes the viewBox, which collapses the
+            // <svg> to the browser's default 150px height: a taller diagram is clipped, and the
+            // controls, placed from the height measured before, land in the clipped part. Pin the
+            // ratio first so the <svg> keeps its height.
+            const viewBox = svg.viewBox && svg.viewBox.baseVal;
+            if (viewBox && viewBox.width > 0 && viewBox.height > 0) {
+                svg.style.aspectRatio = `${viewBox.width} / ${viewBox.height}`;
+            }
             enhance(svg, svgPanZoom(svg, options));
             svg.dataset.panZoom = 'ready';
         } catch (error) {
