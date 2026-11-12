@@ -23,7 +23,10 @@ The full option list is in the [CLI reference](cli.md#branch-tally-project).
 fresh clone as on the machine that did the work. The default ledger is `.tally/ledger.jsonl` at the
 root of the git checkout that holds the current directory, or the `--repo` directory. `--ledger
 <PATH>` reads another file. A missing ledger is an error (`no ledger at <path>`, exit 1), not an
-empty report.
+empty report, and so is a checkout with no `.tally/` directory. The default ledger is never read
+through a symbolic link: a linked `.tally` or `.tally/ledger.jsonl` stops `project` with exit 1
+(see [Symbolic links are refused](ledger.md#symbolic-links-are-refused)). A file named with
+`--ledger` is read as given.
 
 That makes the project total **the total of what was recorded**. A branch whose usage nobody ran
 [`record`](ledger.md#record) for, or whose ledger lines were never committed and merged, is not in
@@ -115,7 +118,8 @@ A cost that leaves something out is shown as a floor, a lower bound, never as an
   row or any chart point. A note names the unpriced models.
 
 To make a floor exact, give the model a price: run `branch-tally prices update` if the model is
-newer than your price table, or add it to a `.tally/prices.toml` override. See
+newer than your price table, or add it to a `.tally/prices.toml` override in the main checkout's
+`.tally/` directory, as a regular file, not a link. See
 [Which price table is used](cli.md#which-price-table-is-used).
 
 Token counts can be floors too. When some calls could not be placed on a branch with certainty, a

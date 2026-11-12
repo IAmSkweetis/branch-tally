@@ -12,7 +12,8 @@ transcripts are purged.
 
 The files an integration writes are the same whichever harness wrote them. Each line of
 `.tally/captures.jsonl` and `.tally/ledger.jsonl` names its harness in a `harness` field, and
-reports read both files the same way.
+reports read both files the same way. Either is written only in a repository that has
+[opted in](../ledger.md#opt-the-repository-in) by having a `.tally/` directory.
 
 ## Publishing the report
 

@@ -292,6 +292,8 @@ identifiers.
 | `No Claude Code transcript directory at <path>` | `~/.claude/projects` does not exist on this machine. |
 | `No ledger records found for branch '…'. …` | `--from-ledger` found no lines for the branch. |
 | `no ledger at <path>` | `--from-ledger` and the ledger file does not exist. |
+| `refusing to use <path>: it is …` | A default `.tally/` path is a symbolic link or the wrong kind of file. See [Symbolic links are refused](ledger.md#symbolic-links-are-refused). |
+| `cannot read price table <path>: …` | The price override or cache could not be read. A refused `.tally/prices.toml` shows here; see [Which price table is used](#which-price-table-is-used). |
 | `config file <path> …` | The config file is invalid. See [Config reference](config.md#errors). |
 
 ## `branch-tally record`
@@ -317,6 +319,24 @@ the [ledger](ledger.md). It writes only the ledger file: no `git add`, no commit
 
 The same conflict rules as `report` apply to the mode flags and `--work-branch`. From the config
 file, `record` uses `mode` and `work-branch` and ignores the rest.
+
+`record` never creates `.tally/`. With the default ledger it writes only when the checkout already
+has a `.tally/` directory (see [Opt the repository in](ledger.md#opt-the-repository-in)).
+Otherwise it writes and creates nothing, and exits 0 with this on stdout instead of the
+`appended` line:
+
+```text
+no .tally/ directory: nothing recorded (create it to opt in)
+```
+
+An explicit `--ledger <PATH>` is written whether or not `.tally/` exists, and a symbolic link
+there is followed.
+
+| Message (stderr, exit 1) | Cause |
+| ------------------------ | ----- |
+| `refusing to use <path>: it is …` | `.tally`, `.tally/ledger.jsonl` or `.tally/captures.jsonl` is a symbolic link or the wrong kind of file. Nothing is written. See [Symbolic links are refused](ledger.md#symbolic-links-are-refused). |
+
+`record` also fails with the transcript errors listed under [Common errors](#common-errors).
 
 ## `branch-tally project`
 
@@ -351,7 +371,9 @@ is printed on stdout.
 
 | Message (stderr, exit 1) | Cause |
 | ------------------------ | ----- |
-| `no ledger at <path>` | The ledger file does not exist. |
+| `no ledger at <path>` | The ledger file does not exist, or the checkout has no `.tally/` directory. |
+| `refusing to use <path>: it is …` | The default `.tally/ledger.jsonl`, or `.tally` itself, is a symbolic link or the wrong kind of file. It is not read. `--ledger <PATH>` is exempt. See [Symbolic links are refused](ledger.md#symbolic-links-are-refused). |
+| `cannot read price table <path>: …` | The price override or cache could not be read, including a refused `.tally/prices.toml`. See [Which price table is used](#which-price-table-is-used). |
 | `cannot place the default ledger: <path> is not inside a git checkout …; pass --ledger <path>` | Outside a git checkout there is no default ledger, so `--ledger` is required. |
 | `cannot write graph <path>: <error>` | `--export-graph` could not write the file, for example because its directory does not exist. |
 | `config file <path> …` | The config file is missing (with `--config`) or invalid. See [Config reference](config.md#errors). |
@@ -380,10 +402,20 @@ described in [Hook captures](captures.md).
   branch of the payload's own checkout when that is a linked worktree. Otherwise it is absent. It
   is never guessed.
 - `SessionEnd` and `SubagentStart` payloads are accepted and ignored.
+- It writes only when the main checkout already has a `.tally/` directory, and never creates it
+  (see [Opt the repository in](ledger.md#opt-the-repository-in)). Without one it writes nothing,
+  prints nothing and exits 0.
 - It prints nothing on success. On failure (malformed payload, not a git checkout, a detached HEAD,
   a git or write error) it prints one short fixed line to stderr and exits 1. The hook command ends
   in `; exit 0`, so a failure never blocks the session; that also covers a command-line usage error,
   which exits 2.
+- A symbolic link at `.tally` or `.tally/captures.jsonl`, or a captures path that is not a regular
+  file, is refused, not followed. It writes nothing, and exits 1 with this line on stderr, which
+  names no path:
+
+  ```text
+  capture: refusing to write: .tally/ or its captures file is a symlink or not a regular file
+  ```
 
 ## `branch-tally prices update`
 
@@ -437,6 +469,18 @@ A model id is priced by the longest model key that is a prefix of it, so `claude
 prices `claude-fable-5-1[1m]`. A model that matches nothing is unpriced, and the report says so.
 A malformed override or cache stops the report with a message naming the file; it is never
 skipped silently.
+
+The override is read only from a real `.tally/` directory, and never through a symbolic link (see
+[Symbolic links are refused](ledger.md#symbolic-links-are-refused)). With no `.tally/` directory
+there is no override, and the next table in the list is used. When `.tally` or
+`.tally/prices.toml` is a link, or is the wrong kind of file, `report`, `project` and `prices show`
+stop with exit 1 and this message, which names the file but not the reason:
+
+```text
+cannot read price table <main checkout>/.tally/prices.toml: other error
+```
+
+Replace the link with a real file, or remove it.
 
 The override and the cache share one TOML format:
 

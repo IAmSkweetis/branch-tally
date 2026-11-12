@@ -22,6 +22,20 @@ can turn off a whole plugin but not one hook inside it.
   the hooks do nothing.
 - **Start Claude Code inside the repository.** The hooks run in the session's working directory.
   In a directory that is not a git checkout they find nothing to record.
+- **Opt the repository in.** Installing a plugin does not turn recording on. The hooks write only
+  in a repository that already has a `.tally/` directory, and they never create it. Create and
+  commit it once, from the repository's root:
+
+  ```sh
+  mkdir .tally
+  touch .tally/.gitkeep
+  git add .tally/.gitkeep
+  git commit -m "chore: opt in to branch-tally"
+  ```
+
+  In a repository without it, both hooks write nothing and exit 0: `capture` prints nothing, and
+  `record` prints only `no .tally/ directory: nothing recorded (create it to opt in)`. See
+  [Opt the repository in](../ledger.md#opt-the-repository-in).
 
 ## Install
 
@@ -76,6 +90,10 @@ flowchart LR
     L -. "report --from-ledger" .-> R
 ```
 
+Both hooks write only into a `.tally/` directory that already exists (see
+[Before you install](#before-you-install)), and never through a symbolic link (see
+[Symbolic links are refused](../ledger.md#symbolic-links-are-refused)).
+
 **`branch-tally-capture`** runs `branch-tally capture` when a session starts, when a subagent
 finishes and when the main agent stops. Each run appends one line to `.tally/captures.jsonl` in the
 repository's main checkout: the session id, the agent id for a subagent, the branch, the kind of
@@ -87,7 +105,8 @@ branch's attributed usage to `.tally/ledger.jsonl`, exactly as running `record` 
 - It records the branch that the session's directory has checked out when the session ends, in the
   attribution mode from your [config file](../config.md) (`claim` by default).
 - The ledger it writes is at the root of the checkout the session ran in. A session in a git
-  worktree writes the worktree's own ledger, which merges back with the worktree's branch.
+  worktree writes the worktree's own ledger, which merges back with the worktree's branch. That
+  needs `.tally/` in the worktree's own checkout, which it has when the directory is committed.
 - It writes the file only. It does not `git add` or commit. Commit the ledger yourself, as
   described in [Persisting the Ledger](../ledger.md).
 - It is safe to run every session. `record` appends only the calls the ledger does not already
@@ -136,10 +155,13 @@ runs `branch-tally capture`, which reads the hook payload Claude Code passes on 
    Keep the `; exit 0`. It is what stops a failed capture from blocking `Stop` or `SubagentStop`
    (see [The hooks never block a session](#the-hooks-never-block-a-session)).
 
-2. Start Claude Code in the repository and work as usual. The first capture creates
-   `.tally/captures.jsonl` in the main checkout.
+2. Opt the repository in by creating and committing `.tally/`, as shown in
+   [Before you install](#before-you-install). Without it, `capture` writes nothing.
 
-3. If you commit the file, add `.tally/captures.jsonl merge=union` to your `.gitattributes`, as
+3. Start Claude Code in the repository and work as usual. The first capture creates
+   `captures.jsonl` inside the main checkout's `.tally/`.
+
+4. If you commit the file, add `.tally/captures.jsonl merge=union` to your `.gitattributes`, as
    described in [Committing it](../captures.md#committing-it).
 
 Captures help reports in claim mode, the default, and only for calls the transcript could not
@@ -150,8 +172,9 @@ rules.
 
 Every hook command ends in `; exit 0`, for example `branch-tally capture; exit 0`. That works in
 both Bash and PowerShell, and it means a hook always exits 0, whatever happened: a missing binary,
-a directory that is not a repository, a detached HEAD, a branch with no usage yet, or a usage
-error. Claude Code never sees a failure and never blocks `Stop` or `SubagentStop`.
+a directory that is not a repository, a detached HEAD, a branch with no usage yet, a refused
+symbolic link in `.tally/`, or a usage error. Claude Code never sees a failure and never blocks
+`Stop` or `SubagentStop`.
 
 The three capture hooks each set a 30-second `timeout`. The record hook sets none, because a
 plugin can't change how long `SessionEnd` gets. That limit is covered next.
@@ -190,7 +213,8 @@ If you copy a hook into your own settings, its `shell` field (`"bash"` or `"powe
 explicitly.
 
 An error can still print a line on stderr. `branch-tally capture` prints one short fixed message
-and never echoes the payload or the working directory.
+and never echoes the payload or the working directory. A refused link, for example, prints
+`capture: refusing to write: .tally/ or its captures file is a symlink or not a regular file`.
 
 ## Privacy
 

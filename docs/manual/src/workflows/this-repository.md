@@ -82,8 +82,11 @@ flowchart LR
 - When the orchestrator's session ends, the record hook appends the usage of the branch the main
   checkout has checked out to `.tally/ledger.jsonl` there.
 
-Both files are committed. The repository's `.gitattributes` gives both `merge=union`, so lines
-that two branches each appended merge without a conflict:
+Both files are committed. Committing them is also what keeps the repository
+[opted in](../ledger.md#opt-the-repository-in): the hooks write only into a `.tally/` directory
+that already exists, and because `.tally/` is in every commit, the main checkout and every
+subagent's worktree have one. The repository's `.gitattributes` gives both files `merge=union`, so
+lines that two branches each appended merge without a conflict:
 
 ```text
 .tally/ledger.jsonl merge=union
