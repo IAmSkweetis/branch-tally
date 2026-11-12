@@ -46,18 +46,13 @@ tar = { version = "0.4.46", default-features = false }
 # `branch-tally update`: read the one binary out of the Windows .zip. Deflate only, through the
 # pure-Rust flate2 backend above: no zopfli (a writer), no zlib-rs, no bzip2/zstd/lzma/aes/time.
 zip = { version = "9.5.1", default-features = false, features = ["deflate-flate2"] }
-# issue #94: the `O_NOFOLLOW` constant, so hook-driven writes under `.tally/` refuse to follow a
-# symlink (unix only; Windows uses std's `OpenOptionsExt::custom_flags`, no dependency). It is
-# already in the lockfile (via ring/ureq/tar), so it adds zero packages. rust-lang's own crate,
-# MIT OR Apache-2.0. `default-features = false` drops `std`: we read one constant, no `unsafe`.
-libc = { version = "0.2.191", default-features = false }
 # issue #94 (race close): `openat` with `O_NOFOLLOW` on a verified `.tally` directory fd, so a
 # `.tally` swapped for a symlink between the check and the open is not followed. std has no safe
 # openat and the workspace forbids `unsafe_code`, so a safe wrapper is the only route. Unix only.
-# Review: need (no safe alternative; `libc` alone needs `unsafe`). Version 1.1.6 is already in the
-# lockfile (tempfile's dev dependency), so no new package version. Features: `fs` (open, openat,
-# fstat, OFlags, Mode) and `std` (`From<Errno> for std::io::Error`; OwnedFd -> File is std's own
-# conversion). No `use-libc`, so Linux uses the `linux_raw` backend (raw syscalls via
+# Review: need (no safe alternative; a raw syscall binding needs `unsafe`). Version 1.1.6 is
+# already in the lockfile (tempfile's dev dependency), so no new package version. Features: `fs`
+# (open, openat, fstat, OFlags, Mode) and `std` (`From<Errno> for std::io::Error`; OwnedFd -> File
+# is std's own conversion). No `use-libc`, so Linux uses the `linux_raw` backend (raw syscalls via
 # linux-raw-sys, no libc call) and macOS uses the libc backend (libc is already in the graph).
 # Maintained by the Bytecode Alliance (several maintainers, regular releases, no open advisories),
 # published from bytecodealliance/rustix. Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT, all
