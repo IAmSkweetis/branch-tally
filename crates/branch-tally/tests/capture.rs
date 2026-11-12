@@ -312,7 +312,7 @@ fn help_says_it_is_for_the_plugin_hooks() {
 #[cfg(windows)]
 #[test]
 fn git_bash_drive_form_cwd_is_captured() {
-    let r = repo();
+    let r = opted_in();
     let bash = branch_tally_core::paths::git_bash_form(&r.root.to_string_lossy()).unwrap();
     assert!(bash.starts_with('/'), "{bash}");
     let elsewhere = tempfile::Builder::new()
