@@ -28,13 +28,13 @@ use crate::pyrepr::repr;
 
 /// What a subcommand resolves before it reads anything: the effective settings, the work-branch
 /// rule and the repository path.
-struct Resolved {
-    settings: config::Settings,
+pub(crate) struct Resolved {
+    pub(crate) settings: config::Settings,
     pattern: Option<WorkBranchPattern>,
-    cwd: PathBuf,
+    pub(crate) cwd: PathBuf,
 }
 
-fn resolve(
+pub(crate) fn resolve(
     repo: &Path,
     config_path: Option<&Path>,
     flags: &Flags,
@@ -67,7 +67,7 @@ fn projects_root() -> Result<PathBuf, String> {
 /// The ledger file: `--ledger`, else `.tally/ledger.jsonl` at the root of the checkout containing
 /// `dir`. A directory outside any repository is an error: falling back to `dir` would write a
 /// stray ledger.
-fn ledger_path(flag: Option<&Path>, dir: &Path) -> Result<PathBuf, String> {
+pub(crate) fn ledger_path(flag: Option<&Path>, dir: &Path) -> Result<PathBuf, String> {
     if let Some(flag) = flag {
         return Ok(flag.to_path_buf());
     }
@@ -385,7 +385,14 @@ fn note_ledger(ledger: &LedgerReport) {
             names.join(", ")
         ));
     }
-    let stats = &ledger.ledger_stats;
+    note_ledger_stats(&ledger.ledger_stats);
+    if let Some(live) = &ledger.live_read_stats {
+        note_skipped(live);
+    }
+}
+
+/// Governance II: the ledger lines that could not be used, and conflicting requests. Counts only.
+pub(crate) fn note_ledger_stats(stats: &branch_tally_core::ledger::ReadStats) {
     let skipped = [
         (stats.malformed, "malformed"),
         (stats.unsupported_version, "unsupported version"),
@@ -407,9 +414,6 @@ fn note_ledger(ledger: &LedgerReport) {
             "note: {} ledger request(s) had conflicting lines; kept the latest",
             stats.conflicts
         ));
-    }
-    if let Some(live) = &ledger.live_read_stats {
-        note_skipped(live);
     }
 }
 
@@ -435,13 +439,13 @@ fn describe(error: &ReportError, from_ledger: bool) -> String {
 }
 
 /// Writes UTF-8 bytes verbatim: no newline translation, whatever the console codepage.
-fn stdout(text: &str) {
+pub(crate) fn stdout(text: &str) {
     let mut out = std::io::stdout().lock();
     let _ = out.write_all(text.as_bytes());
     let _ = out.flush();
 }
 
-fn stderr(line: &str) {
+pub(crate) fn stderr(line: &str) {
     let _ = writeln!(std::io::stderr(), "{line}");
 }
 
