@@ -438,8 +438,12 @@ and GitHub never lets an author approve their own, so the reviewer can't be a pe
   installers. Generated, vendored and immutable paths (`.tally/`, `reference/`, `Cargo.lock`, the
   goldens, the vendored manual assets) are excluded by `path_filters`.
 - **Tools.** markdownlint is off, because `rumdl` lints Markdown with this repository's config.
-  The other bundled tools keep CodeRabbit's defaults and duplicate CI on purpose: CI decides, and
+  LanguageTool is off too: prose is reviewed by people and `rumdl`, not a grammar checker. The
+  other bundled tools keep CodeRabbit's defaults and duplicate CI on purpose: CI decides, and
   CodeRabbit only comments.
+- **Reviews never pause** (`auto_pause_after_reviewed_commits: 0`). CodeRabbit's default pauses
+  after 5 reviewed commits, which would leave a long PR's latest commit unreviewed and so
+  unapprovable.
 - **Pre-merge checks** are `warning`, not `error`. An `error` check that fails withholds the
   approval. The title check is off, since `pr-title` enforces it.
 

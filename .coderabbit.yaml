@@ -36,6 +36,9 @@ reviews:
     enabled: true
     drafts: false
     auto_incremental_review: true
+    # The default pauses reviews after 5 reviewed commits. A paused PR's latest commit is never
+    # reviewed, so it can never be approved.
+    auto_pause_after_reviewed_commits: 0
     base_branches:
       - "^main$"
 
