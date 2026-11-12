@@ -32,10 +32,23 @@ The installers download the archive for your platform from GitHub, check it agai
 Package managers (crates.io, Homebrew, npm) are not available yet; they are tracked on the
 [roadmap](https://github.com/IAmSkweetis/branch-tally/issues/16).
 
-## Upgrading and uninstalling
+## Updating
 
-To upgrade, run the installer again. It replaces the existing binary in one step. With a manual
-install, replace the file yourself.
+A binary installed by an installer or by hand updates itself:
+
+```sh
+branch-tally update            # ask, then install the latest release
+branch-tally update --check    # only say whether a different version is available
+```
+
+It verifies the download against the release's `SHA256SUMS` like the installers do, and asks before
+replacing anything unless you pass `--yes`. `--version <vX.Y.Z>` installs a particular release,
+older ones included. The [CLI reference](../cli.md#branch-tally-update) covers every option.
+
+`update` refuses a [build from source](from-source.md) and a binary in a directory it cannot write
+to. Running the installer again also works; it replaces the existing binary in one step.
+
+## Uninstalling
 
 To uninstall, delete the binary (`~/.local/bin/branch-tally`, or
 `%USERPROFILE%\.local\bin\branch-tally.exe`, unless you chose another directory). branch-tally

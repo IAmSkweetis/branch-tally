@@ -15,8 +15,11 @@ path = "src/main.rs"
 [dependencies]
 branch-tally-core = { path = "../branch-tally-core" }
 clap.workspace = true
+flate2.workspace = true
 regex-lite.workspace = true
+tar.workspace = true
 ureq.workspace = true
+zip.workspace = true
 
 [dev-dependencies]
 insta.workspace = true

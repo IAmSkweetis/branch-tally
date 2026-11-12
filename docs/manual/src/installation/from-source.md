@@ -8,7 +8,8 @@ Build it from a clone of the repository instead.
 - [rustup](https://rustup.rs/). The repository pins its Rust toolchain (1.99.1) in
   `rust-toolchain.toml`, and rustup installs that version automatically the first time you build
   inside the clone.
-- A C compiler. One dependency (`ring`, used for TLS by `prices update`) compiles C code.
+- A C compiler. One dependency (`ring`, used for TLS by `prices update` and `update`, and
+  for checksums by `update`) compiles C code.
 - `git`.
 
 ## Build and install
@@ -45,3 +46,7 @@ release, check out its tag first (`git checkout v0.6.1`); the version string sti
 `0.0.0-dev`.
 
 `main` may hold changes that are not in a release yet. This manual documents `main`.
+
+Because it has no release version, a source build cannot update itself: `branch-tally update`
+refuses it. To move to a newer version, `git pull` in the clone and run the `cargo install` command
+above again.

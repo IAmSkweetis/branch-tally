@@ -18,3 +18,4 @@ pub mod render;
 pub mod report;
 pub mod sources;
 pub mod summary;
+pub mod update;

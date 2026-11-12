@@ -14,6 +14,7 @@ branch-tally <COMMAND>
 | [`prices show`](#branch-tally-prices-show) | Show which price table reports would use, with its source, date and path. |
 | [`config show`](#branch-tally-config-show) | Show the config file path, whether it was found, and each effective value and its source. |
 | [`config init`](#branch-tally-config-init) | Write a config file holding the built-in defaults. Never overwrites an existing file. |
+| [`update`](#branch-tally-update) | Update branch-tally in place from a GitHub release. `upgrade` is an alias. |
 | `help [COMMAND]` | Print the help for the tool or a command. |
 
 Global options:
@@ -396,8 +397,8 @@ them to the per-user price cache. It replaces the cache only when the download a
 both succeed, so a failed update leaves a good cache in place. It prints the path written, the
 table's date, the model count, and any models skipped for lacking a usable price.
 
-This is the only command that downloads anything. It sends no account or identifying data, only a
-`branch-tally/<version>` User-Agent.
+It sends no account or identifying data, only a `branch-tally/<version>` User-Agent. Despite the
+name, it does not update branch-tally itself; [`update`](#branch-tally-update) does that.
 
 The cache file is `branch-tally/prices.toml` under:
 
@@ -497,3 +498,91 @@ branch-tally config init [--path <PATH>]
 Writes a starter config file holding the built-in defaults to `--path <PATH>`, or to the default
 location that `config show` prints. It creates missing directories, prints `wrote <path>`, and
 never overwrites an existing file (exit 1). See the [Config reference](config.md#config-init).
+
+## `branch-tally update`
+
+```text
+branch-tally update [OPTIONS]
+branch-tally upgrade [OPTIONS]
+```
+
+Replaces the running `branch-tally` binary with a release from the
+[releases page](https://github.com/IAmSkweetis/branch-tally/releases). `upgrade` is an alias and
+behaves identically. It works on a binary installed by `install.sh`, `install.ps1` or a
+[download by hand](installation/manual-download.md), on the six
+[release targets](installation/README.md).
+
+| Option | Does |
+| ------ | ---- |
+| `--check` | Only report whether a different version is available. Installs nothing. |
+| `--version <vX.Y.Z>` | Install this release instead of the latest. The leading `v` is optional. It may be older than the running version, so this is also how to downgrade. |
+| `--yes` | Do not ask for confirmation. |
+| `--force` | Reinstall even when already on the target version. |
+
+In order, it:
+
+1. Refuses a development build (see [Refusals](#refusals)).
+2. Unless `--check` is given, refuses when it cannot write to the directory holding the binary.
+3. Picks the target version: `--version`, or else the latest release, learned from that release's
+   `SHA256SUMS`.
+4. Stops if there is nothing to do: already on the `--version` asked for, or, without `--version`,
+   already on the latest release or newer. `--force` carries on and reinstalls.
+5. Asks `Update branch-tally vA -> vB? [y/N]` on stderr, unless `--yes` is given. Only `y` or `yes`
+   proceeds. When stdin is not a terminal it cannot ask, so it declines and says to pass `--yes`.
+6. Downloads the release's `SHA256SUMS` and the archive for this platform, and checks the archive
+   against it. A checksum mismatch, or an archive that `SHA256SUMS` does not list, is an error and
+   nothing is installed.
+7. Takes only the binary out of the archive and moves it over the running executable in one step.
+   A symlink is followed, so the file it points at is replaced. On Windows the running `.exe` is
+   renamed to `branch-tally.exe.old` first, because a running program cannot be overwritten. The
+   `.old` file is deleted the next time `update` runs.
+
+A failure at any step leaves the installed binary as it was. To use `update` in a script or CI job,
+pass `--yes`.
+
+### What it prints
+
+One line on stdout when it succeeds, or on stderr when it fails:
+
+| Situation | Line | Exit |
+| --------- | ---- | ---- |
+| Updated | `updated branch-tally v0.6.0 -> v0.7.0` | `0` |
+| Already on the target | `branch-tally is up to date (v0.6.0)` | `0` |
+| You answered no, or stdin is not a terminal | `update v0.6.0 -> v0.7.0 declined; nothing changed` | `0` |
+| `--check` found another version | ``update available: v0.6.0 -> v0.7.0; run `branch-tally update` to install it`` | `0` |
+| A refusal or an error | see below | `1` |
+| A bad command line | a usage message | `2` |
+
+`--check` with `--version` compares the version you named with the running one. It does not check
+that a release with that tag exists, so it reports `update available` for any version that differs.
+
+### Refusals
+
+`update` refuses, exits 1 and prints the install one-liners in its message when:
+
+- the binary is a development build, version `0.0.0-dev`, which is what
+  [a build from source](installation/from-source.md) or `cargo run` produces. Install a release
+  instead, or update your clone and rebuild it;
+- the directory holding the binary is not writable, for example a system directory you need
+  `sudo` for. Rerun the installer instead, which can install into a directory you choose.
+
+### Errors
+
+| Message starts with | Cause |
+| ------------------- | ----- |
+| `not a valid version` | `--version` is not `X.Y.Z` or `vX.Y.Z`. |
+| `release not found` | No release has that tag, or the mirror has no latest release. |
+| `no release is built for target` | This binary was built for a platform with no prebuilt release. |
+| `download failed` | A network or read error. URLs are left out of the message. |
+| `<archive> is not listed in SHA256SUMS`, `malformed checksum`, `checksum mismatch` | The download could not be verified. Nothing was installed. |
+| `install failed` | The new binary could not be extracted or moved into place. The old one is kept. |
+
+### Release mirror
+
+`BRANCH_TALLY_INSTALL_BASE_URL`, the variable the installers read, points `update` at a mirror with
+the same layout as the releases page (`<base>/latest/download/…` and `<base>/download/<tag>/…`).
+The default is `https://github.com/IAmSkweetis/branch-tally/releases`. A `file://` URL naming a
+local directory also works. Any other scheme, including plain `http://`, is refused before any
+network call.
+
+`update` sends no account or identifying data, only a `branch-tally/<version>` User-Agent.
