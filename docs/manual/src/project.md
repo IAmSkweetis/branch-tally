@@ -284,8 +284,9 @@ synthetic ledger above, with some branches and points and every `heuristics` obj
 
 ### SVG
 
-`--export-graph <PATH>` also writes the chart as a standalone SVG file, 640 by 360 pixels. The
-report still prints on stdout as usual, in whichever format you chose.
+`--export-graph <PATH>` also writes the chart as a standalone SVG file, 640 by 360 pixels. When
+more than two footer notes apply, the image grows 16 pixels taller for each extra note, so none is
+cut off. The report still prints on stdout as usual, in whichever format you chose.
 
 - The heading, which is also the SVG's `<title>`, gives the last plotted point:
   `Cumulative cost: $X`, or `Cumulative cost: at least $X` when any figure in the report is a
