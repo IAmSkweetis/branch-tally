@@ -210,6 +210,16 @@ not use the `gh` CLI. A checksum from the same release only catches a corrupt or
 download; for provenance, run `gh attestation verify` by hand
 ([Verifying a download](#verifying-a-download)).
 
+### Updating in place
+
+`branch-tally update` (alias `upgrade`) is the in-place counterpart of the installers. The decision
+logic lives in core's `update` module; the CLI supplies the network, archive and replacement. It
+fetches the same archives, resolves the tag from the latest release or `--version`, and verifies the
+archive against that tag's `SHA256SUMS`. A mismatch, or an archive missing from `SHA256SUMS`, is a
+hard failure with nothing replaced. A dev build (`0.0.0-dev`) and an unwritable binary directory are
+refused, with the installer one-liner in the message. `--check` downloads nothing; `--version` may
+downgrade; `--force` reinstalls the current version; `--yes` skips the prompt.
+
 ### Proving an install works
 
 Two layers. `installers.yml` runs on a pull request or push to `main` that changes `install.sh`,
