@@ -8,7 +8,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 /// Version reported by `--version`: the release tag's version, injected at compile time as
 /// `BRANCH_TALLY_VERSION` (no leading `v`), or `0.0.0-dev` for any other build.
-const VERSION: &str = select_version(option_env!("BRANCH_TALLY_VERSION"));
+pub(crate) const VERSION: &str = select_version(option_env!("BRANCH_TALLY_VERSION"));
 
 /// Pick the reported version from the build-time environment value.
 const fn select_version(build_env: Option<&'static str>) -> &'static str {
@@ -57,6 +57,34 @@ pub(crate) enum Command {
     /// Inspect or create the user config file.
     #[command(subcommand)]
     Config(ConfigCommand),
+
+    /// Update branch-tally in place from the latest GitHub release.
+    ///
+    /// Downloads the release archive for this platform, verifies it against the release's
+    /// SHA256SUMS, and replaces the running binary. Asks before installing unless `--yes` is
+    /// given. Development builds and read-only install locations are refused. Installs made by a
+    /// package manager should be updated with that package manager instead.
+    #[command(alias = "upgrade")]
+    Update(UpdateArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct UpdateArgs {
+    /// Only report whether a different version is available; install nothing.
+    #[arg(long)]
+    pub(crate) check: bool,
+
+    /// Install this release (`v1.2.3` or `1.2.3`) instead of the latest. May downgrade.
+    #[arg(long, value_name = "vX.Y.Z")]
+    pub(crate) version: Option<String>,
+
+    /// Do not ask for confirmation.
+    #[arg(long)]
+    pub(crate) yes: bool,
+
+    /// Reinstall even when already on the target version.
+    #[arg(long)]
+    pub(crate) force: bool,
 }
 
 #[derive(Debug, Subcommand)]

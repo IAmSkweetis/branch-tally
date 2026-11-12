@@ -1,0 +1,49 @@
+//! End-to-end: `branch-tally update` (alias `upgrade`) as the real binary shows it.
+//!
+//! The test binary is a development build (no `BRANCH_TALLY_VERSION`), so what it can show is the
+//! help text, the alias and the dev-build refusal. Replacing a binary is covered by unit tests of
+//! the real client and installer in `src/update.rs`, on temp directories.
+
+#![expect(clippy::unwrap_used, reason = "test helpers fail loudly")]
+
+use std::process::{Command, Output};
+
+fn run(args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_branch-tally"))
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+fn text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).replace("\r\n", "\n")
+}
+
+#[test]
+fn help_lists_the_four_flags() {
+    let out = run(&["update", "--help"]);
+    assert!(out.status.success());
+    let help = text(&out.stdout);
+    for flag in ["--check", "--version", "--yes", "--force"] {
+        assert!(help.contains(flag), "missing {flag} in:\n{help}");
+    }
+}
+
+#[test]
+fn a_dev_build_refuses_with_exit_1_and_a_message_on_stderr() {
+    let out = run(&["update", "--check"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(text(&out.stderr).contains("development build"));
+}
+
+#[test]
+fn upgrade_is_an_alias_for_update() {
+    let out = run(&["upgrade", "--yes"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(text(&out.stderr).contains("development build"));
+}
+
+#[test]
+fn an_unknown_flag_is_a_usage_error() {
+    assert_eq!(run(&["update", "--bogus"]).status.code(), Some(2));
+}
