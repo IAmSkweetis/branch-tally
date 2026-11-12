@@ -644,11 +644,15 @@ pub fn record_at(
         options,
     );
     let outcome = match target {
+        // The ledger is per checkout: a linked worktree records on its own branch (decision
+        // 0002), so the root is the git top level, as `--ledger`'s default is. Outside a
+        // repository that is an error, never a fallback.
         LedgerTarget::Default => crate::ledger::append_default(
-            &live.main_checkout,
+            &git.toplevel(repo_dir)?,
             &sel.selected,
             &branch,
             options.mode,
+            Some(&live.main_checkout),
             redact,
             clock,
         )?,
@@ -736,9 +740,15 @@ pub fn run_from_ledger_at(
 ) -> Result<Report, ReportError> {
     let branch = branch_or_current(git, repo_dir, branch)?;
     let main_checkout = git.main_checkout(repo_dir);
-    let ledger_path = match target {
-        LedgerTarget::Default => main_checkout.join(crate::ledger::LEDGER_PATH),
-        LedgerTarget::Explicit(path) => path.to_path_buf(),
+    // Per-checkout ledger: the git top level for the default (see `record_at`).
+    let ledger_root = match target {
+        LedgerTarget::Default => Some(git.toplevel(repo_dir)?),
+        LedgerTarget::Explicit(_) => None,
+    };
+    let ledger_path = match (target, &ledger_root) {
+        (LedgerTarget::Explicit(path), _) => path.to_path_buf(),
+        (LedgerTarget::Default, Some(root)) => root.join(crate::ledger::LEDGER_PATH),
+        (LedgerTarget::Default, None) => PathBuf::new(),
     };
     // The default is checked with `symlink_metadata`, so a planted link counts as present and the
     // guarded read below refuses it, rather than this check calling the ledger missing.
@@ -749,9 +759,9 @@ pub fn run_from_ledger_at(
     if source.is_none() && !present {
         return Err(ReportError::LedgerMissing { path: ledger_path });
     }
-    let read = match target {
-        LedgerTarget::Default => crate::ledger::read_default(&main_checkout)?,
-        LedgerTarget::Explicit(_) => crate::ledger::read(&ledger_path)?,
+    let read = match &ledger_root {
+        Some(root) => crate::ledger::read_default(root)?,
+        None => crate::ledger::read(&ledger_path)?,
     };
     // Exactly the entries `record` wrote for this branch; the ledger keys on (request, branch).
     let ledger = read.for_branch(&branch);

@@ -387,7 +387,7 @@ impl Ledger {
 /// the user's own choice and keeps the plain behaviour (#94).
 #[derive(Debug, Clone, Copy)]
 pub enum LedgerTarget<'a> {
-    /// `.tally/ledger.jsonl` in the main checkout, through [`TallyDir`]: written only when
+    /// `.tally/ledger.jsonl` at the top level of the checkout being run from (a linked worktree has its own), through [`TallyDir`]: written only when
     /// `.tally/` exists, and a symlink is refused.
     Default,
     /// A path the user gave with `--ledger`. Read and written as is.
@@ -462,7 +462,7 @@ pub fn read(path: &Path) -> Result<Ledger, LedgerError> {
     Ok(parse_ledger(&bytes))
 }
 
-/// Reads the default ledger, `.tally/ledger.jsonl` under the main checkout `main`, through the
+/// Reads the default ledger, `.tally/ledger.jsonl` under the checkout `root` (the git top level), through the
 /// guarded [`TallyDir`] accessor (#94). A missing `.tally/` or file is an empty ledger.
 ///
 /// Use this for the default location; [`read`] is for an explicit `--ledger <path>`.
@@ -470,8 +470,8 @@ pub fn read(path: &Path) -> Result<Ledger, LedgerError> {
 /// # Errors
 /// [`LedgerError::Refused`] when `.tally` or the ledger is a symlink or the wrong kind of file;
 /// [`LedgerError::Read`] when the file exists but cannot be read.
-pub fn read_default(main: &Path) -> Result<Ledger, LedgerError> {
-    let Some(tally) = TallyDir::open(main)? else {
+pub fn read_default(root: &Path) -> Result<Ledger, LedgerError> {
+    let Some(tally) = TallyDir::open(root)? else {
         return Ok(Ledger::default());
     };
     Ok(parse_ledger(&tally.read(LEDGER_FILE)?.unwrap_or_default()))
@@ -629,7 +629,8 @@ pub fn append(
     Ok(out)
 }
 
-/// Appends to the default ledger, `.tally/ledger.jsonl` under the main checkout `main`, through
+/// Appends to the default ledger, `.tally/ledger.jsonl` under the checkout `root` (the git top level:
+/// a linked worktree keeps its own ledger, decision 0002), through
 /// the guarded [`TallyDir`] accessor (#94). Writes only when `.tally/` already exists; otherwise
 /// nothing is written or created and the outcome has [`AppendOutcome::tally_absent`] set.
 /// Idempotent, like [`append`].
@@ -640,29 +641,23 @@ pub fn append(
 /// [`LedgerError::Refused`] when `.tally` or the ledger is a symlink or the wrong kind of file;
 /// [`LedgerError`] otherwise when the ledger cannot be read or written.
 pub fn append_default(
-    main: &Path,
+    root: &Path,
     records: &[SelectedRecord],
     recorded_for: &str,
     mode: Mode,
+    main: Option<&Path>,
     redact: &dyn Redact,
     clock: &dyn Clock,
 ) -> Result<AppendOutcome, LedgerError> {
-    let Some(tally) = TallyDir::open(main)? else {
+    let Some(tally) = TallyDir::open(root)? else {
         return Ok(AppendOutcome {
             tally_absent: true,
             ..AppendOutcome::default()
         });
     };
     let existing = tally.read(LEDGER_FILE)?.unwrap_or_default();
-    let Plan { buf, out } = plan_append(
-        &existing,
-        records,
-        recorded_for,
-        mode,
-        Some(main),
-        redact,
-        clock,
-    );
+    let Plan { buf, out } =
+        plan_append(&existing, records, recorded_for, mode, main, redact, clock);
     if out.appended > 0 {
         tally.append(LEDGER_FILE, buf.as_bytes())?;
     }

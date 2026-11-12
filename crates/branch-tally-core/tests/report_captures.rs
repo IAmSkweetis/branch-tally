@@ -99,7 +99,8 @@ fn setup() -> (tempfile::TempDir, FakeGit, FakeSource) {
     let root = dir.path().to_owned();
     // Captures are written only where the repository has opted in by creating `.tally/` (#94).
     std::fs::create_dir(root.join(".tally")).unwrap();
-    let git = FakeGit::new().with_worktrees(
+    let git = FakeGit::new().with_toplevel(root.clone(), root.clone());
+    let git = git.with_worktrees(
         root.clone(),
         vec![Worktree {
             path: root,
@@ -266,6 +267,34 @@ fn default_record_with_no_tally_dir_does_nothing_and_says_so() {
     assert_eq!(recorded.outcome.appended, 0);
     assert!(recorded.outcome.tally_absent);
     assert!(!dir.path().join(".tally").exists());
+}
+
+#[test]
+fn default_ledger_from_a_linked_worktree_is_the_worktrees_own_toplevel_ledger() {
+    // Captures live in the main checkout; the ledger is per checkout (decision 0002).
+    let (main, git, source) = setup();
+    write_captures(main.path());
+    let wt = tempfile::tempdir().unwrap();
+    std::fs::create_dir(wt.path().join(".tally")).unwrap();
+    let git = git
+        .with_main_checkout(wt.path().to_owned(), main.path().to_owned())
+        .with_toplevel(wt.path().to_owned(), wt.path().to_owned());
+    let recorded = record_default(&git, &source, wt.path()).unwrap();
+    assert_eq!(recorded.outcome.appended, 2);
+    let ledger = |root: &Path| root.join(".tally").join("ledger.jsonl");
+    assert!(ledger(wt.path()).is_file());
+    assert!(!ledger(main.path()).exists());
+    let report = report_default(&git, None, wt.path()).unwrap();
+    assert_eq!(report.ledger.unwrap().ledger_only, 2);
+}
+
+#[test]
+fn default_ledger_outside_a_checkout_is_a_git_error_not_a_fallback() {
+    let (dir, git, source) = setup();
+    write_captures(dir.path());
+    let stray = tempfile::tempdir().unwrap();
+    let err = record_default(&git, &source, stray.path()).unwrap_err();
+    assert!(matches!(err, ReportError::Git(_)), "{err}");
 }
 
 #[cfg(unix)]

@@ -505,9 +505,10 @@ fn opted_in() -> tempfile::TempDir {
 fn default_append_and_read_round_trip_under_an_existing_tally_dir() {
     let dir = opted_in();
     let recs = [selected("r1", "b", 1), selected("r2", "b", 2)];
-    let out = append_default(dir.path(), &recs, "b", Mode::Claim, &Identity, &CLOCK).unwrap();
+    let out = append_default(dir.path(), &recs, "b", Mode::Claim, None, &Identity, &CLOCK).unwrap();
     assert_eq!((out.appended, out.skipped, out.tally_absent), (2, 0, false));
-    let again = append_default(dir.path(), &recs, "b", Mode::Claim, &Identity, &CLOCK).unwrap();
+    let again =
+        append_default(dir.path(), &recs, "b", Mode::Claim, None, &Identity, &CLOCK).unwrap();
     assert_eq!((again.appended, again.skipped), (0, 2));
     assert_eq!(read_default(dir.path()).unwrap().entries().len(), 2);
 }
@@ -516,7 +517,7 @@ fn default_append_and_read_round_trip_under_an_existing_tally_dir() {
 fn default_append_with_no_tally_dir_writes_nothing_and_says_so() {
     let dir = tempfile::tempdir().unwrap();
     let recs = [selected("r1", "b", 1)];
-    let out = append_default(dir.path(), &recs, "b", Mode::Claim, &Identity, &CLOCK).unwrap();
+    let out = append_default(dir.path(), &recs, "b", Mode::Claim, None, &Identity, &CLOCK).unwrap();
     assert_eq!((out.appended, out.skipped, out.tally_absent), (0, 0, true));
     assert!(!dir.path().join(TALLY_DIR).exists());
     assert!(read_default(dir.path()).unwrap().is_empty());
@@ -530,7 +531,8 @@ fn a_planted_symlink_at_the_ledger_is_not_followed() {
     std::fs::write(&victim, b"precious").unwrap();
     std::os::unix::fs::symlink(&victim, path(&dir)).unwrap();
     let recs = [selected("r1", "b", 1)];
-    let err = append_default(dir.path(), &recs, "b", Mode::Claim, &Identity, &CLOCK).unwrap_err();
+    let err =
+        append_default(dir.path(), &recs, "b", Mode::Claim, None, &Identity, &CLOCK).unwrap_err();
     assert!(matches!(err, LedgerError::Refused { .. }), "{err}");
     assert!(matches!(
         read_default(dir.path()).unwrap_err(),
@@ -546,7 +548,7 @@ fn a_dangling_symlink_at_the_ledger_is_not_created() {
     let target = dir.path().join("created-by-attacker");
     std::os::unix::fs::symlink(&target, path(&dir)).unwrap();
     let recs = [selected("r1", "b", 1)];
-    assert!(append_default(dir.path(), &recs, "b", Mode::Claim, &Identity, &CLOCK).is_err());
+    assert!(append_default(dir.path(), &recs, "b", Mode::Claim, None, &Identity, &CLOCK).is_err());
     assert!(!target.exists());
 }
 
@@ -560,7 +562,7 @@ fn a_symlinked_tally_dir_is_refused_for_the_ledger() {
     std::fs::create_dir(&repo).unwrap();
     std::os::unix::fs::symlink(&elsewhere, repo.join(TALLY_DIR)).unwrap();
     let recs = [selected("r1", "b", 1)];
-    assert!(append_default(&repo, &recs, "b", Mode::Claim, &Identity, &CLOCK).is_err());
+    assert!(append_default(&repo, &recs, "b", Mode::Claim, None, &Identity, &CLOCK).is_err());
     assert!(read_default(&repo).is_err());
     assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 0);
 }
