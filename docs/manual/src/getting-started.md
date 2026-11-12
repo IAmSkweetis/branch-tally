@@ -24,7 +24,7 @@ to add if that directory is not on your `PATH`. Check it worked:
 branch-tally --version
 ```
 
-[Installation](installation/README.md) covers the options, verifying a download by hand and
+[Installation](installation/) covers the options, verifying a download by hand and
 building from source.
 
 ## 2. Run your first report
@@ -119,4 +119,5 @@ dispatch link. When some calls could not be assigned to a branch with certainty,
   [Attribution modes](cli.md#attribution-modes)).
 - Save your preferred defaults in a [config file](config.md).
 - Keep the numbers after transcripts are purged with the [ledger](ledger.md), and let the
-  optional [Claude Code plugins](integration.md) record it for you at the end of each session.
+  optional [Claude Code plugins](integration/claude-code.md) record it for you at the end of each
+  session.

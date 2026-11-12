@@ -1,4 +1,7 @@
-# Integration
+# Claude Code
+
+branch-tally reads Claude Code's transcripts with no setup. This page covers the optional part:
+running branch-tally from Claude Code's own hooks.
 
 branch-tally's repository is also a Claude Code plugin marketplace. It offers two optional plugins
 that run branch-tally from Claude Code hooks, so the numbers keep working after Claude Code purges
@@ -6,27 +9,17 @@ old transcripts and after worktrees are removed.
 
 | Plugin | Runs on | Runs | Gives you |
 | ------ | ------- | ---- | --------- |
-| `branch-tally-capture` | `SessionStart`, `SubagentStop`, `Stop` | `branch-tally capture` | A record of which branch each session was on, so calls whose transcript stamp is missing can still be attributed. See [Hook captures](captures.md). |
-| `branch-tally-record` | `SessionEnd` | `branch-tally record` | The [ledger](ledger.md) filled in at the end of every session, before the transcripts can be purged. |
+| `branch-tally-capture` | `SessionStart`, `SubagentStop`, `Stop` | `branch-tally capture` | A record of which branch each session was on, so calls whose transcript stamp is missing can still be attributed. See [Set up captures](#set-up-captures). |
+| `branch-tally-record` | `SessionEnd` | `branch-tally record` | The [ledger](../ledger.md) filled in at the end of every session, before the transcripts can be purged. |
 
 They are separate plugins so you can install, disable or remove each one on its own. Claude Code
 can turn off a whole plugin but not one hook inside it.
 
-Two more integrations are planned and **not available yet**:
-
-- **A Claude Code skill** to record and publish a pull request's usage. Tracked in
-  [#11](https://github.com/IAmSkweetis/branch-tally/issues/11).
-- **A GitHub Action** for agent workflows. Tracked in
-  [#12](https://github.com/IAmSkweetis/branch-tally/issues/12).
-
-Until they ship, publish the table yourself with `branch-tally report --pr`. See the
-[CLI reference](cli.md#updating-a-pull-request).
-
 ## Before you install
 
 - **Install the binary first.** Both plugins call `branch-tally` by name, so it must be on the
-  `PATH` that Claude Code's hooks see. See [Installation](installation/README.md). Without it the
-  hooks do nothing.
+  `PATH` that Claude Code's hooks see. See [Installation](../installation/). Without it
+  the hooks do nothing.
 - **Start Claude Code inside the repository.** The hooks run in the session's working directory.
   In a directory that is not a git checkout they find nothing to record.
 
@@ -47,6 +40,32 @@ Install either one, both, or neither. To stop one later, disable or uninstall it
 /plugin uninstall branch-tally-record@branch-tally
 ```
 
+### For everyone who works in a repository
+
+To turn the plugins on for a whole team, declare the marketplace and enable the plugins in the
+repository's `.claude/settings.json` and commit it. branch-tally's own repository does this:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "branch-tally": {
+      "source": {
+        "source": "github",
+        "repo": "IAmSkweetis/branch-tally"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "branch-tally-capture@branch-tally": true,
+    "branch-tally-record@branch-tally": true
+  }
+}
+```
+
+Claude Code applies a marketplace declared this way only after each person trusts the folder. See
+the [Claude Code settings documentation](https://code.claude.com/docs/en/settings) for the rules.
+Everyone still needs the `branch-tally` binary installed.
+
 ## What the hooks do
 
 ```mermaid
@@ -60,19 +79,72 @@ flowchart LR
 **`branch-tally-capture`** runs `branch-tally capture` when a session starts, when a subagent
 finishes and when the main agent stops. Each run appends one line to `.tally/captures.jsonl` in the
 repository's main checkout: the session id, the agent id for a subagent, the branch, the kind of
-event and the time. [Hook captures](captures.md) covers the file and how reports use it.
+event and the time.
 
 **`branch-tally-record`** runs `branch-tally record` when a session ends. That appends the current
 branch's attributed usage to `.tally/ledger.jsonl`, exactly as running `record` by hand would:
 
 - It records the branch that the session's directory has checked out when the session ends, in the
-  attribution mode from your [config file](config.md) (`claim` by default).
+  attribution mode from your [config file](../config.md) (`claim` by default).
 - The ledger it writes is at the root of the checkout the session ran in. A session in a git
   worktree writes the worktree's own ledger, which merges back with the worktree's branch.
 - It writes the file only. It does not `git add` or commit. Commit the ledger yourself, as
-  described in [Persisting the Ledger](ledger.md).
+  described in [Persisting the Ledger](../ledger.md).
 - It is safe to run every session. `record` appends only the calls the ledger does not already
   hold.
+
+## Set up captures
+
+[Hook captures](../captures.md) describes the captures file, where it lives and how reports use
+it. In Claude Code, captures come from three hooks: `SessionStart`, `SubagentStop` and `Stop`. Each
+runs `branch-tally capture`, which reads the hook payload Claude Code passes on stdin.
+
+1. Install the `branch-tally-capture` plugin, as shown in [Install](#install). It sets up all
+   three hooks.
+
+   To use your own settings file instead of the plugin, add the same three hooks to it. This is
+   what the plugin installs:
+
+   ```json
+   {
+     "hooks": {
+       "SessionStart": [
+         {
+           "hooks": [
+             { "type": "command", "command": "branch-tally capture; exit 0", "timeout": 30 }
+           ]
+         }
+       ],
+       "SubagentStop": [
+         {
+           "hooks": [
+             { "type": "command", "command": "branch-tally capture; exit 0", "timeout": 30 }
+           ]
+         }
+       ],
+       "Stop": [
+         {
+           "hooks": [
+             { "type": "command", "command": "branch-tally capture; exit 0", "timeout": 30 }
+           ]
+         }
+       ]
+     }
+   }
+   ```
+
+   Keep the `; exit 0`. It is what stops a failed capture from blocking `Stop` or `SubagentStop`
+   (see [The hooks never block a session](#the-hooks-never-block-a-session)).
+
+2. Start Claude Code in the repository and work as usual. The first capture creates
+   `.tally/captures.jsonl` in the main checkout.
+
+3. If you commit the file, add `.tally/captures.jsonl merge=union` to your `.gitattributes`, as
+   described in [Committing it](../captures.md#committing-it).
+
+Captures help reports in claim mode, the default, and only for calls the transcript could not
+place. [How captures change a report](../captures.md#how-captures-change-a-report) gives the exact
+rules.
 
 ## The hooks never block a session
 
@@ -125,7 +197,7 @@ and never echoes the payload or the working directory.
 The hooks read only the hook payload Claude Code passes on stdin. `capture` reads its session id,
 event name, agent id, agent type and working directory, and ignores every other field. It stores
 no path: it asks git which branch the working directory is on and keeps only the branch name.
-`record` stores what the [ledger](ledger.md#what-is-stored) stores. Neither writes message
+`record` stores what the [ledger](../ledger.md#what-is-stored) stores. Neither writes message
 content.
 
 Both files are designed to be committed, so anyone who can read the repository can read the

@@ -4,7 +4,7 @@ Every release on the [releases page](https://github.com/IAmSkweetis/branch-tally
 attaches:
 
 - six archives, one per target, named `branch-tally-<vX.Y.Z>-<target>.tar.gz` (`.zip` for
-  Windows). The targets are listed on the [Installation](README.md) page;
+  Windows). The targets are listed on the [Installation](./) page;
 - `install.sh` and `install.ps1`;
 - `SHA256SUMS`, with one SHA-256 line for each archive and each installer.
 
