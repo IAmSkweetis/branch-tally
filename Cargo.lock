@@ -47,6 +47,7 @@ name = "branch-tally-core"
 version = "0.0.0"
 dependencies = [
  "insta",
+ "libc",
  "ring",
  "serde",
  "serde_json",

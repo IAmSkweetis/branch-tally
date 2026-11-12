@@ -46,6 +46,11 @@ tar = { version = "0.4.46", default-features = false }
 # `branch-tally update`: read the one binary out of the Windows .zip. Deflate only, through the
 # pure-Rust flate2 backend above: no zopfli (a writer), no zlib-rs, no bzip2/zstd/lzma/aes/time.
 zip = { version = "9.5.1", default-features = false, features = ["deflate-flate2"] }
+# issue #94: the `O_NOFOLLOW` constant, so hook-driven writes under `.tally/` refuse to follow a
+# symlink (unix only; Windows uses std's `OpenOptionsExt::custom_flags`, no dependency). It is
+# already in the lockfile (via ring/ureq/tar), so it adds zero packages. rust-lang's own crate,
+# MIT OR Apache-2.0. `default-features = false` drops `std`: we read one constant, no `unsafe`.
+libc = { version = "0.2.191", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
