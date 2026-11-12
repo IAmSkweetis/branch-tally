@@ -429,8 +429,8 @@ fn without_heuristics_divergence(mut payload: Value, strict: bool) -> Value {
 }
 
 /// Exact claim-mode `unstamped` `(calls, tokens)` per scenario (#60); a scenario not listed must
-/// report none. In `unstamped-main` both calls (`req_2`, `req_5`) stay `(none)`.
-const CLAIM_UNSTAMPED: &[(&str, (u64, u64))] = &[("unstamped-main", (2, 2_221))];
+/// report none. In `unstamped-main` the session claim places `req_2` on `feat/x`, so only `req_5` is unplaced.
+const CLAIM_UNSTAMPED: &[(&str, (u64, u64))] = &[("unstamped-main", (1, 1_115))];
 
 /// The reference's own `(none)` bucket for a scenario, from its strict golden: `(calls, tokens)` of
 /// every call that carries no branch stamp. `(0, 0)` when the golden has no such key.

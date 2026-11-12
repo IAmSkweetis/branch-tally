@@ -328,7 +328,7 @@ fn select_for(
         crate::attribution::attribute_with_captures(records, dispatches, captures, &map, strict)
     };
     let unattributed = crate::model::SubagentSummary::count_unattributed(&attributed);
-    let unstamped = crate::model::Unstamped::count(&attributed);
+    let unstamped = crate::summary::count_unstamped(&attributed, mode);
     let all = attributed.clone();
     let selected = if mode == Mode::Timeline {
         crate::attribution::select_timeline(attributed, branch)
@@ -820,7 +820,8 @@ pub fn run_from_ledger_at(
         info.live_read_stats = Some(live.stats);
         let sel = Picked {
             unattributed: crate::model::SubagentSummary::count_unattributed(&all),
-            unstamped: crate::model::Unstamped::count(&all),
+            // Live records only: ledger entries were selected for their branch, so are placed.
+            unstamped: live_sel.unstamped,
             ambiguous: crate::summary::count_ambiguous(&all, &records),
             attributed: all,
             selected: records,
