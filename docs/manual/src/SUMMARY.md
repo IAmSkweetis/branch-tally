@@ -10,6 +10,7 @@
 - [Integration](integration.md)
   - [Hook captures](captures.md)
 - [Persisting the Ledger](ledger.md)
+  - [Project Cost Over Time](project.md)
 - [CLI reference](cli.md)
 - [Config reference](config.md)
 - [Workflow Examples](workflows/README.md)
