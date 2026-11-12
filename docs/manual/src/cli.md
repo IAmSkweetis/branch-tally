@@ -324,21 +324,39 @@ branch-tally project [OPTIONS]
 ```
 
 Reads the [ledger](ledger.md) only (never the live transcripts) and prints the project total, a
-per-branch breakdown and a Mermaid cost-over-time chart, or the same data as JSON. A missing
-ledger is an error, as for `report --from-ledger`. A total that includes any figure with an
-unpriced model is labelled as a floor.
+per-branch table and a Mermaid cost-over-time chart, or the same data as JSON. Each API call is
+counted once in the total, even when two branches claim it. Any cost that leaves out an unpriced
+model is shown as a floor, "at least $X". What the report holds and how to read it is in
+[Project Cost Over Time](project.md).
 
 | Option | Default | Does |
 | ------ | ------- | ---- |
 | `--repo <PATH>` | `.` | The repository, used to find the default ledger and the price table. |
 | `--ledger <PATH>` | `.tally/ledger.jsonl` | The ledger file. The default is at the root of the current checkout. |
-| `--format <FORMAT>` | `md` | Output format: `md` or `json`. |
+| `--format <FORMAT>` | `md` | Output format: `md` or `json`. See [Output formats](project.md#output-formats). |
 | `--md` | | Same as `--format md`. |
 | `--json` | | Same as `--format json`. |
 | `--config <PATH>` | user config path | Read this config file instead of the default location. It must exist. |
-| `--export-graph <PATH>` | | Also write the chart as an SVG file to `PATH`. The file is written whole or not at all, and the parent directory must exist. The report still prints. |
+| `--export-graph <PATH>` | | Also write the chart as an SVG file to `PATH`. The report still prints. See [SVG](project.md#svg). |
 
-`--format`, `--md` and `--json` conflict with each other, as for `report`.
+`--md` or `--json` together with `--format`, and `--md` with `--json`, are command-line errors
+(exit 2), as for `report`. The config file's `format` key sets the default format; a flag
+overrides it.
+
+`--export-graph` writes the file whole or not at all, and replaces an existing file. It does not
+create the parent directory. The SVG is written before the report prints, so when it fails nothing
+is printed on stdout.
+
+| Message (stderr, exit 1) | Cause |
+| ------------------------ | ----- |
+| `no ledger at <path>` | The ledger file does not exist. |
+| `cannot place the default ledger: <path> is not inside a git checkout …; pass --ledger <path>` | Outside a git checkout there is no default ledger, so `--ledger` is required. |
+| `cannot write graph <path>: <error>` | `--export-graph` could not write the file, for example because its directory does not exist. |
+| `config file <path> …` | The config file is missing (with `--config`) or invalid. See [Config reference](config.md#errors). |
+
+A ledger with no lines is not an error: the report says `No branches recorded in the ledger.` The
+ledger notes on stderr are the same as for `report --from-ledger`; see
+[Report from the ledger](ledger.md#report-from-the-ledger).
 
 ## `branch-tally capture`
 
