@@ -28,6 +28,22 @@ to include the usage costs into my PRs.
 The goal with branch-tally is to expand on this idea. And honestly, fix some bugs that I've been
 putting off, too. We'll see where we get.
 
+## What building branch-tally has cost
+
+branch-tally records its own development. Every branch's agent usage goes into the committed ledger
+(`.tally/ledger.jsonl`), and `branch-tally project` turns that ledger into a project total and a
+cumulative cost-over-time chart:
+
+![Cumulative estimated cost of building branch-tally, one point per branch](docs/assets/project-cost.svg)
+
+The headline is the recorded project total. Each point is a branch, placed at its last recorded
+call. Costs are estimates from the [price table](#price-table), and the chart covers only what the
+ledger holds, so work that was never recorded is not in it. A hollow point, the dashed segment into
+it, or an "at least" headline marks a figure that is a floor. The chart is a snapshot:
+`just readme-graph` regenerates it.
+To see the per-branch table and which calls were placed by an attribution heuristic, run
+`branch-tally project` in a clone of this repository.
+
 ## Planned features
 
 - **Per-branch and per-PR totals** of tokens and estimated cost, by model.
