@@ -89,7 +89,10 @@ that.
   real directory. Neither creates it. Without it, `capture` exits 0 silently and `record` exits 0
   with a one-line note that nothing was recorded. Git does not track an empty directory, so a
   repository opts in by committing a file inside it: `.tally/.gitkeep`, or an existing ledger.
-  That gives every clone and worktree the directory.
+  That gives every clone and worktree the directory. Captures always go to the main checkout's
+  `.tally/`, so the main checkout must have the directory as well: a linked worktree that has
+  opted in on its own branch still captures nothing while the main checkout's branch lacks it.
+  The opt-in therefore belongs on the default branch.
 - **Links are refused, never followed.** Every read and write of a default `.tally/*` path goes
   through one guarded accessor (`ledger::TallyDir`). That covers the ledger, the captures file and
   the `prices.toml` override. It refuses `.tally` if it is a link, is not a directory, or does

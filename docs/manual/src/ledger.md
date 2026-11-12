@@ -47,7 +47,10 @@ is committed, it keeps the directory in place on its own.
 
 Committing the directory matters because every clone and every git worktree gets its own copy of
 it. A worktree, or a clone, whose checked-out commit has no `.tally/` is not opted in, and `record`
-writes nothing there.
+writes nothing there. [Hook captures](captures.md) always go to the main checkout's `.tally/`, so
+the main checkout needs the directory too. A worktree that opted in on its own branch still
+captures nothing while the main checkout is on a branch without `.tally/`. Commit the opt-in to the
+default branch, so every branch cut from it has the directory.
 
 Without the directory, `record` writes nothing, creates nothing, prints this on stdout and exits 0:
 

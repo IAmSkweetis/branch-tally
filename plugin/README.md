@@ -32,7 +32,9 @@ mkdir .tally
 touch .tally/.gitkeep
 ```
 
-Commit the directory (the `.gitkeep`, or an existing ledger) so it is there in every clone.
+Commit the directory (the `.gitkeep`, or an existing ledger) to the default branch, so it is there
+in every clone and on every branch cut from it. Captures use the main checkout's `.tally/` even
+when the session runs in a linked worktree, so the main checkout needs the directory as well.
 
 - `branch-tally capture` writes `.tally/captures.jsonl` in the main checkout's `.tally/`.
 - `branch-tally record` writes `.tally/ledger.jsonl` in the git top level's `.tally/`.
