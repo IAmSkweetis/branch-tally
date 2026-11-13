@@ -12,6 +12,7 @@ set -eu
 
 REPO=IAmSkweetis/branch-tally
 DEFAULT_BASE_URL=https://github.com/$REPO/releases
+DEFAULT_API_URL=https://api.github.com
 ISSUER=https://token.actions.githubusercontent.com
 # The signer must be this repository's release workflow, run from main. release.yml starts from
 # workflow_run on main, and a manual dispatch on another branch is not a release.
@@ -41,6 +42,19 @@ Environment (a flag overrides its variable):
   BRANCH_TALLY_INSTALL_BASE_URL            Release mirror, https:// or file:// only (default:
                                            https://github.com/IAmSkweetis/branch-tally/releases).
                                            The effective source is printed when this is set.
+  BRANCH_TALLY_INSTALL_API_URL             Where "latest" is looked up, https:// or file:// only
+                                           (default: https://api.github.com). Printed when set.
+                                           It is trusted exactly as much as the mirror variable.
+  GH_TOKEN, GITHUB_TOKEN                   When set (GH_TOKEN first), sent as a bearer token to the
+                                           API lookup only, to avoid rate limits. Never printed.
+
+"Latest". With no --version, the latest tag is read from GitHub's API
+(https://api.github.com/repos/IAmSkweetis/branch-tally/releases/latest), even when a mirror is
+set, because a mirror serving an older signed release as "latest" would roll you back. If the API
+cannot be reached, is rate limited or answers with something unusable, this script falls back to
+the mirror's latest/download/SHA256SUMS and warns on stderr that "latest" was
+not confirmed by GitHub, so an older release could be served. Pin --version vX.Y.Z to avoid it. The
+fallback is allowed with --require-attestation too, because the archive is still verified.
 
 Verification. The archive is checked against the release's SHA256SUMS before anything is
 installed. That is an integrity check: it catches a corrupt or truncated download, and it does not
@@ -97,6 +111,16 @@ valid_tag() {
   [ "$dots" -eq 2 ]
 }
 
+# json_tag <file>: the top-level "tag_name" string of a GitHub release response, first one only, or
+# nothing. A tight line-oriented read (no jq): objects and fields are split onto their own lines and
+# only a line that is exactly a "tag_name" member matches, so the same text inside another string
+# (where its quotes are escaped) cannot. The result is validated with valid_tag by the caller.
+json_tag() {
+  tr '{},' '\n\n\n' <"$1" |
+    sed -n 's/^[[:space:]]*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)"[[:space:]]*$/\1/p' |
+    head -n 1
+}
+
 truthy() {
   case $1 in
     1 | true | TRUE | True | yes | YES | Yes) return 0 ;;
@@ -122,6 +146,57 @@ fetch() {
       fi
       ;;
   esac
+}
+
+# fetch_api <url> <outfile>: fetch like `fetch`, plus the API Accept header and, when GH_TOKEN or
+# GITHUB_TOKEN is set, a bearer token. The token reaches curl through a private header file, never
+# its command line, and nothing here prints it or curl's stderr.
+fetch_api() {
+  case $1 in
+    file://*)
+      cp "${1#file://}" "$2" 2>/dev/null || return 1
+      return 0
+      ;;
+  esac
+  token=${GH_TOKEN:-${GITHUB_TOKEN:-}}
+  case $token in
+    *[!A-Za-z0-9_.~+/=-]*)
+      warn "ignoring GH_TOKEN/GITHUB_TOKEN: it contains characters a token never has"
+      token=
+      ;;
+  esac
+  if [ "$fetch_tool" = curl ]; then
+    hdr=$tmp/api.hdr
+    (
+      umask 077
+      printf 'Accept: application/vnd.github+json\n' >"$hdr"
+      if [ -n "$token" ]; then printf 'Authorization: Bearer %s\n' "$token" >>"$hdr"; fi
+    )
+    curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --max-time 30 -H "@$hdr" -o "$2" "$1" 2>/dev/null
+    rc=$?
+    rm -f "$hdr"
+    return $rc
+  fi
+  # wget has no header file: the token is on its command line for the length of the call.
+  if [ "$wget_https_only" = 1 ]; then
+    if [ -n "$token" ]; then
+      wget -q --https-only --timeout=30 --header "Authorization: Bearer $token" -O "$2" "$1" 2>/dev/null
+    else
+      wget -q --https-only --timeout=30 -O "$2" "$1" 2>/dev/null
+    fi
+  elif [ -n "$token" ]; then
+    wget -q --timeout=30 --header "Authorization: Bearer $token" -O "$2" "$1" 2>/dev/null
+  else
+    wget -q --timeout=30 -O "$2" "$1" 2>/dev/null
+  fi
+}
+
+# latest_from_api: print the latest release tag as GitHub reports it, or fail.
+latest_from_api() {
+  fetch_api "$api/repos/$REPO/releases/latest" "$tmp/latest.json" || return 1
+  api_tag=$(json_tag "$tmp/latest.json")
+  valid_tag "$api_tag" || return 1
+  printf '%s' "$api_tag"
 }
 
 sha256_of() {
@@ -191,6 +266,8 @@ main() {
   dest=${BRANCH_TALLY_INSTALL_DIR:-}
   base=${BRANCH_TALLY_INSTALL_BASE_URL:-$DEFAULT_BASE_URL}
   base=${base%/}
+  api=${BRANCH_TALLY_INSTALL_API_URL:-$DEFAULT_API_URL}
+  api=${api%/}
   require_attestation=0
   if truthy "${BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION:-0}"; then require_attestation=1; fi
 
@@ -228,6 +305,15 @@ main() {
   esac
   if [ "$base" != "$DEFAULT_BASE_URL" ]; then
     info "Using release mirror: $base"
+  fi
+
+  # The latest-release lookup has the same scheme rule, and carries the same trust as the mirror.
+  case $api in
+    https://* | file://*) ;;
+    *) die "BRANCH_TALLY_INSTALL_API_URL must start with https:// or file:// (got '$(printable "$api")')" ;;
+  esac
+  if [ "$api" != "$DEFAULT_API_URL" ]; then
+    info "Using release API: $api"
   fi
 
   if [ -z "$dest" ]; then
@@ -301,19 +387,26 @@ main() {
   trap 'exit 130' INT
   trap 'exit 143' TERM
 
-  # Resolve "latest" to a concrete tag without the GitHub API (no rate limits): the archive names
-  # embed the version, so read the target's name out of latest/download/SHA256SUMS. Everything after
-  # is fetched from download/<tag>/, never latest/, so a release landing mid-install cannot mix two
-  # versions: the archive and its SHA256SUMS always come from the same tag, and the checksum is
-  # still verified before anything is installed.
+  # Resolve "latest" to a concrete tag. GitHub's API is the authority, even with a mirror: a mirror
+  # that serves an older signed release as "latest" would otherwise roll users back, and a signature
+  # proves a release is genuine, not that it is the newest. Everything after is fetched from
+  # download/<tag>/, never latest/, so a release landing mid-install cannot mix two versions.
   if [ "$version" = latest ]; then
-    fetch "$base/latest/download/SHA256SUMS" "$tmp/latest.sums" ||
-      die "could not download $base/latest/download/SHA256SUMS"
-    resolved=$(sums_name "$tmp/latest.sums" "$target")
-    [ -n "$resolved" ] || die "the latest release has no build for $target"
-    tag=${resolved#branch-tally-}
-    tag=${tag%"-$target".*}
-    valid_tag "$tag" || die "tag '$(printable "$tag")' read from SHA256SUMS is not of the form vMAJOR.MINOR.PATCH"
+    if tag=$(latest_from_api); then
+      :
+    else
+      warn "could not read the latest release from $api/repos/$REPO/releases/latest (unreachable,"
+      warn "rate limited or an unusable answer). Falling back to the mirror's latest/download/SHA256SUMS."
+      warn "'Latest' is from the mirror and was not confirmed by GitHub, so an older release could be"
+      warn "served. To choose the release yourself, run: install.sh --version vX.Y.Z"
+      fetch "$base/latest/download/SHA256SUMS" "$tmp/latest.sums" ||
+        die "could not download $base/latest/download/SHA256SUMS"
+      resolved=$(sums_name "$tmp/latest.sums" "$target")
+      [ -n "$resolved" ] || die "the latest release has no build for $target"
+      tag=${resolved#branch-tally-}
+      tag=${tag%"-$target".*}
+      valid_tag "$tag" || die "tag '$(printable "$tag")' read from SHA256SUMS is not of the form vMAJOR.MINOR.PATCH"
+    fi
   else
     tag=$version
   fi

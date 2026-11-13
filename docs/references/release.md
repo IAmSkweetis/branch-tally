@@ -200,12 +200,27 @@ powershell -ExecutionPolicy Bypass -c "irm https://github.com/IAmSkweetis/branch
 | `--to <dir>` | `-To` | `BRANCH_TALLY_INSTALL_DIR` | Install directory |
 | `--require-attestation` | `-RequireAttestation` | `BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION` | Fail unless provenance was verified (`1`, `true` or `yes` for the variable) |
 | none | none | `BRANCH_TALLY_INSTALL_BASE_URL` | Releases URL, `https://` or `file://` only, default `https://github.com/IAmSkweetis/branch-tally/releases`. The effective source is printed when it is set. The tests point it at a `file://` fake release |
+| none | none | `BRANCH_TALLY_INSTALL_API_URL` | Where "latest" is looked up, `https://` or `file://` only, default `https://api.github.com`. Printed as `Using release API: <url>` when set. The same trust as the mirror variable. The tests point it at a `file://` fake API |
+| none | none | `GH_TOKEN`, else `GITHUB_TOKEN` | Sent as a bearer token to the "latest" lookup only, to avoid rate limits. Never printed and, for curl, never on its command line |
 
 With nothing set, the binary goes to `~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows). The
 installer **never edits PATH**: when the directory is not on it, it prints a hint. On success it
 prints the installed path and the binary's `--version`. With options, use the flags
 (`curl ... | sh -s -- --version v0.1.0 --to ~/bin`). `irm | iex` cannot pass parameters, so on
 Windows use the environment variables.
+
+**Which release is "latest".** With no version pinned, both installers read `tag_name` from
+`<api>/repos/IAmSkweetis/branch-tally/releases/latest` (validated as `vMAJOR.MINOR.PATCH`), **even
+when a mirror is set**: a signature proves a release is genuine, not that it is the newest, so a
+mirror serving an older signed release as "latest" would otherwise roll users back. The JSON is
+read without `jq` (POSIX `sh`: a line-oriented `sed` on `"tag_name"`; PowerShell:
+`ConvertFrom-Json`), then validated strictly. When the API is unreachable, rate limited or
+answers with anything unusable, the installers fall back to the mirror's
+`latest/download/SHA256SUMS` and print a loud stderr warning that "latest" came from the mirror and
+was **not confirmed by GitHub**, so an older release could be served, with the `--version` route.
+The fallback is allowed under `--require-attestation` too, because the archive is still verified.
+Rollback protection is therefore partial: it does not hold against an attacker who can intercept
+`api.github.com`, nor in the fallback ([decision 0004](../decisions/0004-release-provenance.md)).
 
 **Verification.** The installer downloads the archive for the platform and checks it against the
 release's `SHA256SUMS`, and stops on a mismatch. That is an **integrity check**: it catches a
@@ -243,11 +258,16 @@ not verify.
 
 - `install.sh` runs curl with `--proto '=https' --proto-redir '=https' --tlsv1.2`, and wget with
   `--https-only` when that wget has it (BusyBox's does not; the URL scheme check still applies).
-  `file://` mirrors are plain copies, the seam the tests use. `install.ps1` pins TLS 1.2+, and
-  PowerShell 7 refuses an HTTPS-to-HTTP redirect by default.
-- `BRANCH_TALLY_INSTALL_BASE_URL` must be `https://` or `file://`, the same rule as
-  `branch-tally update`. Plain `http://` is refused. When it is set, the installer prints
-  `Using release mirror: <url>`.
+  `file://` mirrors are plain copies, the seam the tests use. `install.ps1` pins TLS 1.2+ and
+  follows redirects by hand (`-MaximumRedirection 0`, at most 5 hops), refusing any hop that is not
+  `https://`. The documented one-liner runs Windows PowerShell 5.1, whose `Invoke-WebRequest` would
+  otherwise follow an HTTPS-to-HTTP redirect (#98). The scheme checks (`file://`, `https://`) are
+  case-insensitive in both installers. The PowerShell version check uses `\z`, not `$`, which in
+  .NET also matches before a trailing newline; the `sh` check is a `case` pattern and already
+  rejects one.
+- `BRANCH_TALLY_INSTALL_BASE_URL` and `BRANCH_TALLY_INSTALL_API_URL` must be `https://` or
+  `file://`, the same rule as `branch-tally update`. Plain `http://` is refused. When either is set,
+  the installer prints `Using release mirror: <url>` or `Using release API: <url>`.
 - `install.sh` is a set of functions plus `main "$@"` on its last line, so a download cut off
   partway is a syntax error and runs nothing.
 - The tag read from the remote `SHA256SUMS` under `latest` must be `vMAJOR.MINOR.PATCH`, the check
