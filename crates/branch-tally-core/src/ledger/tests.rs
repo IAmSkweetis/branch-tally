@@ -18,7 +18,7 @@ fn selected(id: &str, branch: &str, output: u64) -> SelectedRecord {
         },
     );
     r.agent_id = Some(AgentId::new("agent-1"));
-    r.ts = Some("2026-01-01T00:00:00Z".to_owned());
+    r.ts = "2026-01-01T00:00:00Z".parse().ok();
     r.model = Some("claude-x".to_owned());
     r.cwd = Some("/secret/cwd".to_owned());
     r.git_branch = Some("raw-stamp".to_owned());
@@ -417,6 +417,64 @@ fn a_line_without_recorded_at_is_accepted() {
     let l = read(&p).unwrap();
     assert_eq!((l.entries().len(), l.stats().malformed), (1, 0));
     assert_eq!(l.entries()[0].recorded_at, None);
+}
+
+fn line_with_ts(id: &str, ts: &str) -> String {
+    line(id, 1, None).replacen(
+        r#""ts":"2026-01-01T00:00:00Z""#,
+        &format!(r#""ts":{}"#, serde_json::to_string(ts).unwrap()),
+        1,
+    )
+}
+
+#[test]
+fn a_valid_timestamp_round_trips_byte_for_byte() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = path(&dir);
+    let original = line_with_ts("r1", "2026-01-01T00:00:00.123+01:00");
+    assert!(original.contains(r#""ts":"2026-01-01T00:00:00.123+01:00""#));
+    write_lines(&p, std::slice::from_ref(&original));
+    let l = read(&p).unwrap();
+    assert_eq!(l.stats().malformed_timestamps, 0);
+    assert_eq!(serde_json::to_string(&l.entries()[0]).unwrap(), original);
+}
+
+#[test]
+fn a_hostile_timestamp_is_cleared_and_counted_without_losing_the_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = path(&dir);
+    let hostile = [
+        "2026-01-01T00:00:00Z|",
+        "[a](//x.co)",
+        "@user",
+        "<img src=x>",
+        "2026-01-01T00:00:00\u{1b}[31mZ",
+        "",
+        "2026-13-01T00:00:00Z",
+    ];
+    let mut lines = vec![line("ok", 1, None)];
+    lines.extend(
+        hostile
+            .iter()
+            .enumerate()
+            .map(|(i, t)| line_with_ts(&format!("bad{i}"), t)),
+    );
+    write_lines(&p, &lines);
+    let l = read(&p).unwrap();
+    let s = l.stats();
+    assert_eq!((s.entries, s.malformed, s.unsupported_version), (8, 0, 0));
+    assert_eq!(s.malformed_timestamps, 7);
+    assert_eq!(l.entries().iter().filter(|e| e.ts.is_some()).count(), 1);
+}
+
+#[test]
+fn a_timestamp_of_the_wrong_json_type_is_a_malformed_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = path(&dir);
+    let bad = line("r1", 1, None).replacen(r#""ts":"2026-01-01T00:00:00Z""#, r#""ts":5"#, 1);
+    write_lines(&p, &[bad]);
+    let l = read(&p).unwrap();
+    assert_eq!((l.stats().entries, l.stats().malformed), (0, 1));
 }
 
 #[test]

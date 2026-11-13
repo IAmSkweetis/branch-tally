@@ -248,10 +248,14 @@ expected behaviour directly, next to the same issue number. `malformed-and-keyle
 - Output divergence #39 (Markdown escaping): the reference prints transcript-derived strings into
   the Markdown raw. Rust renders model ids, session ids, worktree names and the branch as code
   spans whose fence is longer than any run of backticks inside. In table cells it also escapes
-  `|`. Agent, subagent and attribution names become plain text with `\`, backticks and `|`
-  backslash-escaped and `&`, `<`, `>` as entities. Line breaks become spaces everywhere. A name
-  with none of those characters renders as before, so the manual byte-parity runs still hold. The
-  JSON report is unaffected. `render__markdown_hostile_names_*.snap` pins every character, and
+  `|`. Agent, subagent and attribution names are code spans too (#95), each agent in its own
+  span, so links, images, bare URLs, `@user`, `#123`, emphasis and HTML in a name stay literal.
+  Line breaks become spaces everywhere, and every other control character (C0, C1, DEL, bidi
+  overrides) becomes U+FFFD in the Markdown and project renderers. The JSON report is unaffected
+  (serde_json escapes controls). `splice` honours a marker only on a line of its own, so a name
+  spelling a marker cannot leave a stale tail and prose quoting one is kept. Session spans keep
+  only the characters of a timestamp. The manual byte-parity runs use names that need none of this.
+  `render__markdown_hostile_names_*.snap` pins every character, and
   `every_table_row_keeps_its_column_count_whatever_the_names_contain` checks each table row
   splits like its header, the way cmark-gfm splits it.
 - The bundled table was reseeded from LiteLLM's current rates (#5), not the reference's `PRICES`.

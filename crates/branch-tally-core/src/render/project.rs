@@ -118,7 +118,10 @@ pub fn project_markdown(report: &ProjectReport) -> String {
         "| Branch | Last call | Calls | Tokens | Cost |\n| --- | --- | ---: | ---: | ---: |\n",
     );
     for r in &report.rows {
-        let date = r.last_call.as_deref().map_or("undated".to_owned(), day);
+        let date = r
+            .last_call
+            .as_ref()
+            .map_or("undated".to_owned(), |t| day(t.as_str()));
         let _ = writeln!(
             o,
             "| {} | {date} | {} | {} | {} |",
@@ -310,7 +313,10 @@ pub fn project_json(report: &ProjectReport) -> String {
     } else {
         o.push_str("  \"branches\": [\n");
         for (i, r) in report.rows.iter().enumerate() {
-            let last = r.last_call.as_deref().map_or("null".to_owned(), string);
+            let last = r
+                .last_call
+                .as_ref()
+                .map_or("null".to_owned(), |t| string(t.as_str()));
             let usd = if row_unpriced(r) {
                 "null".to_owned()
             } else {
@@ -361,6 +367,7 @@ pub fn project_json(report: &ProjectReport) -> String {
 /// Text for an XML text node or attribute value. Control characters, which XML 1.0 forbids,
 /// become spaces.
 fn xml(s: &str) -> String {
+    let s = crate::text::replace_control_chars(s);
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
@@ -609,7 +616,7 @@ mod tests {
     fn row(branch: &str, last: Option<&str>, calls: u64, tokens: u64, usd: f64) -> BranchRow {
         BranchRow {
             branch: branch.to_owned(),
-            last_call: last.map(str::to_owned),
+            last_call: last.and_then(|t| t.parse().ok()),
             usage: usage(calls, tokens),
             cost: cost(usd, 0),
             ..BranchRow::default()
@@ -754,6 +761,22 @@ mod tests {
         // The chart labels use dates, never the branch name.
         let chart = md.split("```mermaid").nth(1).unwrap_or("");
         assert!(!chart.contains("script"), "{md}");
+    }
+
+    #[test]
+    fn control_and_bidi_characters_never_reach_project_markdown_or_svg() {
+        let mut r = exact();
+        let name = "b\u{1b}[31m\u{202e}x\u{85}".to_owned();
+        r.rows[0].branch.clone_from(&name);
+        r.series[0].branch = name;
+        for out in [project_markdown(&r), project_svg(&r)] {
+            let bad: Vec<char> = out
+                .chars()
+                .filter(|&c| c != '\n' && crate::text::is_unsafe_control(c))
+                .collect();
+            assert!(bad.is_empty(), "{bad:?}");
+        }
+        assert!(project_markdown(&r).contains("`b\u{FFFD}[31m\u{FFFD}x\u{FFFD}`"));
     }
 
     // ---- JSON ----

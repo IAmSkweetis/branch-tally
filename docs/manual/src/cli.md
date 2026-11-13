@@ -197,6 +197,22 @@ and `<!-- token-report:end -->` markers. It has, in order:
 
 With `--no-cost`, the cost columns are left out.
 
+#### Recorded text in the output
+
+Names in the report come from transcripts and the ledger, which repositories, plugins and
+contributors control. The Markdown report shows them as text, never as formatting:
+
+- Model ids, branches, session ids and worktree names are code spans, and so are the
+  **Subagent usage** table's subagent cell, the session table's **Agents** cell and the
+  **Breakdown by skill / agent** table's attribution cell. A session with several agents shows
+  each one as its own code span, and a session with none shows an em dash (—). Markdown, HTML,
+  links, `@mentions` and `#123` references inside a name stay literal on GitHub.
+- Control characters (C0, C1 and DEL) and the Unicode bidirectional-text controls are replaced
+  with `�` (U+FFFD), one for one. That applies to names, branches, model ids and the price
+  table's date in the Markdown report, to `project`'s Markdown and SVG output, and to every
+  message on stderr, so recorded text can't send escape sequences to your terminal or reorder
+  what a reader sees.
+
 **JSON** (`--format json`) is one object on stdout. Its top-level keys:
 
 | Key | Holds |
@@ -268,9 +284,13 @@ branch-tally report --pr             # write it to this branch's open PR
 branch-tally report --pr 42          # write it to PR #42
 ```
 
-Without a number, it looks up the open PR whose head is the branch. If the PR body already holds
-the `<!-- token-report:start -->` and `<!-- token-report:end -->` markers, the text between them is
-replaced. Otherwise a `## Token usage` section holding the report is appended to the body.
+Without a number, it looks up the open PR whose head is the branch. If the PR body holds a
+`<!-- token-report:start -->` line with a `<!-- token-report:end -->` line after it, everything
+from the first start line to the first end line after it is replaced, markers included. A marker
+counts only on a line of its own, as branch-tally writes it. A name in the previous report that
+happens to spell a marker sits inside a table row, so it can't cut the region short and leave old
+text behind. Prose elsewhere in the body that quotes a marker is left alone. Otherwise a
+`## Token usage` section holding the report is appended to the body.
 
 It tells you on stderr what happened: `Token usage table written to PR #N.`,
 `PR #N already up to date.`, or, with `--dry-run`, the new body on stdout followed by
@@ -312,9 +332,26 @@ identifiers.
 | ------- | ------- |
 | `warning: no price for <model> in the price table (as of <date>); the total is a floor` | A model has no price. Its tokens are counted, its cost is `—`, and the total is "at least". |
 | `note: skipped N transcript record(s): …` | Transcript lines that could not be used: malformed lines, records without a request id, or synthetic records. Counted, not hidden. |
+| `note: N record(s) had an unreadable timestamp; they were kept but are undated` | Transcript records whose timestamp is not strict RFC 3339 (see [Timestamps](#timestamps)). Each is still counted in calls, tokens and cost, but has no time. The timestamp text itself is never printed. Printed by `report` and `record`. |
 | `note: skipped N capture line(s) in .tally/captures.jsonl: …` | Hook capture lines that were malformed, written by an unsupported version, or of an unknown kind. Counted, not hidden. Printed by `report` and `record`. |
 | `note: git worktree list was unavailable, so worktree recovery was skipped` | `git worktree list` failed, so subagent calls in worktrees could not be recovered. |
 | The ledger notes | See [Report from the ledger](ledger.md#report-from-the-ledger). |
+
+Recorded text in these messages, such as a model id or a branch, has its control characters
+replaced with `�`, as described in [Recorded text in the output](#recorded-text-in-the-output).
+
+#### Timestamps
+
+A timestamp, in a transcript or a ledger line, is used only when it is strict RFC 3339: the date,
+a capital `T`, the time with optional fractional seconds, then `Z` or an offset written `+HH:MM`
+or `-HH:MM`. For example `2026-01-01T09:30:00Z` or `2026-01-01T10:30:00.250+01:00`. A space in
+place of the `T`, a lowercase `t` or `z`, an offset without its colon (`+0100`), or a date that
+doesn't exist (`2026-02-30`) makes the timestamp unreadable.
+
+A record with an unreadable timestamp is kept and counted, never dropped. It is treated as having
+no timestamp at all: in timeline mode it is ambiguous (see [Attribution modes](#attribution-modes)),
+hook captures can't place it, and `record` writes its ledger line without a `ts`. The count is
+reported in the `note: N record(s) had an unreadable timestamp; …` line above.
 
 ### Common errors
 

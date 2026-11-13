@@ -21,7 +21,7 @@ fn selected(id: &str, branch: &str, output: u64) -> SelectedRecord {
         },
     );
     r.model = Some("claude-x".to_owned());
-    r.ts = Some("2026-01-01T00:00:00Z".to_owned());
+    r.ts = "2026-01-01T00:00:00Z".parse().ok();
     SelectedRecord {
         attributed: AttributedRecord {
             record: r,

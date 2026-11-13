@@ -17,6 +17,7 @@ pub(crate) mod instant;
 mod project;
 mod subagent;
 mod summary;
+mod timestamp;
 
 pub use attributed::{AttributedRecord, BranchBasis, SelectedRecord, Selection};
 pub use capture::{CAPTURE_SCHEMA_VERSION, CaptureEvent, CaptureKind};
@@ -27,6 +28,7 @@ pub use summary::{
     Bucket, DefaultBranchSource, Footnote, HeuristicBreakdown, HeuristicCount, Mode, SessionRow,
     Summary, Unstamped, WorkBranchRule,
 };
+pub use timestamp::{InvalidTimestamp, Timestamp};
 
 /// The transcript root a record was read from (`origin` in `load_records` of
 /// `reference/token_report.py`): the main checkout's directory, or a worktree's.
@@ -198,8 +200,9 @@ pub struct Record {
     pub agent_id: Option<AgentId>,
     /// The dispatching session, when the source can tell this call belongs to a subagent file.
     pub parent_session: Option<SessionId>,
-    /// The timestamp as an ISO-8601 string, kept raw and not parsed.
-    pub ts: Option<String>,
+    /// The call's timestamp, checked once where the record was read. `None` when the transcript
+    /// had none or it was not strict RFC 3339 (the source counts those).
+    pub ts: Option<Timestamp>,
     /// The model id the call was served by.
     pub model: Option<String>,
     /// The working directory as recorded. Raw: it may be `D:\x` or `/d/x` form.
