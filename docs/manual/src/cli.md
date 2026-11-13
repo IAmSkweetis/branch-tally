@@ -541,7 +541,8 @@ described in [Hook captures](captures.md).
 ## `branch-tally ledger check`
 
 ```text
-branch-tally ledger check --base <REF> [--head-branch <NAME>] [--repo <PATH>]
+branch-tally ledger check --base <REF> [--head <REV>] [--head-branch <NAME>]
+  [--base-branch <NAME>] [--repo <PATH>]
 ```
 
 Compares `.tally/ledger.jsonl` and `.tally/captures.jsonl` in the working tree with the same files
@@ -552,7 +553,9 @@ pull request, with the base branch as `--base`. Why you would run it, and how, i
 | Option | Default | Does |
 | ------ | ------- | ---- |
 | `--base <REF>` | required | The ref to compare against, such as `origin/main` or a commit id. |
-| `--head-branch <NAME>` | current branch | The branch new ledger lines must be recorded for. Pass it on a detached checkout, as CI usually has. |
+| `--head <REV>` | working tree | Read the head's `.tally/ledger.jsonl`, `captures.jsonl` and `prices.toml` from this rev instead of the working tree. An unknown rev exits 1. |
+| `--head-branch <NAME>` | current branch | The branch new ledger lines must be recorded for. Required on a detached checkout, where the current branch cannot be told (exit 1 without it). |
+| `--base-branch <NAME>` | repository default branch | The base branch's name: new lines must not be recorded for it. Exit 1 if it is not given and the default branch cannot be found. It is never guessed from `--base`. |
 | `--repo <PATH>` | `.` | The repository. Any directory inside the checkout works. |
 
 The files are read from the working tree, so uncommitted changes are checked too. A file missing
@@ -609,7 +612,8 @@ recorded for the base branch that also repeats a base request gets both
 | ------------------------ | ----- |
 | `ledger check: cannot read ledger.jsonl at base '<REF>': …` | `--base` is not a ref or commit in this repository. In CI, fetch enough history for the base to be present. |
 | `ledger check: <path> is not inside a git checkout (…)` | `--repo`, or the current directory, is not in a git checkout. |
-| `ledger check: cannot tell the current branch (…); pass --head-branch` | The current branch could not be read. |
+| `ledger check: cannot tell the current branch (…); pass --head-branch` | The current branch could not be read, for example on a detached HEAD. |
+| `ledger check: cannot tell the base branch (…); pass --base-branch` | No `--base-branch`, and the repository has no `origin/HEAD`. |
 | `ledger check: refusing to use <path>: it is …` | `.tally`, `.tally/ledger.jsonl` or `.tally/captures.jsonl` in the working tree is a symbolic link or the wrong kind of file. See [Symbolic links are refused](ledger.md#symbolic-links-are-refused). |
 
 On a detached checkout, without `--head-branch`, every new ledger line fails the branch rule, so
