@@ -43,6 +43,20 @@ shell_under_test=$T/shell-under-test
 printf '#!/bin/sh\nexec %s "$@"\n' "$shell_cmd" > "$shell_under_test"
 chmod +x "$shell_under_test"
 
+# A PATH of symlinks to the stock tools the installer needs, so the host's own gh, cosign and curl
+# can never leak into a case. TOOLBIN has curl; TOOLBIN_NOCURL has neither curl nor wget.
+TOOLBIN=$T/toolbin
+TOOLBIN_NOCURL=$T/toolbin-nocurl
+mkdir -p "$TOOLBIN" "$TOOLBIN_NOCURL"
+for tool in sh dash bash ksh busybox awk sed tr wc cat mktemp rm cp mv chmod mkdir tar grep ls env head dirname \
+  sha256sum shasum gzip basename sleep; do
+  src=$(command -v "$tool" 2>/dev/null) || continue
+  case $src in /*) ;; *) continue ;; esac
+  ln -sf "$src" "$TOOLBIN/$tool"
+  ln -sf "$src" "$TOOLBIN_NOCURL/$tool"
+done
+if src=$(command -v curl 2>/dev/null); then ln -sf "$src" "$TOOLBIN/curl"; fi
+
 FAKEBIN=$T/fakebin
 mkdir -p "$FAKEBIN"
 cat > "$FAKEBIN/uname" <<UNAME
@@ -71,6 +85,7 @@ mk_release() {
   chmod +x "$stage/$name/branch-tally"
   echo LICENSE > "$stage/$name/LICENSE"
   echo README > "$stage/$name/README.md"
+  echo '{"fake":"bundle"}' > "$root/download/$tag/provenance.sigstore.json"
   tar -C "$stage" -czf "$root/download/$tag/$name.tar.gz" "$name"
   (cd "$root/download/$tag" && $sha_cmd "$name.tar.gz" >> SHA256SUMS)
   rm -rf "$stage"
@@ -95,14 +110,80 @@ fresh() {
   S=$T/$1
   R=$S/release
   D=$S/dest
-  mkdir -p "$S/home" "$S/tmp" "$R"
+  mkdir -p "$S/home" "$S/tmp" "$R" "$S/stubs"
+  : > "$S/gh.log"
+  : > "$S/cosign.log"
+  : > "$S/curl.log"
+  : > "$S/wget.log"
+}
+
+# mk_gh <auth rc> <verify rc>: a gh stub that logs its arguments, one per line, to $S/gh.log.
+mk_gh() {
+  cat > "$S/stubs/gh" <<GH
+#!/bin/sh
+for a in "\$@"; do printf '%s\n' "\$a" >> "$S/gh.log"; done
+case "\$1 \$2" in
+  "auth status") exit $1 ;;
+  "attestation verify") exit $2 ;;
+esac
+exit 99
+GH
+  chmod +x "$S/stubs/gh"
+}
+
+# mk_cosign <rc>: a cosign stub that logs its arguments, one per line, to $S/cosign.log.
+mk_cosign() {
+  cat > "$S/stubs/cosign" <<COSIGN
+#!/bin/sh
+for a in "\$@"; do printf '%s\n' "\$a" >> "$S/cosign.log"; done
+exit $1
+COSIGN
+  chmod +x "$S/stubs/cosign"
+}
+
+# mk_curl: a curl stub standing in for the network. It logs its arguments to $S/curl.log and serves
+# https://mirror.example.test/... from $R.
+mk_curl() {
+  cat > "$S/stubs/curl" <<CURL
+#!/bin/sh
+out= url=
+while [ \$# -gt 0 ]; do
+  printf '%s\n' "\$1" >> "$S/curl.log"
+  case \$1 in
+    -o) out=\$2; shift ;;
+    http*) url=\$1 ;;
+  esac
+  shift
+done
+cp "$R/\${url#https://mirror.example.test/}" "\$out"
+CURL
+  chmod +x "$S/stubs/curl"
+}
+
+# mk_wget: like mk_curl, for wget. Advertises --https-only.
+mk_wget() {
+  cat > "$S/stubs/wget" <<WGET
+#!/bin/sh
+if [ "\${1:-}" = --help ]; then echo "  --https-only  only follow secure HTTPS links"; exit 0; fi
+out= url=
+while [ \$# -gt 0 ]; do
+  printf '%s\n' "\$1" >> "$S/wget.log"
+  case \$1 in
+    -O) out=\$2; shift ;;
+    http*) url=\$1 ;;
+  esac
+  shift
+done
+cp "$R/\${url#https://mirror.example.test/}" "\$out"
+WGET
+  chmod +x "$S/stubs/wget"
 }
 
 # run_install <env assignments and command...>: runs in the sandbox; sets $rc, $out, $err.
 run_install() {
   out=$S/out
   err=$S/err
-  env -i PATH="$FAKEBIN:$PATH" HOME="$S/home" TMPDIR="$S/tmp" \
+  env -i PATH="$S/stubs:$FAKEBIN:${TOOLS:-$TOOLBIN}" HOME="$S/home" TMPDIR="$S/tmp" \
     FAKE_UNAME_S="${FAKE_UNAME_S:-Linux}" FAKE_UNAME_M="${FAKE_UNAME_M:-x86_64}" \
     FAKE_PROC_TRANSLATED="${FAKE_PROC_TRANSLATED:-0}" \
     BRANCH_TALLY_INSTALL_BASE_URL="file://$R" "$@" >"$out" 2>"$err" </dev/null
@@ -219,9 +300,9 @@ mk_release "$R" v2.0.0 $X 2.0.0
 mk_latest "$R" v2.0.0
 sh_run --to "$D"
 check "PATH hint shown when dir is not on PATH" contains "$out" "export PATH=\"$D:\$PATH\""
-run_install PATH="$D:$FAKEBIN:$PATH" "$shell_under_test" "$installer" --to "$D"
+run_install PATH="$D:$FAKEBIN:$TOOLBIN" "$shell_under_test" "$installer" --to "$D"
 check "no PATH hint when dir is on PATH" lacks "$out" "export PATH"
-run_install PATH="$D/:$FAKEBIN:$PATH" "$shell_under_test" "$installer" --to "$D"
+run_install PATH="$D/:$FAKEBIN:$TOOLBIN" "$shell_under_test" "$installer" --to "$D"
 check "no PATH hint when PATH has a trailing-slash form" lacks "$out" "export PATH"
 check "installer does not write into HOME (no rc edits)" empty_dir "$S/home"
 
@@ -292,6 +373,194 @@ check "--help exits 0" test "$rc" -eq 0
 check "--help documents --to" contains "$out" "--to"
 sh_run --bogus
 check "unknown flag exits non-zero" test "$rc" -ne 0
+
+# 12. Provenance. The checksum is an integrity check; only the attestation proves origin.
+# 12a. gh logged in and the attestation verifies: installs, and gh was pinned to this repository.
+fresh gh_pass
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_gh 0 0
+sh_run --to "$D"
+check "gh pass exits 0" test "$rc" -eq 0
+check "gh pass installs" test -x "$D/branch-tally"
+check "gh pass ran attestation verify" contains "$S/gh.log" "attestation"
+check "gh pass pins the repository" contains "$S/gh.log" "IAmSkweetis/branch-tally"
+check "gh pass uses --repo" contains "$S/gh.log" "--repo"
+check "gh pass verifies the archive" contains "$S/gh.log" "branch-tally-v2.0.0-$X.tar.gz"
+check "gh pass says provenance was verified" contains "$out" "Provenance verified"
+
+# 12b. gh logged in and verification fails: hard failure, nothing installed, no cosign fallback.
+fresh gh_fail
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_gh 0 1
+mk_cosign 0
+sh_run --to "$D"
+check "gh fail exits non-zero" test "$rc" -ne 0
+check "gh fail installs nothing" test ! -e "$D/branch-tally"
+check "gh fail says attestation" contains "$err" "attestation"
+check "gh fail does not fall back to cosign" test ! -s "$S/cosign.log"
+check "gh fail leaves no temp files" empty_dir "$S/tmp"
+
+# 12c. A checksum failure stops before any provenance tool runs.
+fresh gh_after_sum
+mk_release "$R" v2.0.0 $X 2.0.0
+break_sums "$R" v2.0.0
+mk_latest "$R" v2.0.0
+mk_gh 0 0
+sh_run --to "$D"
+check "bad checksum exits non-zero" test "$rc" -ne 0
+check "bad checksum never reaches gh attestation" lacks "$S/gh.log" "attestation"
+
+# 12d. gh not logged in, cosign present and verifies: the bundle is checked against this repository's
+# release workflow and the GitHub Actions issuer.
+fresh cosign_pass
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_gh 1 0
+mk_cosign 0
+sh_run --to "$D"
+check "cosign pass exits 0" test "$rc" -eq 0
+check "cosign pass installs" test -x "$D/branch-tally"
+check "cosign pass did not run gh attestation verify" lacks "$S/gh.log" "attestation"
+check "cosign pass uses the bundle" contains "$S/cosign.log" "provenance.sigstore.json"
+check "cosign pass pins the workflow identity" contains "$S/cosign.log" '/IAmSkweetis/branch-tally/\.github/workflows/release\.yml@'
+check "cosign pass pins the issuer" contains "$S/cosign.log" "https://token.actions.githubusercontent.com"
+check "cosign pass verifies the archive" contains "$S/cosign.log" "branch-tally-v2.0.0-$X.tar.gz"
+check "cosign pass says provenance was verified" contains "$out" "Provenance verified"
+
+# 12e. cosign verification fails: hard failure.
+fresh cosign_fail
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_cosign 1
+sh_run --to "$D"
+check "cosign fail exits non-zero" test "$rc" -ne 0
+check "cosign fail installs nothing" test ! -e "$D/branch-tally"
+check "cosign fail says attestation" contains "$err" "attestation"
+
+# 12f. cosign present but the release has no bundle: provenance could not be checked.
+fresh cosign_nobundle
+mk_release "$R" v2.0.0 $X 2.0.0
+rm "$R/download/v2.0.0/provenance.sigstore.json"
+mk_latest "$R" v2.0.0
+mk_cosign 0
+sh_run --to "$D"
+check "no bundle installs with a warning" test "$rc" -eq 0
+check "no bundle warns provenance was not verified" contains "$err" "NOT verified"
+check "no bundle never ran cosign" test ! -s "$S/cosign.log"
+rm -rf "$D"
+sh_run --require-attestation --to "$D"
+check "no bundle with --require-attestation fails" test "$rc" -ne 0
+
+# 12g. Neither tool: warn plainly, print the command, install. Strict mode fails instead.
+fresh unavailable
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+sh_run --to "$D"
+check "unavailable exits 0" test "$rc" -eq 0
+check "unavailable installs" test -x "$D/branch-tally"
+check "unavailable warns provenance was not verified" contains "$err" "NOT verified"
+check "unavailable says the checksum is only an integrity check" contains "$err" "integrity"
+check "unavailable prints the gh command" contains "$err" "gh attestation verify"
+check "unavailable prints the repository" contains "$err" "--repo IAmSkweetis/branch-tally"
+rm -rf "$D"
+sh_run --require-attestation --to "$D"
+check "--require-attestation with no tool exits non-zero" test "$rc" -ne 0
+check "--require-attestation with no tool installs nothing" test ! -e "$D/branch-tally"
+check "--require-attestation says why" contains "$err" "attestation"
+run_install BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION=1 "$shell_under_test" "$installer" --to "$D"
+check "BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION=1 exits non-zero" test "$rc" -ne 0
+check "BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION=1 installs nothing" test ! -e "$D/branch-tally"
+run_install BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION=0 "$shell_under_test" "$installer" --to "$D"
+check "BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION=0 does not require it" test "$rc" -eq 0
+
+# 12h. Strict mode with a tool that verifies succeeds.
+fresh strict_ok
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_gh 0 0
+sh_run --require-attestation --to "$D"
+check "--require-attestation with a passing gh exits 0" test "$rc" -eq 0
+
+# 12i. gh on PATH but not logged in, no cosign: unavailable.
+fresh gh_loggedout
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_gh 1 0
+sh_run --require-attestation --to "$D"
+check "logged-out gh with no cosign is unavailable (strict fails)" test "$rc" -ne 0
+check "logged-out gh never ran attestation verify" lacks "$S/gh.log" "attestation"
+
+# 13. F-06: mirror URL scheme.
+fresh scheme
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+for bad in http://mirror.example.test ftp://mirror.example.test mirror.example.test; do
+  run_install BRANCH_TALLY_INSTALL_BASE_URL="$bad" "$shell_under_test" "$installer" --to "$D"
+  check "mirror '$bad' is rejected" test "$rc" -ne 0
+  check "mirror '$bad' says https or file" contains "$err" "https://"
+  check "mirror '$bad' installs nothing" test ! -e "$D/branch-tally"
+done
+
+# 13b. A mirror is announced.
+sh_run --to "$D"
+check "a file:// mirror prints the effective source" contains "$out" "file://$R"
+
+# 13c. Over https, curl is held to HTTPS and TLS 1.2+.
+fresh curlflags
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_curl
+run_install BRANCH_TALLY_INSTALL_BASE_URL=https://mirror.example.test "$shell_under_test" "$installer" --to "$D"
+check "https mirror install exits 0" test "$rc" -eq 0
+check "https mirror prints the effective source" contains "$out" "https://mirror.example.test"
+check "curl gets --proto" contains "$S/curl.log" "--proto"
+check "curl is restricted to https" contains "$S/curl.log" "=https"
+check "curl gets --tlsv1.2" contains "$S/curl.log" "--tlsv1.2"
+check "curl restricts redirects to https" contains "$S/curl.log" "--proto-redir"
+
+# 13d. wget (no curl) is held to HTTPS where it can be.
+fresh wgetflags
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_wget
+TOOLS=$TOOLBIN_NOCURL run_install BRANCH_TALLY_INSTALL_BASE_URL=https://mirror.example.test "$shell_under_test" "$installer" --to "$D"
+check "wget https mirror install exits 0" test "$rc" -eq 0
+check "wget gets --https-only" contains "$S/wget.log" "--https-only"
+
+# 14. F-06: a tag read from the remote SHA256SUMS must be vMAJOR.MINOR.PATCH.
+fresh badtag
+for badname in "branch-tally-vevil-$X.tar.gz" "branch-tally-v1.2-$X.tar.gz" "branch-tally-v1.2.3.4-$X.tar.gz" "branch-tally-v../../x-$X.tar.gz"; do
+  rm -rf "$R"
+  mkdir -p "$R/latest/download"
+  printf '%s  %s\n' 0000000000000000000000000000000000000000000000000000000000000000 "$badname" > "$R/latest/download/SHA256SUMS"
+  sh_run --to "$D"
+  check "remote tag in '$badname' is rejected" test "$rc" -ne 0
+  check "remote tag in '$badname' is named in the error" contains "$err" "not of the form vMAJOR.MINOR.PATCH"
+  check "remote tag in '$badname' installs nothing" test ! -e "$D/branch-tally"
+done
+
+# 15. F-06: a truncated download must not run partway. Cut the script just before its end.
+fresh truncated
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+size=$(wc -c < "$installer")
+head -c $((size - 150)) "$installer" > "$S/truncated.sh"
+run_install "$shell_under_test" "$S/truncated.sh" --to "$D"
+check "a truncated script exits non-zero" test "$rc" -ne 0
+check "a truncated script installs nothing" test ! -e "$D/branch-tally"
+check "a truncated script prints nothing of the install" lacks "$out" "Installing"
+
+# 16. Help documents the new options.
+fresh helpnew
+sh_run --help
+check "--help documents --require-attestation" contains "$out" "--require-attestation"
+check "--help documents the env variable" contains "$out" "BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION"
+check "--help calls the checksum an integrity check" contains "$out" "integrity"
+check "--help mentions gh attestation verify" contains "$out" "gh attestation verify"
+check "--help mentions cosign" contains "$out" "cosign"
+check "--help limits mirrors to https and file" contains "$out" "file://"
 
 printf '\n%s cases run, %s failed\n' "$cases" "$failures"
 [ "$failures" -eq 0 ] && [ "$cases" -gt 0 ]

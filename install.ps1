@@ -8,14 +8,31 @@ the release's SHA256SUMS, and installs branch-tally.exe. A checksum mismatch, or
 from SHA256SUMS, is a hard failure and nothing is installed. Never edits the user PATH: if the install
 directory is not on PATH, the exact command to add it is printed.
 
+The checksum is an integrity check: it catches a corrupt or truncated download, and it does not prove
+who built the archive, because the checksum file comes from the same place as the archive. Only the
+build-provenance attestation proves origin. After the checksum check this script verifies it, using
+the first of these that is available:
+
+  1. gh, logged in:  gh attestation verify <archive> --repo IAmSkweetis/branch-tally
+  2. cosign:         verifies the release's provenance.sigstore.json, with the signer pinned to this
+                     repository's .github/workflows/release.yml and the GitHub Actions issuer.
+  3. neither:        warns that provenance was NOT verified, prints the command to run, and installs.
+                     -RequireAttestation turns this warning into a failure.
+
+A verification that runs and fails is always a hard failure: nothing is installed.
+
 One line:  irm https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install.ps1 | iex
 
 `irm | iex` cannot pass parameters, so each has an environment variable. A parameter overrides it.
 
   -Version             BRANCH_TALLY_INSTALL_VERSION             vX.Y.Z, or latest (the default)
   -To                  BRANCH_TALLY_INSTALL_DIR                 default: %USERPROFILE%\.local\bin
-                       BRANCH_TALLY_INSTALL_BASE_URL            release mirror (default: the GitHub
-                                                                releases URL of the repository)
+  -RequireAttestation  BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION 1, true or yes: fail unless provenance
+                                                                was verified
+                       BRANCH_TALLY_INSTALL_BASE_URL            release mirror, https:// or file://
+                                                                only (default: the GitHub releases URL
+                                                                of the repository). The effective
+                                                                source is printed when it is set.
 
 .PARAMETER Version
 Release to install, such as v0.4.0. Default: latest.
@@ -23,16 +40,22 @@ Release to install, such as v0.4.0. Default: latest.
 .PARAMETER To
 Directory to install into. Default: %USERPROFILE%\.local\bin.
 
+.PARAMETER RequireAttestation
+Fail unless the archive's build provenance was verified with gh or cosign. Without it, a machine with
+neither installs with a warning.
+
 #>
 param(
   [string]$Version,
-  [string]$To
+  [string]$To,
+  [switch]$RequireAttestation
 )
 
 function Install-BranchTally {
   param(
     [string]$Version,
-    [string]$To
+    [string]$To,
+    [bool]$RequireAttestation
   )
 
   Set-StrictMode -Version Latest
@@ -40,17 +63,32 @@ function Install-BranchTally {
   $ProgressPreference = 'SilentlyContinue'
 
   $repo = 'IAmSkweetis/branch-tally'
+  $defaultBase = "https://github.com/$repo/releases"
+  $issuer = 'https://token.actions.githubusercontent.com'
+  # The signer must be this repository's release workflow, on any ref it runs from.
+  $identityRegexp = '^https://github\.com/IAmSkweetis/branch-tally/\.github/workflows/release\.yml@refs/(heads|tags)/.+$'
 
   if ([string]::IsNullOrEmpty($Version)) { $Version = $env:BRANCH_TALLY_INSTALL_VERSION }
   if ([string]::IsNullOrEmpty($Version)) { $Version = 'latest' }
   if ([string]::IsNullOrEmpty($To)) { $To = $env:BRANCH_TALLY_INSTALL_DIR }
   $base = $env:BRANCH_TALLY_INSTALL_BASE_URL
-  if ([string]::IsNullOrEmpty($base)) { $base = "https://github.com/$repo/releases" }
+  if ([string]::IsNullOrEmpty($base)) { $base = $defaultBase }
   $base = $base.TrimEnd('/')
+  if (-not $RequireAttestation) {
+    $RequireAttestation = $env:BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION -match '^(1|true|yes)$'
+  }
+
+  # The release source must be https:// or file://, as for `branch-tally update`. Plain http is
+  # refused: it would let anyone on the path replace both the archive and its checksum.
+  if ($base -notmatch '^(https|file)://') {
+    $shown = $base -replace '[^A-Za-z0-9._/:@=+-]', ''
+    throw "BRANCH_TALLY_INSTALL_BASE_URL must start with https:// or file:// (got '$shown')"
+  }
+  if ($base -ne $defaultBase) { Write-Output "Using release mirror: $base" }
 
   if ($Version -ne 'latest') {
     if (-not $Version.StartsWith('v')) { $Version = "v$Version" }
-    if ($Version -notmatch '^v\d+\.\d+\.\d+$') {
+    if ($Version -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') {
       throw "version '$Version' is not of the form vMAJOR.MINOR.PATCH"
     }
   }
@@ -86,10 +124,12 @@ function Install-BranchTally {
   }
 
   try {
+    # TLS 1.2 and newer only: no SSL3, TLS 1.0 or 1.1 fallback.
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     [Net.ServicePointManager]::SecurityProtocol =
-      [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+      [Net.ServicePointManager]::SecurityProtocol -bor ([Net.SecurityProtocolType]'Tls13')
   } catch {
-    # Newer runtimes negotiate TLS themselves.
+    # Newer runtimes negotiate TLS themselves, and Windows PowerShell 5.1 may lack the Tls13 value.
     $null = $_
   }
 
@@ -101,6 +141,73 @@ function Install-BranchTally {
     } else {
       Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing
     }
+  }
+
+  function Invoke-Native {
+    # Runs a native command, capturing its exit code and combined output without letting stderr
+    # text trip $ErrorActionPreference = 'Stop' (Windows PowerShell 5.1 does that).
+    param([string]$File, [string[]]$ArgumentList)
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+      $text = (& $File @ArgumentList 2>&1 | Out-String)
+      return @{ Code = $LASTEXITCODE; Out = $text }
+    } finally {
+      $ErrorActionPreference = $old
+    }
+  }
+
+  function Write-Unverified {
+    param([string]$Reason)
+    if ($RequireAttestation) {
+      throw "build provenance could not be verified ($Reason) and -RequireAttestation is set; nothing installed. Install gh or cosign, or run: gh attestation verify $archive --repo $repo"
+    }
+    [Console]::Error.WriteLine("install.ps1: warning: provenance NOT verified: $Reason.")
+    [Console]::Error.WriteLine('The checksum is an integrity check only; it does not prove who built this archive.')
+    [Console]::Error.WriteLine("To verify it yourself, download $url/$archive and run:")
+    [Console]::Error.WriteLine("  gh attestation verify $archive --repo $repo")
+  }
+
+  function Confirm-Provenance {
+    # Verifies the downloaded archive's attestation. Returns when verified, or when no tool could
+    # check it and it is not required. Throws when a verification ran and failed.
+    param([string]$Zip, [string]$Dir)
+    $gh = Get-Command gh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($gh) {
+      $auth = Invoke-Native $gh.Source @('auth', 'status')
+      if ($auth.Code -eq 0) {
+        $r = Invoke-Native $gh.Source @('attestation', 'verify', $Zip, '--repo', $repo)
+        if ($r.Code -eq 0) {
+          Write-Output "Provenance verified with gh: $archive was built by $repo"
+          return
+        }
+        [Console]::Error.Write($r.Out)
+        throw "attestation verification failed for $archive; nothing installed"
+      }
+    }
+    $cosign = Get-Command cosign -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($cosign) {
+      $bundle = Join-Path $Dir 'provenance.sigstore.json'
+      $haveBundle = $true
+      try { Get-Remote "$url/provenance.sigstore.json" $bundle } catch { $haveBundle = $false }
+      if (-not $haveBundle) {
+        Write-Unverified 'cosign is installed but the release has no provenance.sigstore.json'
+        return
+      }
+      $r = Invoke-Native $cosign.Source @(
+        'verify-blob-attestation', '--bundle', $bundle, '--new-bundle-format',
+        '--type', 'slsaprovenance1',
+        '--certificate-identity-regexp', $identityRegexp,
+        '--certificate-oidc-issuer', $issuer,
+        $Zip)
+      if ($r.Code -eq 0) {
+        Write-Output "Provenance verified with cosign: $archive was built by $repo's release workflow"
+        return
+      }
+      [Console]::Error.Write($r.Out)
+      throw "attestation verification failed for $archive; nothing installed"
+    }
+    Write-Unverified 'neither gh (logged in) nor cosign is available'
   }
 
   function Get-ExpectedHash {
@@ -131,7 +238,7 @@ function Install-BranchTally {
         throw "could not download $base/latest/download/SHA256SUMS"
       }
       $tag = $null
-      $pattern = '^branch-tally-(v\d+\.\d+\.\d+)-' + [regex]::Escape($target) + '\.zip$'
+      $pattern = '^branch-tally-(v[0-9]+\.[0-9]+\.[0-9]+)-' + [regex]::Escape($target) + '\.zip$'
       foreach ($line in [System.IO.File]::ReadAllLines($latestSums)) {
         $parts = $line.Trim() -split '\s+'
         if ($parts.Count -ge 2 -and $parts[1].TrimStart('*') -match $pattern) {
@@ -160,6 +267,9 @@ function Install-BranchTally {
     if ($actual -ne $expected) {
       throw "checksum mismatch for $archive (expected $expected, got $actual); nothing installed"
     }
+    Write-Output 'Checksum OK (an integrity check; it does not prove who built the archive)'
+
+    Confirm-Provenance $zip $tmp
 
     $extract = Join-Path $tmp 'x'
     Expand-Archive -LiteralPath $zip -DestinationPath $extract
@@ -204,7 +314,7 @@ function Install-BranchTally {
 }
 
 try {
-  Install-BranchTally -Version $Version -To $To
+  Install-BranchTally -Version $Version -To $To -RequireAttestation ([bool]$RequireAttestation)
 } catch {
   [Console]::Error.WriteLine("install.ps1: error: $($_.Exception.Message)")
   # Run as a file, exit with a status. Under `irm | iex`, exiting would close the user's terminal.
