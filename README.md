@@ -5,7 +5,7 @@
 branch-tally is a utility to help you track AI costs across multiple workspaces, agents and
 worktrees. Claude Code is the only harness supported today. It reads local transcripts and assigns
 calls to a record in a ledger. Persisting the ledger is opt-in: `branch-tally record` writes only
-in a repository that has a `.tally/` directory.
+in a repository that has a `.tally/` directory, or to a file named with `--ledger`.
 
 The ledger only stores relevant metadata from the transcript. Prompts and messages are never
 stored.
