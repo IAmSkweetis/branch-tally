@@ -56,7 +56,8 @@ The full list, and what CI runs on top, is in
 ## Making a change
 
 1. **Find or open an issue.** Planned work is tracked in the
-   [`v1` milestone](https://github.com/IAmSkweetis/branch-tally/milestone/1).
+   [`v1` milestone](https://github.com/IAmSkweetis/branch-tally/milestone/1). A small change can
+   skip this and say why in the PR.
 2. **Branch from an up-to-date `main`**, named per
    [Conventional Branch](https://conventionalbranch.org/): `feat/issue-4-report-command`,
    `fix/…`, `chore/…`. The `pre-push` hook rejects anything else, and any push to `main`.
