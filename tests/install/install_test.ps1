@@ -704,7 +704,7 @@ Test-Case 'token on failure: never printed' (($res.Out + $res.Err) -notlike '*gh
 
 # 13h. Static checks of the redirect handling, since no https server is available to the suite.
 $src = [IO.File]::ReadAllText($installer)
-Test-Case 'Get-Remote turns automatic redirects off' ($src -like '*-MaximumRedirection 0*')
+Test-Case 'Get-Remote turns automatic redirects off' ($src.Contains('MaximumRedirection = 0;'))
 Test-Case 'the latest lookup has a 30 second timeout that every hop uses' ($src.Contains('$json $headers 30') -and $src.Contains('$request[''TimeoutSec''] = $TimeoutSec'))
 Test-Case 'Get-Remote has a hop limit' ($src -like '*$maxRedirects*')
 Test-Case 'Get-Remote refuses a non-https hop' ($src -like '*refusing to follow a non-https redirect*')
