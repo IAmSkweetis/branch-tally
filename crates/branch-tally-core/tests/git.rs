@@ -180,3 +180,96 @@ fn failure_outside_a_repo_is_observable() {
         Err(GitError::Failed { .. })
     ));
 }
+
+fn commit_file(dir: &Path, rel: &str, bytes: &[u8]) {
+    let full = dir.join(rel);
+    std::fs::create_dir_all(full.parent().expect("parent")).expect("mkdir");
+    std::fs::write(&full, bytes).expect("write");
+    git(dir, &["add", rel]);
+    git(dir, &["commit", "-q", "-m", "add"]);
+}
+
+#[test]
+fn file_at_returns_the_bytes_at_the_ref_not_the_working_tree() {
+    let f = fixture();
+    let bytes = b"one\r\n\xff\x00two\n";
+    commit_file(&f.main, ".tally/ledger.jsonl", bytes);
+    git(&f.main, &["branch", "base"]);
+    std::fs::write(f.main.join(".tally/ledger.jsonl"), b"edited").expect("write");
+    let got = SystemGit
+        .file_at(&f.main, "base", Path::new(".tally/ledger.jsonl"))
+        .expect("file_at");
+    assert_eq!(got.as_deref(), Some(&bytes[..]));
+}
+
+#[test]
+fn file_at_builds_the_spec_from_components_not_os_separators() {
+    let f = fixture();
+    commit_file(&f.main, "a/b/c.txt", b"x");
+    let nested: PathBuf = ["a", "b", "c.txt"].iter().collect();
+    let got = SystemGit.file_at(&f.main, "HEAD", &nested).expect("ok");
+    assert_eq!(got.as_deref(), Some(&b"x"[..]));
+}
+
+#[test]
+fn file_at_missing_path_is_none() {
+    let f = fixture();
+    let got = SystemGit
+        .file_at(&f.main, "HEAD", Path::new(".tally/ledger.jsonl"))
+        .expect("ok");
+    assert_eq!(got, None);
+}
+
+#[test]
+fn file_at_unknown_ref_is_a_typed_error_not_none() {
+    let f = fixture();
+    let err = SystemGit
+        .file_at(&f.main, "no-such-ref", Path::new("x"))
+        .expect_err("unknown ref");
+    assert!(matches!(err, GitError::Failed { .. }), "got {err:?}");
+}
+
+#[test]
+fn file_at_refuses_a_rev_that_looks_like_an_option() {
+    let f = fixture();
+    let err = SystemGit
+        .file_at(&f.main, "--help", Path::new("x"))
+        .expect_err("option injection");
+    assert!(
+        matches!(err, GitError::InvalidArgument { what: "rev" }),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn file_at_refuses_paths_that_are_not_repository_relative() {
+    let f = fixture();
+    for bad in ["", "../x", "a/../../x", "/etc/passwd"] {
+        let err = SystemGit
+            .file_at(&f.main, "HEAD", Path::new(bad))
+            .expect_err(bad);
+        assert!(
+            matches!(err, GitError::InvalidArgument { what: "path" }),
+            "{bad:?}: {err:?}"
+        );
+    }
+}
+
+#[test]
+fn file_at_outside_a_repo_is_a_typed_error() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let err = SystemGit
+        .file_at(tmp.path(), "HEAD", Path::new("x"))
+        .expect_err("not a repo");
+    assert!(matches!(err, GitError::Failed { .. }), "got {err:?}");
+}
+
+#[test]
+fn file_at_error_text_carries_no_file_contents() {
+    let f = fixture();
+    commit_file(&f.main, "secret.txt", b"TOPSECRET-CONTENT");
+    let err = SystemGit
+        .file_at(&f.main, "nope", Path::new("secret.txt"))
+        .expect_err("unknown ref");
+    assert!(!format!("{err} {err:?}").contains("TOPSECRET"));
+}
