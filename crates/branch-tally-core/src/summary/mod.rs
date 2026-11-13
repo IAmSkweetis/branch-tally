@@ -287,11 +287,13 @@ fn add_subagent(
     add(&mut by_model[m].1, r);
 }
 
-/// `attributionSkill`, else `agent:<name>` for a sidechain, else `main`. Empty strings are falsy.
+/// `agent:<name>` for a sidechain record (`agent:subagent` when unnamed), else `attributionSkill`,
+/// else `main`. Empty strings are falsy.
+///
+/// The agent beats the skill: a subagent dispatched under a skill carries `attributionSkill`, and
+/// keying on it would drop the call from the Agents column and fold it into the skill row (#70).
+/// This deliberately diverges from `token_report.py`, which checks the skill first.
 fn attribution_key(r: &crate::model::Record) -> String {
-    if let Some(skill) = r.attribution.skill.as_deref().filter(|s| !s.is_empty()) {
-        return skill.to_owned();
-    }
     if r.is_sidechain {
         let agent = r
             .attribution
@@ -300,6 +302,9 @@ fn attribution_key(r: &crate::model::Record) -> String {
             .filter(|a| !a.is_empty())
             .unwrap_or("subagent");
         return format!("agent:{agent}");
+    }
+    if let Some(skill) = r.attribution.skill.as_deref().filter(|s| !s.is_empty()) {
+        return skill.to_owned();
     }
     "main".to_owned()
 }
@@ -395,5 +400,74 @@ mod tests {
         ];
         assert_eq!(count_unstamped(&recs, Mode::Strict), un(1, 100));
         assert_eq!(count_unstamped(&recs, Mode::Timeline), un(1, 100));
+    }
+
+    fn keyed(sidechain: bool, agent: Option<&str>, skill: Option<&str>) -> Record {
+        let mut r = Record::new(
+            Harness::ClaudeCode,
+            SessionId::new("s"),
+            RequestId::new("r"),
+            Usage::default(),
+        );
+        r.is_sidechain = sidechain;
+        r.attribution.agent = agent.map(str::to_owned);
+        r.attribution.skill = skill.map(str::to_owned);
+        r
+    }
+
+    #[test]
+    fn sidechain_with_skill_is_keyed_by_agent_not_skill() {
+        assert_eq!(
+            attribution_key(&keyed(true, Some("worker"), Some("review"))),
+            "agent:worker"
+        );
+        assert_eq!(
+            attribution_key(&keyed(true, None, Some("review"))),
+            "agent:subagent"
+        );
+    }
+
+    #[test]
+    fn sidechain_without_skill_is_keyed_by_agent() {
+        assert_eq!(
+            attribution_key(&keyed(true, Some("worker"), None)),
+            "agent:worker"
+        );
+    }
+
+    #[test]
+    fn main_with_skill_keeps_the_skill_key() {
+        assert_eq!(
+            attribution_key(&keyed(false, None, Some("review"))),
+            "review"
+        );
+    }
+
+    #[test]
+    fn main_without_skill_is_main() {
+        assert_eq!(attribution_key(&keyed(false, None, None)), "main");
+    }
+
+    #[test]
+    fn sidechain_skill_records_reach_the_agents_set_and_keep_totals() {
+        let mut a = attributed("s", "feat/x", BranchBasis::Stamped, 10);
+        a.record.is_sidechain = true;
+        a.record.attribution.agent = Some("worker".to_owned());
+        a.record.attribution.skill = Some("review".to_owned());
+        let sel = [SelectedRecord {
+            attributed: a,
+            kept_by: Selection::Exact,
+        }];
+        let s = summarize(
+            "feat/x",
+            Mode::Claim,
+            &sel,
+            (0, 0),
+            HeuristicCount::default(),
+        );
+        let keys: Vec<_> = s.by_attribution.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys, ["agent:worker"]);
+        assert!(s.sessions[0].1.agents.contains("worker"));
+        assert_eq!(s.sessions[0].1.tokens, 10);
     }
 }

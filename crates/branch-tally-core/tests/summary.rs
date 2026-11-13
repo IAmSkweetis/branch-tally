@@ -120,6 +120,7 @@ fn tables_are_first_seen_ordered() {
 #[test]
 fn attribution_key_rules_mirror_python_falsiness() {
     let s = run(vec![
+        rec("s", "feat/x").skill(Some("sk")),
         rec("s", "feat/x").skill(Some("sk")).side(Some("ag")),
         rec("s", "feat/x").skill(Some("")).side(Some("ag")),
         rec("s", "feat/x").skill(None).side(Some("")),
@@ -136,7 +137,7 @@ fn attribution_key_rules_mirror_python_falsiness() {
         attrs,
         vec![
             ("sk", 1),
-            ("agent:ag", 1),
+            ("agent:ag", 2),
             ("agent:subagent", 2),
             ("main", 2)
         ]
