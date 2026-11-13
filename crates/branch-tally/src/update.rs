@@ -205,146 +205,18 @@ impl ReleaseClient for HttpClient {
 }
 
 /// The `tag_name` of a latest-release response, validated as `vMAJOR.MINOR.PATCH`.
-fn latest_tag_from_api(body: &[u8]) -> Result<String, String> {
-    let tag = top_level_string(body, "tag_name")?;
-    match Version::parse(&tag) {
-        Ok(version) if tag.starts_with('v') && version.tag() == tag => Ok(tag),
-        _ => Err("GitHub API: tag_name was not vMAJOR.MINOR.PATCH".to_owned()),
-    }
-}
-
-/// The string value of a top-level `key` in a JSON object, and nothing else.
 ///
-/// The binary does not depend on a JSON crate, so this is a strict scanner for the one shape it
-/// needs. Nested values are skipped with string-awareness, so a `tag_name` inside `assets` or
-/// `author` is never taken. Anything malformed, a duplicate key, a non-string value, or a value
-/// with an escape sequence is an error: a tag never needs one.
-fn top_level_string(body: &[u8], key: &str) -> Result<String, String> {
-    let bad = || "GitHub API: the response was not the expected JSON".to_owned();
-    let mut at = Scanner { bytes: body, at: 0 };
-    at.space();
-    at.expect(b'{').ok_or_else(bad)?;
-    let mut found: Option<String> = None;
-    at.space();
-    if at.peek() == Some(b'}') {
-        return Err("GitHub API: the response had no tag_name".to_owned());
-    }
-    loop {
-        at.space();
-        let name = at.string().ok_or_else(bad)?;
-        at.space();
-        at.expect(b':').ok_or_else(bad)?;
-        at.space();
-        if name == key.as_bytes() {
-            if found.is_some() {
-                return Err(bad());
-            }
-            let value = at.string().ok_or("GitHub API: tag_name was not a string")?;
-            if value.contains(&b'\\') {
-                return Err(bad());
-            }
-            found = Some(String::from_utf8(value).map_err(|_| bad())?);
-        } else {
-            at.skip_value(0).ok_or_else(bad)?;
-        }
-        at.space();
-        match at.next() {
-            Some(b',') => {}
-            Some(b'}') => break,
-            _ => return Err(bad()),
-        }
-    }
-    at.space();
-    if at.peek().is_some() {
-        return Err(bad());
-    }
-    found.ok_or_else(|| "GitHub API: the response had no tag_name".to_owned())
-}
-
-struct Scanner<'a> {
-    bytes: &'a [u8],
-    at: usize,
-}
-
-impl Scanner<'_> {
-    fn peek(&self) -> Option<u8> {
-        self.bytes.get(self.at).copied()
-    }
-
-    fn next(&mut self) -> Option<u8> {
-        let byte = self.peek()?;
-        self.at += 1;
-        Some(byte)
-    }
-
-    fn expect(&mut self, byte: u8) -> Option<()> {
-        (self.next()? == byte).then_some(())
-    }
-
-    fn space(&mut self) {
-        while matches!(self.peek(), Some(b' ' | b'\t' | b'\r' | b'\n')) {
-            self.at += 1;
-        }
-    }
-
-    /// A string's raw bytes (escapes left as written), consuming both quotes.
-    fn string(&mut self) -> Option<Vec<u8>> {
-        self.expect(b'"')?;
-        let mut out = Vec::new();
-        loop {
-            match self.next()? {
-                b'"' => return Some(out),
-                b'\\' => {
-                    out.push(b'\\');
-                    out.push(self.next()?);
-                }
-                byte if byte < 0x20 => return None,
-                byte => out.push(byte),
-            }
-        }
-    }
-
-    /// Skip one value of any kind. Depth is capped so hostile nesting cannot overflow the stack.
-    fn skip_value(&mut self, depth: usize) -> Option<()> {
-        if depth > 64 {
-            return None;
-        }
-        match self.peek()? {
-            b'"' => self.string().map(|_| ()),
-            open @ (b'{' | b'[') => {
-                self.at += 1;
-                let close = if open == b'{' { b'}' } else { b']' };
-                self.space();
-                if self.peek()? == close {
-                    self.at += 1;
-                    return Some(());
-                }
-                loop {
-                    self.space();
-                    if open == b'{' {
-                        self.string()?;
-                        self.space();
-                        self.expect(b':')?;
-                        self.space();
-                    }
-                    self.skip_value(depth + 1)?;
-                    self.space();
-                    match self.next()? {
-                        b',' => {}
-                        c if c == close => return Some(()),
-                        _ => return None,
-                    }
-                }
-            }
-            _ => {
-                let start = self.at;
-                while matches!(self.peek(), Some(b) if !matches!(b, b',' | b'}' | b']' | b' ' | b'\t' | b'\r' | b'\n'))
-                {
-                    self.at += 1;
-                }
-                (self.at > start).then_some(())
-            }
-        }
+/// serde's own error text can quote the input, so every failure maps to a fixed phrase.
+fn latest_tag_from_api(body: &[u8]) -> Result<String, String> {
+    let json: serde_json::Value = serde_json::from_slice(body)
+        .map_err(|_| "GitHub API: the response was not valid JSON".to_owned())?;
+    let tag = json
+        .get("tag_name")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("GitHub API: the response had no tag_name string")?;
+    match Version::parse(tag) {
+        Ok(version) if tag.starts_with('v') && version.tag() == tag => Ok(tag.to_owned()),
+        _ => Err("GitHub API: tag_name was not vMAJOR.MINOR.PATCH".to_owned()),
     }
 }
 
@@ -1170,9 +1042,11 @@ mod tests {
         let body = br#" {"url":"https://x/y","assets":[{"tag_name":"v9.9.9","n":[1,2.5,null,true]}],
             "author":{"tag_name":"v8.8.8"},"tag_name":"v1.2.3","body":"a \"q\" b\n","e":{},"l":[]} "#;
         assert_eq!(latest_tag_from_api(body), Ok("v1.2.3".to_owned()));
+        // serde's error text can quote the input; ours never does.
+        let err = latest_tag_from_api(b"{\"tag_name\": QUOTED-BODY-TEXT").unwrap_err();
+        assert!(!err.contains("QUOTED"), "{err}");
         for bad in [
-            &br#"{"tag_name":"v1.0.\u0030"}"#[..],
-            br#"{"tag_name":"v1.0.0","tag_name":"v2.0.0"}"#,
+            &br#"{"tag_name":"v1.0.0-rc\u0031"}"#[..],
             br#"{"assets":[{"tag_name":"v1.0.0"}]}"#,
             br#"{"tag_name":"v1.0.0"} trailing"#,
             br#"{"tag_name":"v1.0.0""#,
