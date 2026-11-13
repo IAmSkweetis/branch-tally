@@ -175,14 +175,19 @@ function Install-BranchTally {
 
   function Get-Remote {
     # Downloads $Url to $OutFile. https:// is followed by hand: Windows PowerShell 5.1 follows an
-    # https to http redirect on its own, so automatic redirects are off (MaximumRedirection 0) and
-    # every hop is checked to be https:// before it is requested, up to $maxRedirects hops, on 5.1
-    # and 7 alike. file:// is a plain copy (the test and local-mirror seam). The scheme test is
-    # case-insensitive and ordinal, the same as the mirror check above. Headers (a token) are
-    # dropped when a redirect leaves the original host.
+    # https to http redirect on its own, so automatic redirects are off and every hop is checked to
+    # be https:// before it is requested, up to $maxRedirects hops, on 5.1 and 7 alike. file:// is
+    # a plain copy (the test and local-mirror seam). The scheme test is case-insensitive and
+    # ordinal, the same as the mirror check above. Headers (a token) are dropped when a redirect
+    # leaves the original host.
+    #
+    # Each hop is an HttpWebRequest with AllowAutoRedirect off, not Invoke-WebRequest
+    # -MaximumRedirection 0: on 5.1 that reports a 3xx as "maximum redirection count exceeded"
+    # with no response attached, so the Location can't be read and every release download (a 302
+    # to the asset host) failed. HttpWebRequest hands back the 3xx response itself on 5.1 and 7.
     param([string]$Url, [string]$OutFile, [hashtable]$Headers = @{}, [int]$TimeoutSec = 0)
     if ($Url.StartsWith('file://', [System.StringComparison]::OrdinalIgnoreCase)) {
-      # Invoke-WebRequest has no file:// support.
+      # HttpWebRequest is not used for file://.
       Copy-Item -LiteralPath ([Uri]$Url).LocalPath -Destination $OutFile
       return
     }
@@ -195,27 +200,45 @@ function Install-BranchTally {
       }
       $sendHeaders = @{}
       if (([Uri]$current).Host -eq $firstHost) { $sendHeaders = $Headers }
-      $status = 0
-      $location = $null
+      $request = [System.Net.WebRequest]::Create($current)
+      $request.AllowAutoRedirect = $false
+      # api.github.com refuses a request without a User-Agent; Invoke-WebRequest used to send one.
+      $request.UserAgent = 'branch-tally-install.ps1'
+      foreach ($name in $sendHeaders.Keys) {
+        # Accept is a restricted header: HttpWebRequest only takes it through its property.
+        if ($name -eq 'Accept') { $request.Accept = [string]$sendHeaders[$name] }
+        else { $request.Headers[$name] = [string]$sendHeaders[$name] }
+      }
+      # $TimeoutSec applies to each hop: to the response and to each read of the body. Without it
+      # the .NET defaults apply (100 s for the response, 300 s per read), so a stalled server
+      # fails instead of hanging. A timeout throws without a response, so it reaches the caller.
+      if ($TimeoutSec -gt 0) {
+        $request.Timeout = $TimeoutSec * 1000
+        $request.ReadWriteTimeout = $TimeoutSec * 1000
+      }
+      $response = $null
       try {
-        # Windows PowerShell 5.1 has no timeout by default. $TimeoutSec applies to each hop, and a
-        # timeout throws without a response, so it reaches the caller as a failure.
-        $request = @{ Uri = $current; OutFile = $OutFile; UseBasicParsing = $true; MaximumRedirection = 0; Headers = $sendHeaders }
-        if ($TimeoutSec -gt 0) { $request['TimeoutSec'] = $TimeoutSec }
-        Invoke-WebRequest @request
-        return
+        $response = $request.GetResponse()
       } catch {
-        # 5.1 throws a WebException (HttpWebResponse, WebHeaderCollection). 7 throws an
-        # HttpResponseException (HttpResponseMessage, with a typed Location).
-        $response = $null
-        if ($_.Exception.PSObject.Properties['Response']) { $response = $_.Exception.Response }
-        if ($null -eq $response) { throw }
+        # An HTTP error status arrives as a WebException carrying the response (PowerShell may wrap
+        # it in a MethodInvocationException). Anything else (DNS, TLS, timeout) has no response
+        # and is rethrown as it is.
+        $webError = $_.Exception
+        while (($null -ne $webError) -and -not ($webError -is [System.Net.WebException])) { $webError = $webError.InnerException }
+        if (($null -eq $webError) -or ($null -eq $webError.Response)) { throw }
+        $response = $webError.Response
+      }
+      try {
         $status = [int]$response.StatusCode
-        if ($response.Headers -is [System.Net.WebHeaderCollection]) {
-          $location = $response.Headers['Location']
-        } elseif ($null -ne $response.Headers.Location) {
-          $location = $response.Headers.Location.ToString()
+        if (($status -ge 200) -and ($status -le 299)) {
+          $body = $response.GetResponseStream()
+          $file = [System.IO.File]::Create($OutFile)
+          try { $body.CopyTo($file) } finally { $file.Dispose(); $body.Dispose() }
+          return
         }
+        $location = $response.Headers['Location']
+      } finally {
+        $response.Dispose()
       }
       if ((@(301, 302, 303, 307, 308) -notcontains $status) -or [string]::IsNullOrEmpty($location)) {
         throw "download failed with HTTP status $status"

@@ -262,9 +262,13 @@ not verify.
 - `install.sh` runs curl with `--proto '=https' --proto-redir '=https' --tlsv1.2`, and wget with
   `--https-only` when that wget has it (BusyBox's does not; the URL scheme check still applies).
   `file://` mirrors are plain copies, the seam the tests use. `install.ps1` pins TLS 1.2+ and
-  follows redirects by hand (`-MaximumRedirection 0`, at most 5 hops), refusing any hop that is not
-  `https://`. The documented one-liner runs Windows PowerShell 5.1, whose `Invoke-WebRequest` would
-  otherwise follow an HTTPS-to-HTTP redirect (#98). The scheme checks (`file://`, `https://`) are
+  follows redirects by hand (an `HttpWebRequest` per hop with `AllowAutoRedirect` off, at most 5
+  hops), refusing any hop that is not `https://`. The documented one-liner runs Windows PowerShell
+  5.1, whose `Invoke-WebRequest` would otherwise follow an HTTPS-to-HTTP redirect (#98). Not
+  `Invoke-WebRequest -MaximumRedirection 0`: on 5.1 that reports a 3xx with no response attached,
+  so the `Location` can't be read, and v0.11.0's one-liner failed on every release download (#119).
+  `tests/install/install_live_test.ps1` proves the redirect path against real GitHub under 5.1
+  and 7. The scheme checks (`file://`, `https://`) are
   case-insensitive in both installers. The PowerShell version check uses `\z`, not `$`, which in
   .NET also matches before a trailing newline; the `sh` check is a `case` pattern and already
   rejects one.

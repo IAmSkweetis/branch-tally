@@ -704,9 +704,10 @@ Test-Case 'token on failure: fallback warns' ($res.Err -like '*not confirmed by 
 Test-Case 'token on failure: never printed' (($res.Out + $res.Err) -notlike '*ghtok-CCC*')
 
 # 13h. Static checks of the redirect handling, since no https server is available to the suite.
+# install_live_test.ps1 runs the same code against real GitHub, under 5.1 and 7.
 $src = [IO.File]::ReadAllText($installer)
-Test-Case 'Get-Remote turns automatic redirects off' ($src.Contains('MaximumRedirection = 0;'))
-Test-Case 'the latest lookup has a 30 second timeout that every hop uses' ($src.Contains('$json $headers 30') -and $src.Contains('$request[''TimeoutSec''] = $TimeoutSec'))
+Test-Case 'Get-Remote turns automatic redirects off' ($src.Contains('$request.AllowAutoRedirect = $false'))
+Test-Case 'the latest lookup has a 30 second timeout that every hop uses' ($src.Contains('$json $headers 30') -and $src.Contains('$request.Timeout = $TimeoutSec * 1000'))
 Test-Case 'Get-Remote has a hop limit' ($src -like '*$maxRedirects*')
 Test-Case 'Get-Remote refuses a non-https hop' ($src -like '*refusing to follow a non-https redirect*')
 # .Contains, not -like: a [ in a -like pattern is a wildcard character class.
