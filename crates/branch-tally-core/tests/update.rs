@@ -4,7 +4,7 @@ use std::cell::RefCell;
 
 use branch_tally_core::update::{
     Confirmer, FetchError, Installer, Outcome, Refusal, ReleaseClient, ReleaseKey, UpdateError,
-    UpdateOptions, run, run_verified,
+    UpdateOptions, run_verified,
 };
 
 const TARGET: &str = "x86_64-unknown-linux-musl";
@@ -685,13 +685,4 @@ fn release_key_must_decode() {
         ReleaseKey::from_base64("not a key"),
         Err(UpdateError::InvalidReleaseKey)
     ));
-}
-
-#[test]
-fn keyless_legacy_entry_point_fails_closed() {
-    let (c, i, k) = (Client::new("v1.3.0"), Inst::default(), Confirm::new(true));
-    let out = run("1.2.0", TARGET, &opts(), &c, &i, &k);
-    assert!(matches!(out, Err(UpdateError::InvalidReleaseKey)));
-    assert!(i.installed.borrow().is_empty());
-    assert_eq!(c.calls(), 0);
 }

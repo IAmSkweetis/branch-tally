@@ -1,6 +1,6 @@
 //! The `update` subcommand: the real release client, installer and confirmer behind core's traits.
 //!
-//! Core decides what to do ([`branch_tally_core::update::run`]); this file only talks to the
+//! Core decides what to do ([`branch_tally_core::update::run_verified`]); this file only talks to the
 //! network, the filesystem and the terminal.
 
 use std::io::{self, BufRead, IsTerminal, Read, Write};
@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use branch_tally_core::update::{
-    Confirmer, FetchError, Installer, ReleaseClient, SUMS_NAME, UpdateOptions, current_target,
-    is_binary_entry, latest_version_from_sums, run as run_update,
+    Confirmer, FetchError, Installer, ReleaseClient, ReleaseKey, SUMS_NAME, UpdateOptions,
+    current_target, is_binary_entry, latest_version_from_sums, run_verified,
 };
 
 use crate::cli::{UpdateArgs, VERSION};
@@ -18,6 +18,11 @@ use crate::cli::{UpdateArgs, VERSION};
 /// tests point the client at a `file://` fake release.
 const BASE_URL_ENV: &str = "BRANCH_TALLY_INSTALL_BASE_URL";
 const DEFAULT_BASE_URL: &str = "https://github.com/IAmSkweetis/branch-tally/releases";
+
+/// The maintainer's release public key (id D9F252276FF0E4D0): the second line of
+/// `.github/minisign.pub`, which the release job signs with. A test fails if the two differ.
+/// There is deliberately no runtime way to replace it: no variable, flag or config.
+const RELEASE_PUBLIC_KEY: &str = "RWTQ5PBvJ1Ly2e0dZqwbC5mduW++vTIp1vIHDe+C8z7/4VNNvoU30mmr";
 
 /// The largest download accepted. Release archives are a few MB; this only stops a runaway body.
 const MAX_DOWNLOAD_BYTES: u64 = 256 * 1024 * 1024;
@@ -43,10 +48,12 @@ pub(crate) fn run(args: &UpdateArgs) -> Result<String, String> {
         force: args.force,
     };
     let target = current_target();
-    let outcome = run_update(
+    let key = ReleaseKey::from_base64(RELEASE_PUBLIC_KEY).map_err(|e| e.to_string())?;
+    let outcome = run_verified(
         VERSION,
         target,
         &options,
+        &key,
         &HttpClient::new(&base),
         &FsInstaller {
             exe: current_exe(),
@@ -406,8 +413,8 @@ impl Confirmer for TerminalConfirmer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use branch_tally_core::update::sha256_hex;
     use branch_tally_core::update::{Outcome, UpdateError};
+    use branch_tally_core::update::{SIGNATURE_NAME, sha256_hex};
 
     const TARGET: &str = "x86_64-unknown-linux-musl";
     /// Tests always model a Linux archive, so entry and file names do not depend on the host.
@@ -447,19 +454,30 @@ mod tests {
         writer.finish().unwrap().into_inner()
     }
 
-    /// A fake release directory holding `v1.1.0` for [`TARGET`], plus a `latest` alias of it.
-    fn fake_release(dir: &Path, archive: &[u8]) -> String {
-        let asset = format!("branch-tally-v1.1.0-{TARGET}.tar.gz");
-        let sums = format!(
-            "{}  {asset}\n{}  other-asset.zip\n",
-            sha256_hex(archive),
-            sha256_hex(b"x")
-        );
-        for sub in ["download/v1.1.0", "latest/download"] {
+    /// Throwaway test key and signatures from core's test data. They sign the sums for the bytes
+    /// [`SIGNED_ARCHIVE`], so a release built from them is installable only with this key.
+    const TEST_KEY: &str =
+        include_str!("../../branch-tally-core/tests/data/update_signing/test-public-key.txt");
+    const GOOD_SIG: &[u8] =
+        include_bytes!("../../branch-tally-core/tests/data/update_signing/good-v1.3.0.minisig");
+    const OTHER_KEY_SIG: &[u8] = include_bytes!(
+        "../../branch-tally-core/tests/data/update_signing/other-key-v1.3.0.minisig"
+    );
+    const SIGNED_ARCHIVE: &[u8] = b"fake archive bytes";
+    const SIGNED_ASSET: &str = "branch-tally-v1.3.0-x86_64-unknown-linux-musl.tar.gz";
+
+    /// A fake release directory holding `v1.3.0` for [`TARGET`], plus a `latest` alias of it, with
+    /// `signature` as `SHA256SUMS.minisig` when given.
+    fn fake_release(dir: &Path, archive: &[u8], signature: Option<&[u8]>) -> String {
+        let sums = format!("{}  {SIGNED_ASSET}\n", sha256_hex(SIGNED_ARCHIVE));
+        for sub in ["download/v1.3.0", "latest/download"] {
             let d = dir.join(sub);
             std::fs::create_dir_all(&d).unwrap();
             std::fs::write(d.join(SUMS_NAME), &sums).unwrap();
-            std::fs::write(d.join(&asset), archive).unwrap();
+            std::fs::write(d.join(SIGNED_ASSET), archive).unwrap();
+            if let Some(signature) = signature {
+                std::fs::write(d.join(SIGNATURE_NAME), signature).unwrap();
+            }
         }
         format!("file://{}", dir.to_string_lossy().replace('\\', "/"))
     }
@@ -592,103 +610,165 @@ mod tests {
         }
     }
 
-    // --- client, through core's run against a file:// release ---
+    // --- the compiled-in release key ---
 
-    fn update(base: &str, exe: &Path, options: &UpdateOptions) -> Result<Outcome, UpdateError> {
-        run_update(
+    #[test]
+    fn the_compiled_in_key_is_the_one_committed_for_the_release_job() {
+        let pub_file = include_str!("../../../.github/minisign.pub");
+        let line2 = pub_file.lines().nth(1).unwrap().trim();
+        assert_eq!(RELEASE_PUBLIC_KEY, line2);
+    }
+
+    #[test]
+    fn the_compiled_in_key_decodes() {
+        assert!(ReleaseKey::from_base64(RELEASE_PUBLIC_KEY).is_ok());
+    }
+
+    // --- client and verification, through core's run_verified against a file:// release ---
+
+    /// A recording installer, so the happy path needs no real archive (extraction and replacement
+    /// are covered above against the real installer).
+    #[derive(Default)]
+    struct Recorder {
+        installed: std::cell::RefCell<Vec<(String, Vec<u8>)>>,
+    }
+    impl Installer for Recorder {
+        fn check_writable(&self) -> Result<(), String> {
+            Ok(())
+        }
+        fn install(&self, asset: &str, archive: &[u8]) -> Result<(), String> {
+            self.installed
+                .borrow_mut()
+                .push((asset.to_owned(), archive.to_vec()));
+            Ok(())
+        }
+    }
+
+    fn verified(
+        key: &str,
+        base: &str,
+        installer: &dyn Installer,
+        options: &UpdateOptions,
+    ) -> Result<Outcome, UpdateError> {
+        run_verified(
             "1.0.0",
             TARGET,
             options,
+            &ReleaseKey::from_base64(key.trim()).unwrap(),
             &HttpClient::new(base),
-            &FsInstaller {
-                exe: exe.to_path_buf(),
-                target: TARGET,
-            },
+            installer,
             &Yes,
         )
     }
 
+    fn yes() -> UpdateOptions {
+        UpdateOptions {
+            yes: true,
+            ..UpdateOptions::default()
+        }
+    }
+
     #[test]
-    fn updates_from_a_fake_release_to_the_latest_tag() {
+    fn a_signed_release_installs_through_the_file_client() {
         let release = tempfile::tempdir().unwrap();
-        let base = fake_release(release.path(), &release_archive());
-        let bin = tempfile::tempdir().unwrap();
-        let exe = bin.path().join(BIN_NAME);
-        std::fs::write(&exe, b"old").unwrap();
-        let outcome = update(
-            &base,
-            &exe,
-            &UpdateOptions {
-                yes: true,
-                ..UpdateOptions::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(outcome.message(), "updated branch-tally v1.0.0 -> v1.1.0");
-        assert_eq!(std::fs::read(&exe).unwrap(), GOOD);
+        let base = fake_release(release.path(), SIGNED_ARCHIVE, Some(GOOD_SIG));
+        let rec = Recorder::default();
+        let outcome = verified(TEST_KEY, &base, &rec, &yes()).unwrap();
+        assert_eq!(outcome.message(), "updated branch-tally v1.0.0 -> v1.3.0");
+        let installed = rec.installed.borrow();
+        assert_eq!(installed.len(), 1);
+        assert_eq!(installed[0].0, SIGNED_ASSET);
+        assert_eq!(installed[0].1, SIGNED_ARCHIVE);
+    }
+
+    #[test]
+    fn the_client_fetches_the_signature_through_download() {
+        let release = tempfile::tempdir().unwrap();
+        let base = fake_release(release.path(), SIGNED_ARCHIVE, Some(GOOD_SIG));
+        let got = HttpClient::new(&base)
+            .download("v1.3.0", SIGNATURE_NAME)
+            .unwrap();
+        assert_eq!(got, GOOD_SIG);
+    }
+
+    #[test]
+    fn an_unsigned_release_is_refused_with_the_real_key_and_installs_nothing() {
+        let release = tempfile::tempdir().unwrap();
+        let base = fake_release(release.path(), SIGNED_ARCHIVE, None);
+        let rec = Recorder::default();
+        let err = verified(RELEASE_PUBLIC_KEY, &base, &rec, &yes()).unwrap_err();
+        assert!(err.to_string().contains("is not signed"), "{err}");
+        assert!(err.to_string().contains("SECURITY.md"), "{err}");
+        assert!(rec.installed.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_signature_by_another_key_is_refused_with_the_real_key_and_installs_nothing() {
+        let release = tempfile::tempdir().unwrap();
+        // Signed by a throwaway key, checked against the real release key.
+        let base = fake_release(release.path(), SIGNED_ARCHIVE, Some(GOOD_SIG));
+        let rec = Recorder::default();
+        let err = verified(RELEASE_PUBLIC_KEY, &base, &rec, &yes()).unwrap_err();
+        assert!(err.to_string().contains("different key"), "{err}");
+        assert!(rec.installed.borrow().is_empty());
+        let base = fake_release(release.path(), SIGNED_ARCHIVE, Some(OTHER_KEY_SIG));
+        let err = verified(RELEASE_PUBLIC_KEY, &base, &rec, &yes()).unwrap_err();
+        assert!(err.to_string().contains("different key"), "{err}");
+        assert!(rec.installed.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_garbage_signature_is_refused_and_installs_nothing() {
+        let release = tempfile::tempdir().unwrap();
+        let base = fake_release(release.path(), SIGNED_ARCHIVE, Some(b"not a signature"));
+        let rec = Recorder::default();
+        let err = verified(TEST_KEY, &base, &rec, &yes()).unwrap_err();
+        assert!(err.to_string().contains("malformed"), "{err}");
+        assert!(rec.installed.borrow().is_empty());
     }
 
     #[test]
     fn check_reports_the_latest_without_touching_the_binary() {
         let release = tempfile::tempdir().unwrap();
-        let base = fake_release(release.path(), &release_archive());
-        let bin = tempfile::tempdir().unwrap();
-        let exe = bin.path().join(BIN_NAME);
-        std::fs::write(&exe, b"old").unwrap();
-        let outcome = update(
-            &base,
-            &exe,
-            &UpdateOptions {
-                check: true,
-                ..UpdateOptions::default()
-            },
-        )
-        .unwrap();
-        assert!(outcome.message().contains("v1.1.0"));
-        assert_eq!(std::fs::read(&exe).unwrap(), b"old");
+        let base = fake_release(release.path(), SIGNED_ARCHIVE, Some(GOOD_SIG));
+        let rec = Recorder::default();
+        let options = UpdateOptions {
+            check: true,
+            ..UpdateOptions::default()
+        };
+        let outcome = verified(TEST_KEY, &base, &rec, &options).unwrap();
+        assert!(outcome.message().contains("v1.3.0"));
+        assert!(rec.installed.borrow().is_empty());
     }
 
     #[test]
     fn an_unknown_tag_is_a_not_found_message() {
         let release = tempfile::tempdir().unwrap();
-        let base = fake_release(release.path(), &release_archive());
-        let bin = tempfile::tempdir().unwrap();
-        let exe = bin.path().join(BIN_NAME);
-        std::fs::write(&exe, b"old").unwrap();
+        let base = fake_release(release.path(), SIGNED_ARCHIVE, Some(GOOD_SIG));
+        let rec = Recorder::default();
         let options = UpdateOptions {
             yes: true,
             version: Some("v9.9.9".to_owned()),
             ..UpdateOptions::default()
         };
-        let err = update(&base, &exe, &options).unwrap_err();
+        let err = verified(TEST_KEY, &base, &rec, &options).unwrap_err();
         assert!(err.to_string().contains("release not found"), "{err}");
-        assert_eq!(std::fs::read(&exe).unwrap(), b"old");
+        assert!(rec.installed.borrow().is_empty());
     }
 
     #[test]
     fn a_tampered_archive_installs_nothing() {
         let release = tempfile::tempdir().unwrap();
-        let base = fake_release(release.path(), &release_archive());
-        let asset = format!("branch-tally-v1.1.0-{TARGET}.tar.gz");
+        let base = fake_release(release.path(), SIGNED_ARCHIVE, Some(GOOD_SIG));
         std::fs::write(
-            release.path().join("download/v1.1.0").join(asset),
+            release.path().join("download/v1.3.0").join(SIGNED_ASSET),
             b"tampered",
         )
         .unwrap();
-        let bin = tempfile::tempdir().unwrap();
-        let exe = bin.path().join(BIN_NAME);
-        std::fs::write(&exe, b"old").unwrap();
-        let err = update(
-            &base,
-            &exe,
-            &UpdateOptions {
-                yes: true,
-                ..UpdateOptions::default()
-            },
-        )
-        .unwrap_err();
+        let rec = Recorder::default();
+        let err = verified(TEST_KEY, &base, &rec, &yes()).unwrap_err();
         assert!(err.to_string().contains("checksum mismatch"), "{err}");
-        assert_eq!(std::fs::read(&exe).unwrap(), b"old");
+        assert!(rec.installed.borrow().is_empty());
     }
 
     #[test]

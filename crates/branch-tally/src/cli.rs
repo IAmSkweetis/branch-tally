@@ -64,10 +64,22 @@ pub(crate) enum Command {
 
     /// Update branch-tally in place from the latest GitHub release.
     ///
-    /// Downloads the release archive for this platform, verifies it against the release's
-    /// SHA256SUMS, and replaces the running binary. Asks before installing unless `--yes` is
-    /// given. Development builds and read-only install locations are refused. Installs made by a
-    /// package manager should be updated with that package manager instead.
+    /// Downloads the release archive for this platform, checks it, and replaces the running
+    /// binary. Asks before installing unless `--yes` is given. Development builds and read-only
+    /// install locations are refused. Installs made by a package manager should be updated with
+    /// that package manager instead.
+    ///
+    /// What is checked, in order: SHA256SUMS.minisig must be a valid minisign signature over
+    /// SHA256SUMS, made by the maintainer's key compiled into this binary, and naming the release
+    /// being installed. That signature is the proof that the release was published with the
+    /// maintainer's key. Only then is the archive compared with its SHA256SUMS entry, which is an
+    /// integrity check against a corrupted download, not proof of origin. The key cannot be
+    /// replaced at run time, so a mirror (`BRANCH_TALLY_INSTALL_BASE_URL`) is accepted: it is
+    /// trusted only as far as the signature.
+    ///
+    /// A missing, malformed or mismatched signature installs nothing. Releases from before signing
+    /// are refused, including with `--version`. To install one anyway, download it and check it by
+    /// hand with `gh attestation verify` (see SECURITY.md).
     #[command(alias = "upgrade")]
     Update(UpdateArgs),
 }
