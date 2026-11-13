@@ -800,30 +800,33 @@ behaves identically. It works on a binary installed by `install.sh`, `install.ps
 | Option | Does |
 | ------ | ---- |
 | `--check` | Only report whether a different version is available. Installs nothing. |
-| `--version <vX.Y.Z>` | Install this release instead of the latest. The leading `v` is optional. It may be older than the running version, so this is also how to downgrade. |
+| `--version <vX.Y.Z>` | Install this release instead of the latest. The leading `v` is optional. It may be older than the running version: this is the only way to downgrade. |
 | `--yes` | Do not ask for confirmation. |
-| `--force` | Reinstall even when already on the target version. |
+| `--force` | Reinstall even when already on the target version. It never installs an older release. |
 
 In order, it:
 
 1. Refuses a development build (see [Refusals](#refusals)).
 2. Unless `--check` is given, refuses when it cannot write to the directory holding the binary.
-3. Picks the target version: `--version`, or else the latest release, learned from that release's
-   `SHA256SUMS`.
-4. Stops if there is nothing to do: already on the `--version` asked for, or, without `--version`,
-   already on the latest release or newer. `--force` carries on and reinstalls.
-5. Asks `Update branch-tally vA -> vB? [y/N]` on stderr, unless `--yes` is given. Only `y` or `yes`
+3. Picks the target version: `--version`, or else the latest release, which it reads from the
+   GitHub API (see [Which release is the latest](#which-release-is-the-latest)). If the latest
+   release can't be resolved, it stops and installs nothing.
+4. Without `--version`, stops if the latest release is older than the running binary. It never
+   downgrades unless you name the version, not even with `--force`.
+5. Stops if there is nothing to do: already on the target version. `--force` carries on and
+   reinstalls that same version.
+6. Asks `Update branch-tally vA -> vB? [y/N]` on stderr, unless `--yes` is given. Only `y` or `yes`
    proceeds. When stdin is not a terminal it cannot ask, so it declines and says to pass `--yes`.
-6. Downloads the release's `SHA256SUMS` and `SHA256SUMS.minisig`, and verifies the signature
+7. Downloads the release's `SHA256SUMS` and `SHA256SUMS.minisig`, and verifies the signature
    against the release public key compiled into the binary. The signature's trusted comment must
    be exactly `branch-tally <tag> SHA256SUMS` for the tag being installed, so a signature from
    another release is refused. This is the proof of origin, and it comes before any checksum is
    trusted. A missing or bad signature is an error and nothing is installed (see
    [Errors](#errors)).
-7. Downloads the archive for this platform and checks it against its line in the signed
+8. Downloads the archive for this platform and checks it against its line in the signed
    `SHA256SUMS`. That is an integrity check against a corrupted download. A checksum mismatch, or
    an archive that `SHA256SUMS` does not list, is an error and nothing is installed.
-8. Takes only the binary out of the archive and moves it over the running executable in one step.
+9. Takes only the binary out of the archive and moves it over the running executable in one step.
    A symlink is followed, so the file it points at is replaced. On Windows the running `.exe` is
    renamed to `branch-tally.exe.old` first, because a running program cannot be overwritten. The
    `.old` file is deleted the next time `update` runs.
@@ -839,6 +842,7 @@ One line on stdout when it succeeds, or on stderr when it fails:
 | --------- | ---- | ---- |
 | Updated | `updated branch-tally v0.6.0 -> v0.7.0` | `0` |
 | Already on the target | `branch-tally is up to date (v0.6.0)` | `0` |
+| Without `--version`, the latest release is older than the running one (also with `--check` or `--force`) | `the latest release (v0.6.0) is older than the running version (v0.7.0); nothing installed. To go back to an older release, pin it with --version` | `0` |
 | You answered no, or stdin is not a terminal | `update v0.6.0 -> v0.7.0 declined; nothing changed` | `0` |
 | `--check` found another version | ``update available: v0.6.0 -> v0.7.0; run `branch-tally update` to install it`` | `0` |
 | A refusal or an error | see below | `1` |
@@ -864,7 +868,8 @@ because it is not signed.
 | Message starts with | Cause |
 | ------------------- | ----- |
 | `not a valid version` | `--version` is not `X.Y.Z` or `vX.Y.Z`. |
-| `release not found` | No release has that tag, or the mirror has no latest release. |
+| `the latest release could not be resolved` | Without `--version`, the GitHub API could not be reached, refused the request (for example a rate limit or a bad token), or did not answer with a `vX.Y.Z` tag. The reason is in brackets. Nothing was installed. Pass `--version vX.Y.Z` to choose the release yourself. |
+| `release not found` | No release has that tag. |
 | `no release is built for target` | This binary was built for a platform with no prebuilt release. |
 | `download failed` | A network or read error. URLs are left out of the message. |
 | `<tag> is not signed, so its origin can't be verified` | The release has no `SHA256SUMS.minisig`. Releases published before signing began are refused this way, including through `--version`. Nothing was installed. Install it [by hand](installation/manual-download.md) or with an installer instead. |
@@ -877,10 +882,34 @@ because it is not signed.
 | `<archive> is not listed in SHA256SUMS`, `malformed checksum`, `checksum mismatch` | The download did not match the signed `SHA256SUMS`. Nothing was installed. |
 | `install failed` | The new binary could not be extracted or moved into place. The old one is kept. |
 
+### Which release is the latest
+
+Without `--version`, `update` asks the GitHub API
+(`https://api.github.com/repos/IAmSkweetis/branch-tally/releases/latest`) which release is the
+latest. It does this even when a [release mirror](#release-mirror) is set, because a signature
+proves a release is genuine, not that it is the newest: a mirror serving an older signed release
+as "latest" could otherwise roll you back to a version with a known bug. The API address is fixed;
+no flag, variable or config key changes it.
+
+If the API can't be reached, is rate limited, or answers with something that isn't a `vX.Y.Z`
+tag, `update` fails with `the latest release could not be resolved (<reason>); nothing installed.
+Pin a release with --version vX.Y.Z`. It never falls back to the mirror. On a machine without
+access to `api.github.com`, such as one using an air-gapped mirror, always pass `--version`. With
+`--version`, `update` doesn't call the API at all.
+
+The API allows 60 requests an hour without a token. If `GH_TOKEN` is set, or else
+`GITHUB_TOKEN`, `update` sends it as a bearer token to the API, and to nothing else.
+
+This protection against being rolled back has limits. It holds against a malicious mirror, but not
+against someone who can intercept `api.github.com` itself, for example a proxy whose certificate
+your machine trusts.
+
 ### Release mirror
 
 `BRANCH_TALLY_INSTALL_BASE_URL`, the variable the installers read, points `update` at a mirror with
-the same layout as the releases page (`<base>/latest/download/…` and `<base>/download/<tag>/…`).
+the same layout as the releases page. `update` downloads `<base>/download/<tag>/…` from it: the
+archive, `SHA256SUMS` and `SHA256SUMS.minisig`. Which release is the latest still comes from the
+GitHub API, as described above.
 The default is `https://github.com/IAmSkweetis/branch-tally/releases`. A `file://` URL naming a
 local directory also works. Any other scheme, including plain `http://`, is refused before any
 network call.
@@ -890,7 +919,10 @@ release key compiled into the binary. There is no flag, variable or config key t
 key at run time. A new key means a new branch-tally release.
 
 Binaries released before signing began don't check the signature when they update; they check
-only `SHA256SUMS`. To be sure of a release such a binary installed, check it
+only `SHA256SUMS`, and they read "latest" from the releases page or mirror, not the API. So the
+first update from such a binary to a signed release is checked only against files from the same
+place. Every update after that is verified. To be sure of that first one, check it
 [by hand](installation/manual-download.md), or reinstall with an installer.
 
-`update` sends no account or identifying data, only a `branch-tally/<version>` User-Agent.
+`update` sends a `branch-tally/<version>` User-Agent. It sends no account or identifying data,
+except the `GH_TOKEN` or `GITHUB_TOKEN` token to the GitHub API when one is set.

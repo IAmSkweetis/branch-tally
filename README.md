@@ -66,7 +66,8 @@ never edit your `PATH`; they print the line to add. Their options, verifying a d
 and building from source are in the manual's
 [Installation](https://branch-tally.io/installation/) chapter.
 
-To move to a newer release later, run `branch-tally update`. It verifies the release's minisign
+To move to a newer release later, run `branch-tally update`. It takes the latest version from the
+GitHub API, never downgrades unless you pass `--version`, verifies the release's minisign
 signature against the key built into the binary, then the checksum, and asks before replacing the
 binary. Releases from before signing can't be installed with `update`, only by hand.
 

@@ -25,9 +25,9 @@ The `Provenance verified` line appears only when a provenance tool was available
 
 1. Works out the target from `uname`. Linux always gets the static musl build. On macOS, a shell
    running under Rosetta on an Apple silicon Mac still gets the Apple silicon build.
-2. Resolves "latest" to a concrete version by reading the release's `SHA256SUMS`, without calling
-   the GitHub API. Everything after that is downloaded from that one version, so a release
-   published mid-install can't mix two versions.
+2. Resolves "latest" to a concrete version by asking the GitHub API (see
+   [Which release is the latest](#which-release-is-the-latest)). Everything after that is
+   downloaded from that one version, so a release published mid-install can't mix two versions.
 3. Downloads `SHA256SUMS` and `branch-tally-<version>-<target>.tar.gz`, and checks the archive's
    SHA-256 against its line in `SHA256SUMS`. **A mismatch, or an archive missing from
    `SHA256SUMS`, stops the install and nothing is written.** This is an integrity check: it
@@ -46,6 +46,29 @@ optional, and lets it check provenance.
 
 With `curl`, every download must use HTTPS, redirects included, and TLS 1.2 or newer. With `wget`,
 it passes `--https-only` when that `wget` supports it.
+
+## Which release is the latest
+
+Without `--version`, the installer asks the GitHub API
+(`https://api.github.com/repos/IAmSkweetis/branch-tally/releases/latest`) which release is the
+latest, even when a mirror is set. A mirror serving an older release as "latest" could otherwise
+roll you back to a version with a known bug.
+
+If the API can't be reached, is rate limited, or answers with something that isn't a `vX.Y.Z`
+tag, the installer falls back to the mirror's `latest/download/SHA256SUMS`. It warns on stderr
+(`install.sh: warning: could not read the latest release from …`) that "latest" came from the
+mirror and was not confirmed by GitHub, so an older release could be served, and suggests
+`install.sh --version vX.Y.Z`. The fallback goes ahead even with `--require-attestation`,
+because the archive's checksum and provenance are still checked. To rule it out, pin `--version`.
+That is also the way to install from a mirror that can't reach `api.github.com`.
+
+The API allows 60 requests an hour without a token. If `GH_TOKEN` is set, or else
+`GITHUB_TOKEN`, the installer sends it as a bearer token to the API lookup, and to nothing else.
+It never prints the token.
+
+The protection against being rolled back has limits. It doesn't hold in the fallback above, nor
+against someone who can intercept `api.github.com` itself, for example a proxy whose certificate
+your machine trusts.
 
 ## Checking where the archive came from
 
@@ -96,14 +119,17 @@ Every option has a flag and an environment variable. A flag overrides its variab
 | `--version <vX.Y.Z>` | `BRANCH_TALLY_INSTALL_VERSION` | `latest` | Install this release instead of the latest. The leading `v` is optional. |
 | `--to <dir>` | `BRANCH_TALLY_INSTALL_DIR` | `$HOME/.local/bin` | Install into this directory. It is created if missing. |
 | `--require-attestation` | `BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION` | off | Fail unless provenance was verified with `gh` or `cosign`. The variable turns it on when set to `1`, `true` or `yes`. |
-| none | `BRANCH_TALLY_INSTALL_BASE_URL` | `https://github.com/IAmSkweetis/branch-tally/releases` | Download from a mirror with the same layout (`<base>/latest/download/…` and `<base>/download/<tag>/…`). Only `https://` and `file://` URLs are accepted. |
+| none | `BRANCH_TALLY_INSTALL_BASE_URL` | `https://github.com/IAmSkweetis/branch-tally/releases` | Download from a mirror with the same layout (`<base>/download/<tag>/…`, and `<base>/latest/download/SHA256SUMS` for the fallback). Only `https://` and `file://` URLs are accepted. |
+| none | `BRANCH_TALLY_INSTALL_API_URL` | `https://api.github.com` | Where "latest" is looked up. Only `https://` and `file://` URLs are accepted. It is trusted exactly as much as the mirror. |
 | `-h`, `--help` | none | | Print the options and exit. |
 
 A version must be of the form `vMAJOR.MINOR.PATCH`; anything else is an error.
 
 When `BRANCH_TALLY_INSTALL_BASE_URL` is set to anything other than the default, the installer
-prints `Using release mirror: <url>` first, so you can see where it is downloading from. A mirror
-only changes the source; the checksum and provenance checks are the same.
+prints `Using release mirror: <url>` first, so you can see where it is downloading from. Likewise,
+a non-default `BRANCH_TALLY_INSTALL_API_URL` prints `Using release API: <url>`. A mirror only
+changes the source; the checksum and provenance checks are the same, and "latest" still comes from
+the API (see [Which release is the latest](#which-release-is-the-latest)).
 
 To pass flags through the pipe, use `sh -s --`:
 
@@ -135,11 +161,12 @@ The installer prints `install.sh: error: <reason>` and exits with status 1 when,
 things:
 
 - an option is unknown or a version is malformed;
-- `BRANCH_TALLY_INSTALL_BASE_URL` does not start with `https://` or `file://`;
+- `BRANCH_TALLY_INSTALL_BASE_URL` or `BRANCH_TALLY_INSTALL_API_URL` does not start with `https://`
+  or `file://`;
 - the OS or architecture is not one of the supported targets (from a Windows shell such as Git
   Bash, it tells you to use the [PowerShell installer](windows.md) instead);
 - `curl`/`wget`, `sha256sum`/`shasum` or `tar` is missing;
-- the latest release has no build for your target;
+- the release has no build for your target;
 - a download fails, the checksum does not match, or the archive is not listed in `SHA256SUMS`;
 - a provenance check with `gh` or `cosign` fails, or none could run and `--require-attestation` is
   set;
