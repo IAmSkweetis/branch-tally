@@ -44,17 +44,28 @@ gitleaks = "8.30.1"
 git-cliff = "2.13.1"
 rumdl = "0.3.2"
 zizmor = "1.31.1"
+minisign = "0.12"
+"""
+MINISIGN_SCRIPT = """#!/bin/sh
+set -eu
+
+version=0.12
+sha256=9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73
+dest=${1:-/usr/local/bin}
 """
 ASSET = b"console.log('pan');\n"
 
 
 def make_repo(mise: str = MISE, justfile: str = JUSTFILE, ci: str = CI, asset: bytes = ASSET,
-              sha: str | None = None) -> Path:
+              sha: str | None = None, minisign: str | None = MINISIGN_SCRIPT) -> Path:
     root = Path(tempfile.mkdtemp())
     (root / ".github" / "workflows").mkdir(parents=True)
     (root / "docs" / "manual").mkdir(parents=True)
     (root / "justfile").write_text(justfile, encoding="utf-8")
     (root / ".github" / "workflows" / "ci.yml").write_text(ci, encoding="utf-8")
+    (root / "scripts").mkdir()
+    if minisign is not None:
+        (root / "scripts" / "ci-install-minisign.sh").write_text(minisign, encoding="utf-8")
     (root / "rust-toolchain.toml").write_text(TOOLCHAIN, encoding="utf-8")
     (root / "mise.toml").write_text(mise, encoding="utf-8")
     (root / "docs" / "manual" / "svg-pan-zoom.min.js").write_bytes(asset)
@@ -112,6 +123,31 @@ class CheckPins(unittest.TestCase):
         self.addCleanup(shutil.rmtree, root, True)
         (root / "mise.toml").unlink()
         self.assertTrue(cp.check(root))
+
+    def test_drifted_minisign_version_rejected(self):
+        problems = self.check(mise=MISE.replace('minisign = "0.12"', 'minisign = "0.11"'))
+        self.assertTrue(any("minisign" in p and "0.12" in p for p in problems))
+
+    def test_minisign_missing_from_mise_rejected(self):
+        problems = self.check(mise=MISE.replace('minisign = "0.12"\n', ""))
+        self.assertTrue(any("minisign" in p and "missing" in p for p in problems))
+
+    def test_minisign_bumped_in_script_only_rejected(self):
+        problems = self.check(minisign=MINISIGN_SCRIPT.replace("version=0.12", "version=0.13"))
+        self.assertTrue(any("minisign" in p for p in problems))
+
+    def test_minisign_malformed_sha_rejected(self):
+        bad = MINISIGN_SCRIPT.replace("sha256=9a599b", "sha256=zz99b")
+        problems = self.check(minisign=bad)
+        self.assertTrue(any("minisign" in p and "sha256" in p for p in problems))
+
+    def test_minisign_pin_missing_from_script_rejected(self):
+        problems = self.check(minisign="#!/bin/sh\necho nothing pinned\n")
+        self.assertTrue(any("minisign" in p for p in problems))
+
+    def test_minisign_script_missing_rejected(self):
+        problems = self.check(minisign=None)
+        self.assertTrue(any("minisign" in p for p in problems))
 
     def test_real_repository_agrees(self):
         self.assertEqual(cp.check(REPO), [])

@@ -74,7 +74,7 @@ Every release builds. There is no label or input to turn that off.
 | release | `release` | Creates the tag on the exact commit through the API, then a **draft** GitHub release with the notes | The tag exists on a different commit |
 | build | `build` (x6) | Installs the pinned toolchain and the target, builds with `--locked`, smoke-tests the binary, packages it | Compilation fails, `--version` is not `branch-tally X.Y.Z`, `report` fails on the fixtures, or packaging fails |
 | release | `publish` | Downloads the six archives, fetches `install.sh` and `install.ps1` from the tagged commit, writes `SHA256SUMS`, signs it with minisign (`SHA256SUMS.minisig`) and verifies the signature against the committed public key, attests the archives, installers, `SHA256SUMS` and `SHA256SUMS.minisig` (bundle shipped as `provenance.sigstore.json`), uploads everything to the draft, then publishes it as **latest** | Fewer than six archives, an installer missing at the tagged commit, a missing signing secret, the placeholder public key, a signature that does not verify, or an upload or attestation error |
-| install-check | `resolve`, `check` (x6) | After a successful `Release` run, resolves the released tag and runs the real one-liners from `releases/latest/download` on a clean runner of each target ([Installing](#installing)) | The installed binary's `--version` is not the released tag, the default directory was not used, or the latest release has no installer |
+| install-check | `resolve`, `check` (x6), `signature` | After a successful `Release` run, resolves the released tag and runs the real one-liners on a clean runner of each target, including with `--require-attestation` through `gh` and through `cosign`; `signature` verifies `SHA256SUMS.minisig` with minisign ([Installing](#installing)) | The installed binary's `--version` is not the released tag, the default directory was not used, the latest release has no installer, a just-published release lacks `SHA256SUMS`, `SHA256SUMS.minisig` or `provenance.sigstore.json`, provenance does not verify by either route, or the signature does not verify against `.github/minisign.pub` at the tag with trusted comment `branch-tally <tag> SHA256SUMS` |
 
 The order is deliberate. The tag exists before the build, so a failed build leaves a draft release
 and a tag, and the next release still bumps from that tag. A draft is invisible and never "latest",
@@ -85,7 +85,10 @@ same trigger and guards as `release.yml`: this repository only, successful runs 
 no artifacts read). It also takes a `workflow_dispatch` with an optional `version`, to re-check a
 release by hand. If the `Release` run succeeded without publishing (a newer run released past its
 commit), it says so in a notice and checks whatever is latest; a latest release that predates the
-installers is skipped with a notice, never failed.
+installers is skipped with a notice, never failed. The same holds for the provenance steps: a manual
+check of a tag from before signing (no `SHA256SUMS.minisig` or `provenance.sigstore.json`) skips
+them with a notice, while a release the `Release` run just published without those assets is an
+error.
 
 ### Superseded runs
 
@@ -317,8 +320,27 @@ Then `install-check.yml` proves the published thing, on six runners (`ubuntu-24.
 which checks out the repository. Each asserts the default directory is empty, runs the real
 one-liner, checks the binary landed in the default directory and that `--version` equals the tag
 just released, then repeats with `--version` and a custom directory. Windows does the default
-install twice, under Windows PowerShell 5.1 and under PowerShell 7. A failure here comes after the
-release is public: fix forward with a new release.
+install twice, under Windows PowerShell 5.1 and under PowerShell 7.
+
+The same runners then check provenance for real, because without a token or `cosign` the installers
+only warn that it was not verified and pass. Each runs the pinned one-liner from the release under
+test with `--require-attestation` (on Windows `BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION=1`, since
+`irm | iex` takes no parameters) twice, and asserts the output names the route taken:
+
+- **gh**: with the job's token (`GH_TOKEN`, and `attestations: read` on the job). The output must
+  say `Provenance verified with gh`.
+- **cosign**: installed by `sigstore/cosign-installer` pinned by SHA, with `gh` made unusable
+  (no token, an empty `GH_CONFIG_DIR`, and a check that `gh auth status` fails), so the installer's
+  "gh, logged in" test fails and it takes the cosign route. The output must say
+  `Provenance verified with cosign`. `gh` stays on `PATH` because on a runner it lives in a
+  directory shared with system tools; what the installer tests is a logged-in `gh`.
+
+One more job, `signature`, downloads `SHA256SUMS` and `SHA256SUMS.minisig` from the release,
+installs minisign with `scripts/ci-install-minisign.sh`, and verifies them against
+`.github/minisign.pub`, requiring the trusted comment to be exactly `branch-tally <tag> SHA256SUMS`.
+The key and the installer script are fetched from the **tagged commit** through the API, since the
+workflow checks nothing out. A failure here comes after the release is public: fix forward with a
+new release.
 
 ## Verifying a download
 
