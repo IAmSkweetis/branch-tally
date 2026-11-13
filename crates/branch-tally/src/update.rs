@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use branch_tally_core::update::{
-    Confirmer, FetchError, Installer, ReleaseClient, ReleaseKey, UpdateOptions, Version,
-    current_target, is_binary_entry, run_verified,
+    Confirmer, FetchError, Installer, ReleaseClient, ReleaseKey, UpdateOptions, current_target,
+    is_binary_entry, latest_tag_from_release_json, run_verified,
 };
 
 use crate::cli::{UpdateArgs, VERSION};
@@ -196,27 +196,11 @@ impl ReleaseClient for HttpClient {
         // The mirror is never consulted here: a mirror could serve an older signed release as
         // "latest" and roll users back. Any API problem is a failure, not a fallback.
         let body = self.fetch_api()?;
-        latest_tag_from_api(&body).map_err(FetchError::Failed)
+        latest_tag_from_release_json(&body)
     }
 
     fn download(&self, tag: &str, asset: &str) -> Result<Vec<u8>, FetchError> {
         self.fetch(&format!("download/{tag}/{asset}"))
-    }
-}
-
-/// The `tag_name` of a latest-release response, validated as `vMAJOR.MINOR.PATCH`.
-///
-/// serde's own error text can quote the input, so every failure maps to a fixed phrase.
-fn latest_tag_from_api(body: &[u8]) -> Result<String, String> {
-    let json: serde_json::Value = serde_json::from_slice(body)
-        .map_err(|_| "GitHub API: the response was not valid JSON".to_owned())?;
-    let tag = json
-        .get("tag_name")
-        .and_then(serde_json::Value::as_str)
-        .ok_or("GitHub API: the response had no tag_name string")?;
-    match Version::parse(tag) {
-        Ok(version) if tag.starts_with('v') && version.tag() == tag => Ok(tag.to_owned()),
-        _ => Err("GitHub API: tag_name was not vMAJOR.MINOR.PATCH".to_owned()),
     }
 }
 
@@ -1035,25 +1019,6 @@ mod tests {
             assert!(!reason.contains("sekrit-token"), "{body}: {reason}");
         }
         assert_eq!(mirror.heads(), Vec::<String>::new());
-    }
-
-    #[test]
-    fn only_the_top_level_tag_name_is_read_from_a_real_shaped_response() {
-        let body = br#" {"url":"https://x/y","assets":[{"tag_name":"v9.9.9","n":[1,2.5,null,true]}],
-            "author":{"tag_name":"v8.8.8"},"tag_name":"v1.2.3","body":"a \"q\" b\n","e":{},"l":[]} "#;
-        assert_eq!(latest_tag_from_api(body), Ok("v1.2.3".to_owned()));
-        // serde's error text can quote the input; ours never does.
-        let err = latest_tag_from_api(b"{\"tag_name\": QUOTED-BODY-TEXT").unwrap_err();
-        assert!(!err.contains("QUOTED"), "{err}");
-        for bad in [
-            &br#"{"tag_name":"v1.0.0-rc\u0031"}"#[..],
-            br#"{"assets":[{"tag_name":"v1.0.0"}]}"#,
-            br#"{"tag_name":"v1.0.0"} trailing"#,
-            br#"{"tag_name":"v1.0.0""#,
-            br#"[{"tag_name":"v1.0.0"}]"#,
-        ] {
-            assert!(latest_tag_from_api(bad).is_err(), "{bad:?}");
-        }
     }
 
     #[test]
