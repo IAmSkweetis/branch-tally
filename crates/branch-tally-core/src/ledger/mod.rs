@@ -255,7 +255,9 @@ impl LedgerEntry {
     }
 
     /// The selected record this entry stands for. Fields the ledger does not store (cwd, raw
-    /// branch stamp, parent session) are `None`/default.
+    /// branch stamp, parent session) are `None`/default. `is_sidechain` is not stored either: it
+    /// is derived as `agent_id.is_some()`, because Claude Code sets `agentId` only on subagent
+    /// records. That also fixes ledger lines written before this derivation.
     #[must_use]
     pub fn to_selected(&self, main: Option<&Path>) -> SelectedRecord {
         let mut record = Record::new(
@@ -265,6 +267,7 @@ impl LedgerEntry {
             self.usage,
         );
         record.agent_id.clone_from(&self.agent_id);
+        record.is_sidechain = self.agent_id.is_some();
         record.ts.clone_from(&self.ts);
         record.model.clone_from(&self.model);
         record.origin = self.origin.as_ref().and_then(|o| o.to_origin(main));
