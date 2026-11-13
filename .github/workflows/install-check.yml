@@ -228,8 +228,17 @@ jobs:
           [ "$got" = "branch-tally ${TAG#v}" ] || { echo "got '$got'" >&2; exit 1; }
           echo "ok: $got"
 
+      # cosign-installer (and cosign itself, as of v3.1.4) has no Windows ARM64 build: the action
+      # exits "unsupported architecture" there. That runner checks provenance with gh only, and says
+      # so here instead of failing before it verifies anything or skipping without a word.
+      - name: cosign has no Windows ARM64 build
+        if: needs.resolve.outputs.signed == 'true' && runner.os == 'Windows' && runner.arch == 'ARM64'
+        shell: sh -e {0}
+        run: |
+          echo "::notice title=cosign leg skipped::cosign publishes no Windows ARM64 build, so this runner checks provenance with gh only."
+
       - name: Install cosign
-        if: needs.resolve.outputs.signed == 'true'
+        if: needs.resolve.outputs.signed == 'true' && !(runner.os == 'Windows' && runner.arch == 'ARM64')
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
       # gh stays installed but has no credentials here (no token, an empty config directory), so
@@ -332,7 +341,7 @@ jobs:
           Write-Output "ok: $got"
 
       - name: One-liner verified with cosign (PowerShell)
-        if: runner.os == 'Windows' && needs.resolve.outputs.signed == 'true'
+        if: runner.os == 'Windows' && runner.arch != 'ARM64' && needs.resolve.outputs.signed == 'true'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'

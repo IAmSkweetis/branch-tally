@@ -497,29 +497,41 @@ case $mode in
 esac
 STUB
 chmod +x "$sg/stub/minisign"
-# sgn <accept|reject> <tag> <pub> [env assignments...]: run the script with the stand-in on PATH.
-# `unset=NAME` removes a variable instead.
+# sgn <accept|reject> <diagnostic> <tag> <pub> [assignments...]: run the script with the stand-in on
+# PATH. A reject case must fail AND print <diagnostic> (a distinctive substring of the script's own
+# error), so a failure for the wrong reason can't pass. Each NAME=value is applied intact in a
+# subshell, so a value with spaces stays one value; `unset=NAME` unsets NAME there instead.
 sgn() {
-  want=$1 tag=$2 pub=$3
-  shift 3
+  want=$1 diag=$2 tag=$3 pub=$4
+  shift 4
   total=$((total + 1))
   rm -f "$sg/dist/SHA256SUMS.minisig"
-  unsets=""
-  assigns=""
-  for a in "$@"; do
-    case $a in unset=*) unsets="$unsets -u ${a#unset=}" ;; *) assigns="$assigns $a" ;; esac
-  done
-  # shellcheck disable=SC2086 # the words are simple NAME=value pairs built just above
-  out=$(env PATH="$sg/stub:$PATH" MINISIGN_SECRET_KEY=k MINISIGN_PASSWORD=p $unsets $assigns \
-    sh "$sign" "$tag" "$sg/dist" "$pub" 2>&1)
+  out=$(
+    PATH="$sg/stub:$PATH"
+    MINISIGN_SECRET_KEY=k
+    MINISIGN_PASSWORD=p
+    export PATH MINISIGN_SECRET_KEY MINISIGN_PASSWORD
+    for a in "$@"; do
+      case $a in
+        unset=*) unset "${a#unset=}" ;;
+        *) export "$a" ;;
+      esac
+    done
+    sh "$sign" "$tag" "$sg/dist" "$pub" 2>&1
+  )
   got=$?
-  if { [ "$want" = accept ] && [ "$got" -ne 0 ]; } || { [ "$want" = reject ] && [ "$got" -eq 0 ]; }; then
-    wrong=$((wrong + 1))
-    echo "WRONG: sign-checksums $tag $* expected $want, exit $got: $out" >&2
+  if [ "$want" = accept ]; then
+    [ "$got" -eq 0 ] || { wrong=$((wrong + 1)); echo "WRONG: sign-checksums $tag $* expected accept, exit $got: $out" >&2; }
+  else
+    case $out in
+      *"$diag"*) ;;
+      *) got=0 ;;
+    esac
+    [ "$got" -ne 0 ] || { wrong=$((wrong + 1)); echo "WRONG: sign-checksums $tag $* expected a failure saying '$diag': $out" >&2; }
   fi
 }
-sgn accept v1.2.3 "$sg/good.pub"
-sgn reject v1.2.3 "$sg/placeholder.pub" # the placeholder key
+sgn accept - v1.2.3 "$sg/good.pub"
+sgn reject "is not a real minisign public key" v1.2.3 "$sg/placeholder.pub" # the placeholder key
 # The committed key is a real minisign public key: line 2 decodes to 42 bytes starting "Ed" (2
 # algorithm, 8 key id, 32 key). Catches a revert to a placeholder.
 total=$((total + 1))
@@ -530,14 +542,14 @@ if grep -q 'REPLACE_WITH' "$sg/committed.pub" || [ "$keybytes" != 42 ] || [ "$ke
   wrong=$((wrong + 1))
   echo "WRONG: .github/minisign.pub is not a real minisign public key (${keybytes} bytes, alg '${keyalg}')" >&2
 fi
-sgn reject v1.2.3 "$sg/good.pub" MINISIGN_SECRET_KEY= # empty secret
-sgn reject v1.2.3 "$sg/good.pub" unset=MINISIGN_SECRET_KEY
-sgn reject v1.2.3 "$sg/good.pub" unset=MINISIGN_PASSWORD
-sgn reject v1.2.3 "$sg/missing.pub"
-sgn reject 1.2.3 "$sg/good.pub"
-sgn reject v1.2 "$sg/good.pub"
-sgn reject v1.2.3 "$sg/good.pub" STUB_VERIFY=1 # signature does not verify
-sgn reject v1.2.3 "$sg/good.pub" "STUB_COMMENT=branch-tally v9.9.9 SHA256SUMS" # replayed comment
+sgn reject "MINISIGN_SECRET_KEY is not set or empty" v1.2.3 "$sg/good.pub" MINISIGN_SECRET_KEY= # empty secret
+sgn reject "MINISIGN_SECRET_KEY is not set or empty" v1.2.3 "$sg/good.pub" unset=MINISIGN_SECRET_KEY
+sgn reject "MINISIGN_PASSWORD is not set" v1.2.3 "$sg/good.pub" unset=MINISIGN_PASSWORD
+sgn reject "not found" v1.2.3 "$sg/missing.pub"
+sgn reject "is not of the form" 1.2.3 "$sg/good.pub"
+sgn reject "is not of the form" v1.2 "$sg/good.pub"
+sgn reject "does not verify against" v1.2.3 "$sg/good.pub" STUB_VERIFY=1 # signature does not verify
+sgn reject "trusted comment is not exactly" v1.2.3 "$sg/good.pub" "STUB_COMMENT=branch-tally v9.9.9 SHA256SUMS" # replayed comment
 total=$((total + 1))
 [ ! -e "$sg/dist/SHA256SUMS.minisig" ] || { wrong=$((wrong + 1)); echo "WRONG: a failed signing left a signature behind" >&2; }
 # no minisign on PATH: an error with an install hint, never a skip
