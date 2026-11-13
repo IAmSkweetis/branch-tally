@@ -481,6 +481,8 @@ mkdir -p "$sg/stub" "$sg/dist" "$sg/bare"
 printf 'deadbeef  branch-tally-v1.2.3-x.tar.gz\n' >"$sg/dist/SHA256SUMS"
 printf 'untrusted comment: minisign public key TEST\nRWQTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTES\n' >"$sg/good.pub"
 cp "$dir/../.github/minisign.pub" "$sg/committed.pub"
+# The placeholder as it was first committed, written here so the refusal stays tested.
+printf 'untrusted comment: PLACEHOLDER - replace this whole file with the maintainer'"'"'s minisign public key\nREPLACE_WITH_MINISIGN_PUBLIC_KEY\n' >"$sg/placeholder.pub"
 cat >"$sg/stub/minisign" <<'STUB'
 #!/bin/sh
 mode=$1
@@ -517,7 +519,17 @@ sgn() {
   fi
 }
 sgn accept v1.2.3 "$sg/good.pub"
-sgn reject v1.2.3 "$sg/committed.pub" # the committed placeholder key
+sgn reject v1.2.3 "$sg/placeholder.pub" # the placeholder key
+# The committed key is a real minisign public key: line 2 decodes to 42 bytes starting "Ed" (2
+# algorithm, 8 key id, 32 key). Catches a revert to a placeholder.
+total=$((total + 1))
+keyline=$(sed -n 2p "$sg/committed.pub")
+keybytes=$(printf '%s' "$keyline" | base64 -d 2>/dev/null | wc -c | tr -d ' ')
+keyalg=$(printf '%s' "$keyline" | base64 -d 2>/dev/null | head -c 2)
+if grep -q 'REPLACE_WITH' "$sg/committed.pub" || [ "$keybytes" != 42 ] || [ "$keyalg" != Ed ]; then
+  wrong=$((wrong + 1))
+  echo "WRONG: .github/minisign.pub is not a real minisign public key (${keybytes} bytes, alg '${keyalg}')" >&2
+fi
 sgn reject v1.2.3 "$sg/good.pub" MINISIGN_SECRET_KEY= # empty secret
 sgn reject v1.2.3 "$sg/good.pub" unset=MINISIGN_SECRET_KEY
 sgn reject v1.2.3 "$sg/good.pub" unset=MINISIGN_PASSWORD

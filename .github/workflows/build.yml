@@ -144,22 +144,20 @@ jobs:
             sh scripts/sign-checksums.sh v0.0.0 "$proof/dist" "$proof/proof.pub"
           test -s "$proof/dist/SHA256SUMS.minisig"
 
-      # The other direction: the committed key must not be the placeholder in a release, and the
-      # script must refuse it. Until the maintainer commits the real key this proves the refusal;
-      # afterwards it is skipped, because the throwaway key is rightly rejected by the real one.
+      # The other direction: the script must refuse a placeholder public key, whatever is committed
+      # (scripts/test-checks.sh also asserts the committed key is a real one). A temporary
+      # placeholder file keeps this exercised now that the real key is committed.
       - name: The placeholder public key is refused
         run: |
           set -euo pipefail
-          if grep -q 'REPLACE_WITH' .github/minisign.pub; then
-            proof=$(mktemp -d)
-            minisign -G -W -f -p "$proof/proof.pub" -s "$proof/proof.key" > /dev/null
-            echo "0000  x" > "$proof/SHA256SUMS"
-            if MINISIGN_SECRET_KEY="$(cat "$proof/proof.key")" MINISIGN_PASSWORD="" \
-              sh scripts/sign-checksums.sh v0.0.0 "$proof" .github/minisign.pub; then
-              echo "::error::sign-checksums.sh accepted the placeholder public key."
-              exit 1
-            fi
-            echo "The placeholder key is refused, as it must be."
-          else
-            echo "The committed public key is not the placeholder; nothing to prove here."
+          proof=$(mktemp -d)
+          minisign -G -W -f -p "$proof/proof.pub" -s "$proof/proof.key" > /dev/null
+          echo "0000  x" > "$proof/SHA256SUMS"
+          printf 'untrusted comment: PLACEHOLDER\nREPLACE_WITH_MINISIGN_PUBLIC_KEY\n' > "$proof/placeholder.pub"
+          if MINISIGN_SECRET_KEY="$(cat "$proof/proof.key")" MINISIGN_PASSWORD="" \
+            sh scripts/sign-checksums.sh v0.0.0 "$proof" "$proof/placeholder.pub"; then
+            echo "::error::sign-checksums.sh accepted the placeholder public key."
+            exit 1
           fi
+          test ! -e "$proof/SHA256SUMS.minisig"
+          echo "The placeholder key is refused, as it must be."
