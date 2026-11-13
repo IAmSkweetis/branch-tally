@@ -46,7 +46,8 @@ Environment (a flag overrides its variable):
                                            (default: https://api.github.com). Printed when set.
                                            It is trusted exactly as much as the mirror variable.
   GH_TOKEN, GITHUB_TOKEN                   When set (GH_TOKEN first), sent as a bearer token to the
-                                           API lookup only, to avoid rate limits. Never printed.
+                                           API lookup only, to avoid rate limits. Never printed and
+                                           never on a command line (a wget without --config sends none).
 
 "Latest". With no --version, the latest tag is read from GitHub's API
 (https://api.github.com/repos/IAmSkweetis/branch-tally/releases/latest), even when a mirror is
@@ -177,18 +178,33 @@ fetch_api() {
     rm -f "$hdr"
     return $rc
   fi
-  # wget has no header file: the token is on its command line for the length of the call.
-  if [ "$wget_https_only" = 1 ]; then
-    if [ -n "$token" ]; then
-      wget -q --https-only --timeout=30 --header "Authorization: Bearer $token" -O "$2" "$1" 2>/dev/null
+  # wget: argv is readable by other local users (CWE-214), so the token never goes on its command
+  # line. GNU wget 1.17+ reads `header = ...` from a private --config file. Any other wget cannot
+  # take it privately, so the lookup goes unauthenticated, with a notice.
+  wget_cfg=
+  if [ -n "$token" ]; then
+    if [ "$wget_config" = 1 ]; then
+      wget_cfg=$tmp/api.wgetrc
+      (
+        umask 077
+        printf 'header = Authorization: Bearer %s\n' "$token" >"$wget_cfg"
+      )
     else
-      wget -q --https-only --timeout=30 -O "$2" "$1" 2>/dev/null
+      warn "GH_TOKEN/GITHUB_TOKEN not sent: this wget cannot pass it privately (no --config); curl or GNU wget 1.17+ can"
     fi
-  elif [ -n "$token" ]; then
-    wget -q --timeout=30 --header "Authorization: Bearer $token" -O "$2" "$1" 2>/dev/null
+  fi
+  if [ -n "$wget_cfg" ] && [ "$wget_https_only" = 1 ]; then
+    wget -q --https-only --timeout=30 --config="$wget_cfg" -O "$2" "$1" 2>/dev/null
+  elif [ -n "$wget_cfg" ]; then
+    wget -q --timeout=30 --config="$wget_cfg" -O "$2" "$1" 2>/dev/null
+  elif [ "$wget_https_only" = 1 ]; then
+    wget -q --https-only --timeout=30 -O "$2" "$1" 2>/dev/null
   else
     wget -q --timeout=30 -O "$2" "$1" 2>/dev/null
   fi
+  rc=$?
+  if [ -n "$wget_cfg" ]; then rm -f "$wget_cfg"; fi
+  return $rc
 }
 
 # latest_from_api: print the latest release tag as GitHub reports it, or fail.
@@ -365,11 +381,13 @@ main() {
 
   # Tools.
   wget_https_only=0
+  wget_config=0
   if command -v curl >/dev/null 2>&1; then
     fetch_tool=curl
   elif command -v wget >/dev/null 2>&1; then
     fetch_tool=wget
     if wget --help 2>&1 | grep -- '--https-only' >/dev/null 2>&1; then wget_https_only=1; fi
+    if wget --help 2>&1 | grep -- '--config' >/dev/null 2>&1; then wget_config=1; fi
   else
     die "need curl or wget"
   fi

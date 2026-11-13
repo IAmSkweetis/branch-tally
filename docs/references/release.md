@@ -204,7 +204,7 @@ powershell -ExecutionPolicy Bypass -c "irm https://github.com/IAmSkweetis/branch
 | `--require-attestation` | `-RequireAttestation` | `BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION` | Fail unless provenance was verified (`1`, `true` or `yes` for the variable) |
 | none | none | `BRANCH_TALLY_INSTALL_BASE_URL` | Releases URL, `https://` or `file://` only, default `https://github.com/IAmSkweetis/branch-tally/releases`. The effective source is printed when it is set. The tests point it at a `file://` fake release |
 | none | none | `BRANCH_TALLY_INSTALL_API_URL` | Where "latest" is looked up, `https://` or `file://` only, default `https://api.github.com`. Printed as `Using release API: <url>` when set. The same trust as the mirror variable. The tests point it at a `file://` fake API |
-| none | none | `GH_TOKEN`, else `GITHUB_TOKEN` | Sent as a bearer token to the "latest" lookup only, to avoid rate limits. Never printed and, for curl, never on its command line |
+| none | none | `GH_TOKEN`, else `GITHUB_TOKEN` | Sent as a bearer token to the "latest" lookup only, to avoid rate limits. Never printed and never on a command line: curl reads it from a private header file, GNU wget 1.17+ from a private `--config` file, and any other wget (BusyBox) goes unauthenticated with a notice |
 
 With nothing set, the binary goes to `~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows). The
 installer **never edits PATH**: when the directory is not on it, it prints a hint. On success it

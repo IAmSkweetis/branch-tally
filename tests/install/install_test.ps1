@@ -90,16 +90,16 @@ function Write-Stub {
   if ($Name -eq 'gh') {
     if (-not $Signer) { $Signer = $script:GoodWorkflow }
     # No parenthesised blocks: a flat script, so every `exit /b` is a plain top-level exit.
-    $body += "if `\"%1 %2`\"==`\"auth status`\" exit /b $($Codes[0])`r`n"
-    $body += "if not `\"%1 %2`\"==`\"attestation verify`\" exit /b 99`r`n"
+    $body += "if `"%1 %2`"==`"auth status`" exit /b $($Codes[0])`r`n"
+    $body += "if not `"%1 %2`"==`"attestation verify`" exit /b 99`r`n"
     $body += "if not $($Codes[1])==0 exit /b $($Codes[1])`r`n"
     # The real interface: gh attestation verify <file-path> --repo <owner/repo>. The archive must
     # exist, and --repo is mandatory (without --repo or --owner the real gh refuses).
-    $body += "if not exist `\"%3`\" exit /b 2`r`n"
-    $body += "echo %* | findstr /C:`\"--repo IAmSkweetis/branch-tally `\" >nul || exit /b 2`r`n"
-    $body += "echo %* | findstr /C:`\"--signer-workflow $Signer `\" >nul || exit /b 1`r`n"
-    $body += "echo %* | findstr /C:`\"--source-ref $Ref `\" >nul || exit /b 1`r`n"
-    $body += "echo %* | findstr /C:`\"--cert-oidc-issuer https://token.actions.githubusercontent.com`\" >nul || exit /b 1`r`n"
+    $body += "if not exist `"%3`" exit /b 2`r`n"
+    $body += "echo %* | findstr /C:`"--repo IAmSkweetis/branch-tally `" >nul || exit /b 2`r`n"
+    $body += "echo %* | findstr /C:`"--signer-workflow $Signer `" >nul || exit /b 1`r`n"
+    $body += "echo %* | findstr /C:`"--source-ref $Ref `" >nul || exit /b 1`r`n"
+    $body += "echo %* | findstr /C:`"--cert-oidc-issuer https://token.actions.githubusercontent.com`" >nul || exit /b 1`r`n"
     $body += "exit /b 0`r`n"
   } else {
     if (-not $Signer) { $Signer = $script:GoodIdentity }
@@ -705,6 +705,7 @@ Test-Case 'token on failure: never printed' (($res.Out + $res.Err) -notlike '*gh
 # 13h. Static checks of the redirect handling, since no https server is available to the suite.
 $src = [IO.File]::ReadAllText($installer)
 Test-Case 'Get-Remote turns automatic redirects off' ($src -like '*-MaximumRedirection 0*')
+Test-Case 'the latest lookup has a 30 second timeout that every hop uses' ($src.Contains('$json $headers 30') -and $src.Contains('$request[''TimeoutSec''] = $TimeoutSec'))
 Test-Case 'Get-Remote has a hop limit' ($src -like '*$maxRedirects*')
 Test-Case 'Get-Remote refuses a non-https hop' ($src -like '*refusing to follow a non-https redirect*')
 # .Contains, not -like: a [ in a -like pattern is a wildcard character class.
