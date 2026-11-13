@@ -326,7 +326,16 @@ To verify a download by hand:
 ```bash
 minisign -Vm SHA256SUMS -p minisign.pub      # the key from .github/minisign.pub; checks SHA256SUMS.minisig
 sha256sum --check --ignore-missing SHA256SUMS   # shasum -a 256 -c on macOS
-gh attestation verify branch-tally-v0.1.0-<target>.tar.gz --repo IAmSkweetis/branch-tally
+# Pin the signer workflow and ref: --repo alone accepts any workflow in the repository.
+# The same command works for any asset: an archive, an installer, SHA256SUMS or SHA256SUMS.minisig.
+gh attestation verify branch-tally-v0.1.0-<target>.tar.gz \
+  --repo IAmSkweetis/branch-tally \
+  --signer-workflow IAmSkweetis/branch-tally/.github/workflows/release.yml \
+  --source-ref refs/heads/main
+gh attestation verify SHA256SUMS \
+  --repo IAmSkweetis/branch-tally \
+  --signer-workflow IAmSkweetis/branch-tally/.github/workflows/release.yml \
+  --source-ref refs/heads/main
 ```
 
 The first command's output includes `Trusted comment: branch-tally <tag> SHA256SUMS`: check the tag
