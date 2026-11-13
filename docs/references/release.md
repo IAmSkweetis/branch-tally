@@ -262,9 +262,13 @@ not verify.
 - `install.sh` runs curl with `--proto '=https' --proto-redir '=https' --tlsv1.2`, and wget with
   `--https-only` when that wget has it (BusyBox's does not; the URL scheme check still applies).
   `file://` mirrors are plain copies, the seam the tests use. `install.ps1` pins TLS 1.2+ and
-  follows redirects by hand (`-MaximumRedirection 0`, at most 5 hops), refusing any hop that is not
-  `https://`. The documented one-liner runs Windows PowerShell 5.1, whose `Invoke-WebRequest` would
-  otherwise follow an HTTPS-to-HTTP redirect (#98). The scheme checks (`file://`, `https://`) are
+  follows redirects by hand (an `HttpWebRequest` per hop with `AllowAutoRedirect` off, at most 5
+  hops), refusing any hop that is not `https://`. The documented one-liner runs Windows PowerShell
+  5.1, whose `Invoke-WebRequest` would otherwise follow an HTTPS-to-HTTP redirect (#98). Not
+  `Invoke-WebRequest -MaximumRedirection 0`: on 5.1 that reports a 3xx with no response attached,
+  so the `Location` can't be read, and v0.11.0's one-liner failed on every release download (#119).
+  `tests/install/install_live_test.ps1` proves the redirect path against real GitHub under 5.1
+  and 7. The scheme checks (`file://`, `https://`) are
   case-insensitive in both installers. The PowerShell version check uses `\z`, not `$`, which in
   .NET also matches before a trailing newline; the `sh` check is a `case` pattern and already
   rejects one.
@@ -324,16 +328,28 @@ both fail, the error states that the binary now lives at `<path>.old` and to ren
 ### Proving an install works
 
 Two layers. `installers.yml` runs on a pull request or push to `main` that changes `install.sh`,
-`install.ps1`, `tests/install/**`, the `scripts/lint-install.*` and `scripts/test-install.sh`
-helpers or the workflow itself: ShellCheck on the shell files, PSScriptAnalyzer (pinned, warnings
-fail) on the PowerShell files, and the two offline test scripts (`sh tests/install/install_test.sh`,
-`pwsh -NoProfile -File tests/install/install_test.ps1`) on Ubuntu, macOS and Windows. On a Windows
-host the sh suite is skipped with a message, because `install.sh` does not target Windows; the pwsh
-suite still runs, and a missing `pwsh` there still fails when `CI` is set. It is
-path-filtered like `workflow-audit.yml` and none of its jobs are required checks, so a pull request
-that touches none of those paths is not left waiting. Locally: `just lint-install` and
-`just test-install`, which print a skip when `shellcheck` or `pwsh` is absent and fail when `CI` is
-set.
+`install.ps1`, `tests/install/**`, the `scripts/lint-install.*`, `scripts/test-install.sh` and
+`scripts/ci-install-pwsh.sh` helpers or the workflow itself: ShellCheck (pinned) on the shell files,
+PSScriptAnalyzer (pinned, warnings fail) on the PowerShell files, and the two offline test scripts
+(`sh tests/install/install_test.sh`, `pwsh -NoProfile -File tests/install/install_test.ps1`) on
+Ubuntu, macOS and Windows. Every job runs the pinned pwsh that `scripts/ci-install-pwsh.sh`
+installs (version and per-platform archive sha256s in the script, mirrored in `mise.toml`), not
+whatever the runner image ships. On a Windows host the sh suite is skipped with a message, because
+`install.sh` does not target Windows; the pwsh suite still runs, and a missing `pwsh` there still
+fails when `CI` is set. It is path-filtered like `workflow-audit.yml` and none of its jobs are
+required checks, so a pull request that touches none of those paths is not left waiting. Locally:
+`just lint-install` and `just test-install`, which print a skip when `shellcheck` or `pwsh` is
+absent and fail when `CI` is set.
+
+The offline suite serves its fake release over `file://`, so it never makes an https request and
+never follows a redirect, while every real release download is a 302 from `github.com` to the asset
+host. `tests/install/install_live_test.ps1` closes that gap: it lifts `Get-Remote` out of
+`install.ps1` and runs it against real GitHub (a redirected asset, the two-hop `latest/download`,
+the hop limit, a 404, and the API lookup with headers). The test job runs it under the pinned pwsh
+on every OS and, on Windows, under Windows PowerShell 5.1 as well, which handles a 3xx differently
+and is what the documented one-liner runs. Locally: `just test-install-live` (pwsh) or
+`just test-install-live powershell` (5.1, Windows only). It needs the network, so it is not part of
+`just ci`.
 
 Then `install-check.yml` proves the published thing, on six runners (`ubuntu-24.04`,
 `ubuntu-24.04-arm`, `macos-15`, `macos-15-intel`, `windows-latest`, `windows-11-arm`), none of

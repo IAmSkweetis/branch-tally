@@ -2,8 +2,9 @@
 no longer matches its recorded checksum.
 
 mise.toml is a local convenience. The authorities are the justfile (`<tool>_version`), the CI
-workflows (`tool: name@version` for taiki-e/install-action) and rust-toolchain.toml. This script
-reads those as text and compares, so it needs neither mise nor just. Usage: check_pins.py [root].
+workflows (`tool: name@version` for taiki-e/install-action), the `scripts/ci-install-*.sh` scripts
+and rust-toolchain.toml. This script reads those as text and compares, so it needs neither mise nor
+just. Usage: check_pins.py [root].
 """
 
 from __future__ import annotations
@@ -23,7 +24,11 @@ JUSTFILE_PINS = {
     "mdbook": "mdbook_version",
     "mdbook-mermaid": "mdbook_mermaid_version",
 }
-MINISIGN_SCRIPT = Path("scripts/ci-install-minisign.sh")
+# Tools CI installs with a script of their own, pinned by version and archive sha256(s).
+INSTALL_SCRIPTS = {
+    "minisign": Path("scripts/ci-install-minisign.sh"),
+    "powershell": Path("scripts/ci-install-pwsh.sh"),
+}
 VENDORED = [Path("docs/manual/svg-pan-zoom.min.js")]
 
 
@@ -57,24 +62,25 @@ def workflow_pins(root: Path) -> tuple[dict[str, str], list[str]]:
     return pins, problems
 
 
-def minisign_pin(root: Path) -> tuple[str | None, list[str]]:
-    """The minisign version pinned in scripts/ci-install-minisign.sh, and any problems with the pin.
+def script_pin(root: Path, tool: str, script: Path) -> tuple[str | None, list[str]]:
+    """The version a CI install script pins, and any problems with the pin.
 
-    The script is the only place CI gets minisign, pinned by version and archive sha256. The
-    sha256 can't be re-derived offline, so it is checked for shape; the version is then compared
-    with mise.toml like every other tool.
+    These scripts are the only place CI gets the tool, pinned by `version=` and by the sha256 of
+    each archive it may download (`sha256=`, or one `sha256_<platform>=` per platform). The
+    sha256s can't be re-derived offline, so they are checked for shape; the version is then
+    compared with mise.toml like every other tool.
     """
-    path = root / MINISIGN_SCRIPT
+    path = root / script
     if not path.is_file():
-        return None, [f"minisign: {MINISIGN_SCRIPT} is missing"]
+        return None, [f"{tool}: {script} is missing"]
     text = _read(path)
     version = re.search(r"^version=(\S+)\s*$", text, re.MULTILINE)
-    sha = re.search(r"^sha256=(\S*)\s*$", text, re.MULTILINE)
+    shas = re.findall(r"^sha256(?:_\w+)?=(\S*)\s*$", text, re.MULTILINE)
     problems = []
     if not version or not re.fullmatch(r"\d+\.\d+(\.\d+)?", version.group(1)):
-        problems.append(f"minisign: {MINISIGN_SCRIPT} has no well-formed `version=` pin")
-    if not sha or not re.fullmatch(r"[0-9a-f]{64}", sha.group(1)):
-        problems.append(f"minisign: {MINISIGN_SCRIPT} has no well-formed 64-hex `sha256=` pin")
+        problems.append(f"{tool}: {script} has no well-formed `version=` pin")
+    if not shas or not all(re.fullmatch(r"[0-9a-f]{64}", sha) for sha in shas):
+        problems.append(f"{tool}: {script} has no well-formed 64-hex `sha256=` pin")
     return (version.group(1) if version and not problems else None), problems
 
 
@@ -104,10 +110,11 @@ def check(root: Path) -> list[str]:
     problems += wf_problems
     for tool, version in wf.items():
         expected[tool] = (version, ".github/workflows")
-    minisign, minisign_problems = minisign_pin(root)
-    problems += minisign_problems
-    if minisign:
-        expected["minisign"] = (minisign, str(MINISIGN_SCRIPT))
+    for tool, script in INSTALL_SCRIPTS.items():
+        version, script_problems = script_pin(root, tool, script)
+        problems += script_problems
+        if version:
+            expected[tool] = (version, str(script))
     channel = tomllib.loads(_read(root / "rust-toolchain.toml"))["toolchain"]["channel"]
     expected["rust"] = (channel, "rust-toolchain.toml")
 
@@ -143,8 +150,8 @@ def main() -> int:
     for p in problems:
         print(f"error: {p}", file=sys.stderr)
     if not problems:
-        print("pins agree: mise.toml matches the justfile, workflows and rust-toolchain.toml; "
-              "vendored assets match their checksums")
+        print("pins agree: mise.toml matches the justfile, workflows, CI install scripts and "
+              "rust-toolchain.toml; vendored assets match their checksums")
     return 1 if problems else 0
 
 

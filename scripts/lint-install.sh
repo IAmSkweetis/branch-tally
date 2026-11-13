@@ -7,7 +7,7 @@ set -u
 
 cd "$(dirname "$0")/.." || exit 1
 
-for f in install.sh install.ps1 tests/install/install_test.sh tests/install/install_test.ps1; do
+for f in install.sh install.ps1 tests/install/install_test.sh tests/install/install_test.ps1 tests/install/install_live_test.ps1; do
   if [ ! -f "$f" ]; then
     echo "error: $f not found; the installer gate has nothing to check" >&2
     exit 1
@@ -33,7 +33,7 @@ if have shellcheck "install it: https://github.com/koalaman/shellcheck#installin
 fi
 
 if have pwsh "install PowerShell 7: https://learn.microsoft.com/powershell/scripting/install"; then
-  pwsh -NoProfile -File scripts/lint-install.ps1 install.ps1 tests/install/install_test.ps1 || failed=1
+  pwsh -NoProfile -File scripts/lint-install.ps1 install.ps1 tests/install/install_test.ps1 tests/install/install_live_test.ps1 || failed=1
 fi
 
 exit "$failed"

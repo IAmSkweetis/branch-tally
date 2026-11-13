@@ -1,7 +1,8 @@
 name: Installers
 
 # Lint and test the installers (install.sh, install.ps1) whenever they or their tests change. Both
-# run offline against a file:// fake release, so they prove the scripts' own logic before a release;
+# run offline against a file:// fake release, so they prove the scripts' own logic before a release
+# (install.ps1's downloader is also run against real GitHub, since file:// never redirects);
 # install-check.yml then proves the published one-liners on clean machines. Path-filtered like
 # workflow-audit.yml, and these jobs are not required checks, so a PR that touches none of the paths
 # is not left waiting on them. The recipes are the same ones `just ci` runs.
@@ -14,6 +15,7 @@ on:
       - "tests/install/**"
       - "scripts/lint-install.*"
       - "scripts/test-install.sh"
+      - "scripts/ci-install-pwsh.sh"
       - ".github/workflows/installers.yml"
   push:
     branches: [main]
@@ -23,6 +25,7 @@ on:
       - "tests/install/**"
       - "scripts/lint-install.*"
       - "scripts/test-install.sh"
+      - "scripts/ci-install-pwsh.sh"
       - ".github/workflows/installers.yml"
 
 permissions: {}
@@ -44,8 +47,12 @@ jobs:
           persist-credentials: false
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: just@1.59.0
-      # ShellCheck and pwsh ship on the runner image. CI is set, so a missing tool is an error.
+          tool: just@1.59.0,shellcheck@0.11.0
+      # ShellCheck comes from install-action above and pwsh from the script below, both pinned and
+      # put first on PATH, not the runner image's. CI is set, so a missing tool is an error.
+      - name: Install pwsh (pinned)
+        shell: bash
+        run: sh scripts/ci-install-pwsh.sh
       - name: Install PSScriptAnalyzer (pinned)
         shell: pwsh
         run: Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser -Force
@@ -68,4 +75,19 @@ jobs:
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: just@1.59.0
+      - name: Install pwsh (pinned)
+        shell: bash
+        run: sh scripts/ci-install-pwsh.sh
       - run: just test-install
+      # The offline suite never makes an https request, so the downloader's redirect handling is
+      # proved here, against real GitHub: under the pinned pwsh everywhere, and under Windows
+      # PowerShell 5.1 (which ships with Windows and handles a 3xx differently) on Windows.
+      - name: Downloader against GitHub (PowerShell 7)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: just test-install-live pwsh
+      - name: Downloader against GitHub (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: just test-install-live powershell

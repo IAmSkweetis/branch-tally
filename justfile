@@ -64,6 +64,10 @@ test-install: (_require "sh" "install a POSIX sh")
 test-install: (_require "git" "install Git for Windows: https://gitforwindows.org")
     @$sh = (Get-Command sh -ErrorAction SilentlyContinue).Source; if (-not $sh) { $sh = Join-Path (git --exec-path) '../../../bin/sh.exe' }; if (-not (Test-Path $sh)) { [Console]::Error.WriteLine('error: sh not found on PATH or beside git; install Git for Windows: https://gitforwindows.org'); exit 1 }; & $sh scripts/test-install.sh; exit $LASTEXITCODE
 
+# Run install.ps1's downloader against real GitHub (needs the network, so not part of ci): pwsh, or powershell for Windows PowerShell 5.1.
+test-install-live shell="pwsh": (_require shell "install PowerShell 7: https://learn.microsoft.com/powershell/scripting/install")
+    {{ shell }} -NoProfile -ExecutionPolicy Bypass -File tests/install/install_live_test.ps1
+
 # Build the user manual (docs/manual) into docs/manual/book. Fails on a SUMMARY.md entry with no page.
 docs: (_require "mdbook" ("install it: https://github.com/rust-lang/mdBook/releases/tag/v" + mdbook_version + " or cargo install mdbook --version " + mdbook_version + " --locked")) (_require "mdbook-mermaid" ("install it: https://github.com/badboy/mdbook-mermaid/releases/tag/v" + mdbook_mermaid_version + " or cargo install mdbook-mermaid --version " + mdbook_mermaid_version + " --locked"))
     mdbook build docs/manual

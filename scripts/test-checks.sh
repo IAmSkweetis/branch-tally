@@ -76,7 +76,7 @@ fi
 # either way. `inst <case-dir> <script> <accept|reject>` runs one case; `out` holds its output.
 posix_sh=$(command -v sh)
 mkinst() {
-  # mkinst <name>: a tree with the scripts, the four installer files and a PATH dir with dirname.
+  # mkinst <name>: a tree with the scripts, the installer files and a PATH dir with dirname.
   d="$scratch/$1"
   mkdir -p "$d/scripts" "$d/tests/install" "$d/bin"
   cp "$dir/lint-install.sh" "$dir/test-install.sh" "$d/scripts/" 2>/dev/null
@@ -84,6 +84,7 @@ mkinst() {
   : >"$d/install.ps1"
   : >"$d/tests/install/install_test.sh"
   : >"$d/tests/install/install_test.ps1"
+  : >"$d/tests/install/install_live_test.ps1"
   # Wrappers, not symlinks: Git Bash without symlink privilege turns `ln -s` into a copy, and a
   # copied MSYS binary can't load msys-2.0.dll once PATH holds only this dir. Exec'ing the real
   # binary by absolute path keeps its DLLs beside it on every platform.
