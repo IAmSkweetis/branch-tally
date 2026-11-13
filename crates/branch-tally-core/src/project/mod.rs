@@ -143,7 +143,8 @@ pub fn build(
     let mut deduped: Vec<&LedgerEntry> = Vec::new();
     let mut claims: HashMap<&str, u64> = HashMap::new();
     for entry in ledger.entries() {
-        *claims.entry(entry.request_id.as_str()).or_insert(0) += 1;
+        let c = claims.entry(entry.request_id.as_str()).or_insert(0_u64);
+        *c = c.saturating_add(1);
         if seen.insert(entry.request_id.as_str()) {
             deduped.push(entry);
         }
