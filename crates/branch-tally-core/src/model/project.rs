@@ -34,13 +34,18 @@ pub struct BranchRow {
     /// `last_call`, so when this is non-zero `last_call` may be earlier than the real last call.
     #[serde(default)]
     pub undated_calls: u64,
+    /// `true` when a token or call total behind this figure saturated at `u64::MAX` (see
+    /// [`Footnote::totals_overflowed`](super::Footnote)): the figures are a floor and
+    /// unreliable. Omitted from JSON when `false`; absent in older serialized data.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub totals_overflowed: bool,
 }
 
 impl BranchRow {
-    /// Whether this row's cost is only a lower bound.
+    /// Whether this row's cost is only a lower bound: an unpriced model, or a saturated total.
     #[must_use]
     pub fn is_floor(&self) -> bool {
-        self.cost.is_floor() || !self.unpriced_models.is_empty()
+        self.totals_overflowed || self.cost.is_floor() || !self.unpriced_models.is_empty()
     }
 }
 
@@ -71,13 +76,19 @@ pub struct ProjectTotals {
     /// Calls with a missing or unparsable `ts`, counted once per request id.
     #[serde(default)]
     pub undated_calls: u64,
+    /// `true` when a token or call total behind the project total, or summed across branches, saturated at `u64::MAX` (see
+    /// [`Footnote::totals_overflowed`](super::Footnote)): the figures are a floor and
+    /// unreliable. Omitted from JSON when `false`; absent in older serialized data.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub totals_overflowed: bool,
 }
 
 impl ProjectTotals {
-    /// Whether the project total is only a lower bound ("at least $X").
+    /// Whether the project total is only a lower bound ("at least $X"): an unpriced model, or a
+    /// saturated total.
     #[must_use]
     pub fn is_floor(&self) -> bool {
-        self.cost.is_floor() || !self.unpriced_models.is_empty()
+        self.totals_overflowed || self.cost.is_floor() || !self.unpriced_models.is_empty()
     }
 }
 
@@ -108,6 +119,13 @@ pub struct ProjectReport {
 }
 
 impl ProjectReport {
+    /// Whether any total in the report saturated: the project totals or any row. A renderer says
+    /// the totals are unreliable floors when this is true.
+    #[must_use]
+    pub fn is_overflowed(&self) -> bool {
+        self.totals.totals_overflowed || self.rows.iter().any(|r| r.totals_overflowed)
+    }
+
     /// Whether any figure in the report is only a floor: the totals, any row or any series point.
     /// A renderer labels the project total "at least" when this is true.
     #[must_use]
@@ -194,6 +212,62 @@ mod tests {
             ..ProjectReport::default()
         };
         assert!(report.is_floor());
+    }
+
+    #[test]
+    fn overflowed_row_and_totals_are_floors() {
+        let row = BranchRow {
+            cost: priced(),
+            totals_overflowed: true,
+            ..BranchRow::default()
+        };
+        assert!(row.is_floor());
+        let totals = ProjectTotals {
+            cost: priced(),
+            totals_overflowed: true,
+            ..ProjectTotals::default()
+        };
+        assert!(totals.is_floor());
+    }
+
+    #[test]
+    fn report_overflow_follows_totals_or_any_row() {
+        let mut report = ProjectReport::default();
+        assert!(!report.is_overflowed());
+        report.rows.push(BranchRow {
+            totals_overflowed: true,
+            ..BranchRow::default()
+        });
+        assert!(report.is_overflowed());
+        assert!(report.is_floor());
+        let only_totals = ProjectReport {
+            totals: ProjectTotals {
+                totals_overflowed: true,
+                ..ProjectTotals::default()
+            },
+            ..ProjectReport::default()
+        };
+        assert!(only_totals.is_overflowed());
+    }
+
+    #[test]
+    fn overflow_flag_is_omitted_from_json_when_false_and_defaults_when_absent() {
+        let row = BranchRow::default();
+        assert!(
+            !serde_json::to_string(&row)
+                .unwrap()
+                .contains("totals_overflowed")
+        );
+        let json = serde_json::to_string(&BranchRow {
+            totals_overflowed: true,
+            ..BranchRow::default()
+        })
+        .unwrap();
+        assert!(json.contains("\"totals_overflowed\":true"));
+        let mut v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        v.as_object_mut().unwrap().remove("totals_overflowed");
+        let back: BranchRow = serde_json::from_value(v).unwrap();
+        assert!(!back.totals_overflowed);
     }
 
     #[test]
