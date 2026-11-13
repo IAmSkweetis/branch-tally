@@ -253,11 +253,24 @@ Still open for the installers: a mirror set by the environment is honoured witho
 
 `branch-tally update` (alias `upgrade`) is the in-place counterpart of the installers. The decision
 logic lives in core's `update` module; the CLI supplies the network, archive and replacement. It
-fetches the same archives, resolves the tag from the latest release or `--version`, and verifies the
-archive against that tag's `SHA256SUMS`. A mismatch, or an archive missing from `SHA256SUMS`, is a
-hard failure with nothing replaced. A dev build (`0.0.0-dev`) and an unwritable binary directory are
-refused, with the installer one-liner in the message. `--check` downloads nothing; `--version` may
-downgrade; `--force` reinstalls the current version; `--yes` skips the prompt.
+fetches the same archives and resolves the tag from the latest release or `--version`. It is strict
+about origin ([0004](../decisions/0004-release-provenance.md)). Before trusting any checksum it
+downloads `SHA256SUMS` and `SHA256SUMS.minisig` for that tag and verifies the signature (proof of
+origin) over the exact `SHA256SUMS` bytes against the release public key, refusing legacy
+(non-prehashed) signatures. The signed trusted comment must be exactly
+`branch-tally <tag> SHA256SUMS` for the tag being installed. Only then does it fetch the archive and
+check it against `SHA256SUMS` (an integrity check) and install. Each failure is its own typed
+`UpdateError` and installs nothing: a missing signature (a release from before signing, also through
+`--version`; the message says the release is not signed and points at `gh attestation verify`), a
+malformed or invalid signature, a signature by another key, a legacy signature, and a trusted
+comment for another tag or file. A mismatch or an archive missing from `SHA256SUMS` is likewise a
+hard failure. The key is an argument to `update::run_verified` (`ReleaseKey`); core reads no
+environment variable or file for it, so the binary's compiled-in key is the only one. A mirror is
+fine, since trust comes from the signature. A dev build (`0.0.0-dev`) and an unwritable binary
+directory are refused, with the installer one-liner in the message. `--check` downloads nothing;
+`--version` may downgrade; `--force` reinstalls the current version; `--yes` skips the prompt.
+Core's tests use throwaway keys and signatures in
+`crates/branch-tally-core/tests/data/update_signing/`.
 
 `BRANCH_TALLY_INSTALL_BASE_URL` (the installers' mirror variable) is honoured, but only for
 `https://` and `file://`; any other scheme, plain `http://` included, is a one-line error before a
