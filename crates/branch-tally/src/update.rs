@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use branch_tally_core::update::{
-    Confirmer, FetchError, Installer, ReleaseClient, ReleaseKey, SUMS_NAME, UpdateOptions,
-    current_target, is_binary_entry, latest_version_from_sums, run_verified,
+    Confirmer, FetchError, Installer, ReleaseClient, ReleaseKey, UpdateOptions, Version,
+    current_target, is_binary_entry, run_verified,
 };
 
 use crate::cli::{UpdateArgs, VERSION};
@@ -23,6 +23,22 @@ const DEFAULT_BASE_URL: &str = "https://github.com/IAmSkweetis/branch-tally/rele
 /// `.github/minisign.pub`, which the release job signs with. A test fails if the two differ.
 /// There is deliberately no runtime way to replace it: no variable, flag or config.
 const RELEASE_PUBLIC_KEY: &str = "RWTQ5PBvJ1Ly2e0dZqwbC5mduW++vTIp1vIHDe+C8z7/4VNNvoU30mmr";
+
+/// Where `update` learns the latest tag. A constant: no variable, flag or config changes it.
+const LATEST_API_URL: &str =
+    "https://api.github.com/repos/IAmSkweetis/branch-tally/releases/latest";
+
+/// The token for the GitHub API: `GH_TOKEN`, else `GITHUB_TOKEN`, ignoring empty values.
+fn token_from(gh: Option<String>, github: Option<String>) -> Option<String> {
+    [gh, github]
+        .into_iter()
+        .flatten()
+        .map(|t| t.trim().to_owned())
+        .find(|t| !t.is_empty())
+}
+
+/// The largest API response accepted. The latest-release JSON is a few KB.
+const MAX_API_BYTES: u64 = 1024 * 1024;
 
 /// The largest download accepted. Release archives are a few MB; this only stops a runaway body.
 const MAX_DOWNLOAD_BYTES: u64 = 256 * 1024 * 1024;
@@ -93,18 +109,83 @@ fn current_exe() -> PathBuf {
 /// Reads a release mirror over HTTPS, or from a directory for a `file://` base.
 struct HttpClient {
     base: String,
+    api_url: String,
+    token: Option<String>,
+    https_only: bool,
 }
 
 impl HttpClient {
+    /// The shipped client: the API URL is the constant, the token comes from the environment.
     fn new(base: &str) -> Self {
         Self {
             base: base.trim_end_matches('/').to_owned(),
+            api_url: LATEST_API_URL.to_owned(),
+            token: token_from(
+                std::env::var("GH_TOKEN").ok(),
+                std::env::var("GITHUB_TOKEN").ok(),
+            ),
+            https_only: true,
         }
+    }
+
+    /// A client with a test API URL and token. Not compiled into the shipped binary.
+    #[cfg(test)]
+    fn with_api(base: &str, api_url: &str, token: Option<&str>) -> Self {
+        Self {
+            base: base.trim_end_matches('/').to_owned(),
+            api_url: api_url.to_owned(),
+            token: token.map(str::to_owned),
+            https_only: false,
+        }
+    }
+
+    /// The API's JSON for the latest release, capped like the downloads.
+    fn fetch_api(&self) -> Result<Vec<u8>, FetchError> {
+        let fail = |reason: String| FetchError::Failed(format!("GitHub API: {reason}"));
+        if let Some(path) = self.api_url.strip_prefix("file://") {
+            let (dir, name) = path.rsplit_once('/').unwrap_or(("", path));
+            return read_local(dir, name, MAX_API_BYTES).map_err(|e| match e {
+                FetchError::Failed(reason) => fail(reason),
+                FetchError::NotFound => fail("not found".to_owned()),
+            });
+        }
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .timeout_connect(Some(Duration::from_secs(10)))
+            .timeout_global(Some(Duration::from_secs(30)))
+            .https_only(self.https_only)
+            .http_status_as_error(false)
+            .build()
+            .into();
+        let mut request = agent
+            .get(&self.api_url)
+            .header(
+                "User-Agent",
+                concat!("branch-tally/", env!("CARGO_PKG_VERSION")),
+            )
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28");
+        if let Some(token) = &self.token {
+            request = request.header("Authorization", format!("Bearer {token}"));
+        }
+        // Error text is built from the status or a fixed phrase only, never from the request.
+        let mut response = request
+            .call()
+            .map_err(|_| fail("could not be reached".to_owned()))?;
+        let status = response.status().as_u16();
+        if status != 200 {
+            let hint = if matches!(status, 403 | 429) {
+                " (possibly rate limited)"
+            } else {
+                ""
+            };
+            return Err(fail(format!("HTTP status {status}{hint}")));
+        }
+        read_capped(response.body_mut().as_reader(), MAX_API_BYTES).map_err(fail)
     }
 
     fn fetch(&self, path: &str) -> Result<Vec<u8>, FetchError> {
         match self.base.strip_prefix("file://") {
-            Some(dir) => read_local(dir, path),
+            Some(dir) => read_local(dir, path, MAX_DOWNLOAD_BYTES),
             None => fetch_http(&format!("{}/{path}", self.base), MAX_DOWNLOAD_BYTES),
         }
     }
@@ -112,10 +193,10 @@ impl HttpClient {
 
 impl ReleaseClient for HttpClient {
     fn latest_tag(&self) -> Result<String, FetchError> {
-        let sums = self.fetch(&format!("latest/download/{SUMS_NAME}"))?;
-        latest_version_from_sums(&String::from_utf8_lossy(&sums))
-            .map(|v| v.tag())
-            .map_err(|e| FetchError::Failed(e.to_string()))
+        // The mirror is never consulted here: a mirror could serve an older signed release as
+        // "latest" and roll users back. Any API problem is a failure, not a fallback.
+        let body = self.fetch_api()?;
+        latest_tag_from_api(&body).map_err(FetchError::Failed)
     }
 
     fn download(&self, tag: &str, asset: &str) -> Result<Vec<u8>, FetchError> {
@@ -123,8 +204,152 @@ impl ReleaseClient for HttpClient {
     }
 }
 
+/// The `tag_name` of a latest-release response, validated as `vMAJOR.MINOR.PATCH`.
+fn latest_tag_from_api(body: &[u8]) -> Result<String, String> {
+    let tag = top_level_string(body, "tag_name")?;
+    match Version::parse(&tag) {
+        Ok(version) if tag.starts_with('v') && version.tag() == tag => Ok(tag),
+        _ => Err("GitHub API: tag_name was not vMAJOR.MINOR.PATCH".to_owned()),
+    }
+}
+
+/// The string value of a top-level `key` in a JSON object, and nothing else.
+///
+/// The binary does not depend on a JSON crate, so this is a strict scanner for the one shape it
+/// needs. Nested values are skipped with string-awareness, so a `tag_name` inside `assets` or
+/// `author` is never taken. Anything malformed, a duplicate key, a non-string value, or a value
+/// with an escape sequence is an error: a tag never needs one.
+fn top_level_string(body: &[u8], key: &str) -> Result<String, String> {
+    let bad = || "GitHub API: the response was not the expected JSON".to_owned();
+    let mut at = Scanner { bytes: body, at: 0 };
+    at.space();
+    at.expect(b'{').ok_or_else(bad)?;
+    let mut found: Option<String> = None;
+    at.space();
+    if at.peek() == Some(b'}') {
+        return Err("GitHub API: the response had no tag_name".to_owned());
+    }
+    loop {
+        at.space();
+        let name = at.string().ok_or_else(bad)?;
+        at.space();
+        at.expect(b':').ok_or_else(bad)?;
+        at.space();
+        if name == key.as_bytes() {
+            if found.is_some() {
+                return Err(bad());
+            }
+            let value = at.string().ok_or("GitHub API: tag_name was not a string")?;
+            if value.contains(&b'\\') {
+                return Err(bad());
+            }
+            found = Some(String::from_utf8(value).map_err(|_| bad())?);
+        } else {
+            at.skip_value(0).ok_or_else(bad)?;
+        }
+        at.space();
+        match at.next() {
+            Some(b',') => {}
+            Some(b'}') => break,
+            _ => return Err(bad()),
+        }
+    }
+    at.space();
+    if at.peek().is_some() {
+        return Err(bad());
+    }
+    found.ok_or_else(|| "GitHub API: the response had no tag_name".to_owned())
+}
+
+struct Scanner<'a> {
+    bytes: &'a [u8],
+    at: usize,
+}
+
+impl Scanner<'_> {
+    fn peek(&self) -> Option<u8> {
+        self.bytes.get(self.at).copied()
+    }
+
+    fn next(&mut self) -> Option<u8> {
+        let byte = self.peek()?;
+        self.at += 1;
+        Some(byte)
+    }
+
+    fn expect(&mut self, byte: u8) -> Option<()> {
+        (self.next()? == byte).then_some(())
+    }
+
+    fn space(&mut self) {
+        while matches!(self.peek(), Some(b' ' | b'\t' | b'\r' | b'\n')) {
+            self.at += 1;
+        }
+    }
+
+    /// A string's raw bytes (escapes left as written), consuming both quotes.
+    fn string(&mut self) -> Option<Vec<u8>> {
+        self.expect(b'"')?;
+        let mut out = Vec::new();
+        loop {
+            match self.next()? {
+                b'"' => return Some(out),
+                b'\\' => {
+                    out.push(b'\\');
+                    out.push(self.next()?);
+                }
+                byte if byte < 0x20 => return None,
+                byte => out.push(byte),
+            }
+        }
+    }
+
+    /// Skip one value of any kind. Depth is capped so hostile nesting cannot overflow the stack.
+    fn skip_value(&mut self, depth: usize) -> Option<()> {
+        if depth > 64 {
+            return None;
+        }
+        match self.peek()? {
+            b'"' => self.string().map(|_| ()),
+            open @ (b'{' | b'[') => {
+                self.at += 1;
+                let close = if open == b'{' { b'}' } else { b']' };
+                self.space();
+                if self.peek()? == close {
+                    self.at += 1;
+                    return Some(());
+                }
+                loop {
+                    self.space();
+                    if open == b'{' {
+                        self.string()?;
+                        self.space();
+                        self.expect(b':')?;
+                        self.space();
+                    }
+                    self.skip_value(depth + 1)?;
+                    self.space();
+                    match self.next()? {
+                        b',' => {}
+                        c if c == close => return Some(()),
+                        _ => return None,
+                    }
+                }
+            }
+            _ => {
+                let start = self.at;
+                while matches!(self.peek(), Some(b) if !matches!(b, b',' | b'}' | b']' | b' ' | b'\t' | b'\r' | b'\n'))
+                {
+                    self.at += 1;
+                }
+                (self.at > start).then_some(())
+            }
+        }
+    }
+}
+
 /// Read `path` (slash-separated, relative) under a `file://` directory.
-fn read_local(dir: &str, path: &str) -> Result<Vec<u8>, FetchError> {
+fn read_local(dir: &str, path: &str, cap: u64) -> Result<Vec<u8>, FetchError> {
     // `file:///C:/x` carries a leading slash before the drive letter.
     let bytes = dir.as_bytes();
     let dir = if bytes.len() > 2 && bytes[0] == b'/' && bytes[2] == b':' && cfg!(windows) {
@@ -139,7 +364,7 @@ fn read_local(dir: &str, path: &str) -> Result<Vec<u8>, FetchError> {
         io::ErrorKind::NotFound => FetchError::NotFound,
         kind => FetchError::Failed(format!("could not read the release files: {kind}")),
     })?;
-    read_capped(handle, MAX_DOWNLOAD_BYTES).map_err(FetchError::Failed)
+    read_capped(handle, cap).map_err(FetchError::Failed)
 }
 
 fn fetch_http(url: &str, cap: u64) -> Result<Vec<u8>, FetchError> {
@@ -414,7 +639,7 @@ impl Confirmer for TerminalConfirmer {
 mod tests {
     use super::*;
     use branch_tally_core::update::{Outcome, UpdateError};
-    use branch_tally_core::update::{SIGNATURE_NAME, sha256_hex};
+    use branch_tally_core::update::{SIGNATURE_NAME, SUMS_NAME, sha256_hex};
 
     const TARGET: &str = "x86_64-unknown-linux-musl";
     /// Tests always model a Linux archive, so entry and file names do not depend on the host.
@@ -479,6 +704,8 @@ mod tests {
                 std::fs::write(d.join(SIGNATURE_NAME), signature).unwrap();
             }
         }
+        std::fs::create_dir_all(dir.join("api")).unwrap();
+        std::fs::write(dir.join("api/latest.json"), r#"{"tag_name":"v1.3.0"}"#).unwrap();
         format!("file://{}", dir.to_string_lossy().replace('\\', "/"))
     }
 
@@ -655,7 +882,7 @@ mod tests {
             TARGET,
             options,
             &ReleaseKey::from_base64(key.trim()).unwrap(),
-            &HttpClient::new(base),
+            &HttpClient::with_api(base, &format!("{base}/api/latest.json"), None),
             installer,
             &Yes,
         )
@@ -685,7 +912,7 @@ mod tests {
     fn the_client_fetches_the_signature_through_download() {
         let release = tempfile::tempdir().unwrap();
         let base = fake_release(release.path(), SIGNED_ARCHIVE, Some(GOOD_SIG));
-        let got = HttpClient::new(&base)
+        let got = HttpClient::with_api(&base, "file:///unused", None)
             .download("v1.3.0", SIGNATURE_NAME)
             .unwrap();
         assert_eq!(got, GOOD_SIG);
@@ -771,10 +998,232 @@ mod tests {
         assert!(rec.installed.borrow().is_empty());
     }
 
+    // --- latest comes from the GitHub API ---
+
+    /// An HTTP server answering every request with `status` and `body`, recording the raw
+    /// request heads.
+    struct FakeServer {
+        url: String,
+        requests: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    impl FakeServer {
+        fn start(status: u16, body: &'static str) -> Self {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let seen = requests.clone();
+            std::thread::spawn(move || {
+                for stream in listener.incoming() {
+                    let Ok(mut stream) = stream else { break };
+                    let mut head = Vec::new();
+                    let mut buf = [0u8; 1024];
+                    while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match stream.read(&mut buf) {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => head.extend_from_slice(&buf[..n]),
+                        }
+                    }
+                    seen.lock()
+                        .unwrap()
+                        .push(String::from_utf8_lossy(&head).into_owned());
+                    let reply = format!(
+                        "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(reply.as_bytes());
+                }
+            });
+            Self { url, requests }
+        }
+
+        fn heads(&self) -> Vec<String> {
+            self.requests.lock().unwrap().clone()
+        }
+    }
+
+    fn api_file(dir: &Path, json: &str) -> String {
+        let file = dir.join("latest.json");
+        std::fs::write(&file, json).unwrap();
+        format!("file://{}", file.to_string_lossy().replace('\\', "/"))
+    }
+
+    fn failed(got: Result<String, FetchError>) -> String {
+        let err = got.unwrap_err();
+        assert!(matches!(err, FetchError::Failed(_)), "{err:?}");
+        match err {
+            FetchError::Failed(reason) => reason,
+            FetchError::NotFound => String::new(),
+        }
+    }
+
+    #[test]
+    fn latest_is_taken_from_the_api_not_the_mirror() {
+        let release = tempfile::tempdir().unwrap();
+        let base = fake_release(release.path(), SIGNED_ARCHIVE, Some(GOOD_SIG));
+        // The mirror's `latest` says v1.3.0; the API says v2.0.0.
+        let api_dir = tempfile::tempdir().unwrap();
+        let api = api_file(api_dir.path(), r#"{"tag_name":"v2.0.0","name":"x"}"#);
+        let got = HttpClient::with_api(&base, &api, None).latest_tag();
+        assert_eq!(got, Ok("v2.0.0".to_owned()));
+    }
+
+    #[test]
+    fn the_token_is_sent_as_a_bearer_when_set_with_the_api_headers() {
+        let server = FakeServer::start(200, r#"{"tag_name":"v1.4.0"}"#);
+        let got =
+            HttpClient::with_api("file:///unused", &server.url, Some("sekrit-token")).latest_tag();
+        assert_eq!(got, Ok("v1.4.0".to_owned()));
+        let head = server.heads().remove(0).to_ascii_lowercase();
+        assert!(
+            head.contains("authorization: bearer sekrit-token"),
+            "{head}"
+        );
+        assert!(
+            head.contains("accept: application/vnd.github+json"),
+            "{head}"
+        );
+        assert!(head.contains("x-github-api-version: 2022-11-28"), "{head}");
+        assert!(head.contains("user-agent: branch-tally/"), "{head}");
+    }
+
+    #[test]
+    fn no_authorization_header_is_sent_without_a_token() {
+        let server = FakeServer::start(200, r#"{"tag_name":"v1.4.0"}"#);
+        HttpClient::with_api("file:///unused", &server.url, None)
+            .latest_tag()
+            .unwrap();
+        let head = server.heads().remove(0).to_ascii_lowercase();
+        assert!(!head.contains("authorization"), "{head}");
+    }
+
+    #[test]
+    fn gh_token_wins_over_github_token_and_empty_values_are_ignored() {
+        let s = |v: &str| Some(v.to_owned());
+        assert_eq!(token_from(s("a"), s("b")), s("a"));
+        assert_eq!(token_from(None, s("b")), s("b"));
+        assert_eq!(token_from(s("  "), s("b")), s("b"));
+        assert_eq!(token_from(None, None), None);
+    }
+
+    #[test]
+    fn the_shipped_client_uses_the_https_api_constant() {
+        let client = HttpClient::new("https://mirror.invalid");
+        assert_eq!(client.api_url, LATEST_API_URL);
+        assert!(client.https_only);
+        assert!(
+            LATEST_API_URL.starts_with("https://api.github.com/repos/IAmSkweetis/branch-tally/")
+        );
+    }
+
+    #[test]
+    fn an_api_failure_fails_without_touching_the_mirror_or_leaking_the_token() {
+        let mirror = FakeServer::start(200, "ignored");
+        let dead = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            format!("http://{}", l.local_addr().unwrap())
+        };
+        let reason =
+            failed(HttpClient::with_api(&mirror.url, &dead, Some("sekrit-token")).latest_tag());
+        assert!(!reason.contains("sekrit-token"), "{reason}");
+        assert_eq!(mirror.heads(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_non_200_status_fails_without_touching_the_mirror_or_leaking_the_token() {
+        let mirror = FakeServer::start(200, "ignored");
+        for status in [403u16, 404, 429, 500] {
+            let api = FakeServer::start(status, r#"{"message":"rate limit exceeded"}"#);
+            let reason = failed(
+                HttpClient::with_api(&mirror.url, &api.url, Some("sekrit-token")).latest_tag(),
+            );
+            assert!(reason.contains(&status.to_string()), "{reason}");
+            assert!(!reason.contains("sekrit-token"), "{reason}");
+        }
+        assert_eq!(mirror.heads(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn malformed_json_or_a_bad_tag_name_fails_without_touching_the_mirror() {
+        let mirror = FakeServer::start(200, "ignored");
+        let dir = tempfile::tempdir().unwrap();
+        for body in [
+            "not json",
+            "{}",
+            r#"{"tag_name":7}"#,
+            r#"{"tag_name":"1.2.3"}"#,
+            r#"{"tag_name":"v1.2"}"#,
+            r#"{"tag_name":"v1.2.3-rc1"}"#,
+            r#"{"tag_name":"v1.2.3/../x"}"#,
+            r#"{"tag_name":""}"#,
+        ] {
+            let api = api_file(dir.path(), body);
+            let got = HttpClient::with_api(&mirror.url, &api, Some("sekrit-token")).latest_tag();
+            let reason = failed(got);
+            assert!(!reason.contains("sekrit-token"), "{body}: {reason}");
+        }
+        assert_eq!(mirror.heads(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn only_the_top_level_tag_name_is_read_from_a_real_shaped_response() {
+        let body = br#" {"url":"https://x/y","assets":[{"tag_name":"v9.9.9","n":[1,2.5,null,true]}],
+            "author":{"tag_name":"v8.8.8"},"tag_name":"v1.2.3","body":"a \"q\" b\n","e":{},"l":[]} "#;
+        assert_eq!(latest_tag_from_api(body), Ok("v1.2.3".to_owned()));
+        for bad in [
+            &br#"{"tag_name":"v1.0.\u0030"}"#[..],
+            br#"{"tag_name":"v1.0.0","tag_name":"v2.0.0"}"#,
+            br#"{"assets":[{"tag_name":"v1.0.0"}]}"#,
+            br#"{"tag_name":"v1.0.0"} trailing"#,
+            br#"{"tag_name":"v1.0.0""#,
+            br#"[{"tag_name":"v1.0.0"}]"#,
+        ] {
+            assert!(latest_tag_from_api(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn an_oversized_api_response_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let big = format!(
+            r#"{{"tag_name":"v1.0.0","body":"{}"}}"#,
+            "a".repeat(2 * 1024 * 1024)
+        );
+        let api = api_file(dir.path(), &big);
+        failed(HttpClient::with_api("file:///unused", &api, None).latest_tag());
+    }
+
+    #[test]
+    fn a_pin_makes_no_api_call() {
+        let release = tempfile::tempdir().unwrap();
+        let base = fake_release(release.path(), SIGNED_ARCHIVE, Some(GOOD_SIG));
+        let api = FakeServer::start(500, "");
+        let client = HttpClient::with_api(&base, &api.url, None);
+        let options = UpdateOptions {
+            yes: true,
+            version: Some("v1.3.0".to_owned()),
+            ..UpdateOptions::default()
+        };
+        let rec = Recorder::default();
+        run_verified(
+            "1.0.0",
+            TARGET,
+            &options,
+            &ReleaseKey::from_base64(TEST_KEY.trim()).unwrap(),
+            &client,
+            &rec,
+            &Yes,
+        )
+        .unwrap();
+        assert_eq!(api.heads(), Vec::<String>::new());
+        assert_eq!(rec.installed.borrow().len(), 1);
+    }
+
     #[test]
     fn a_missing_file_release_is_not_found() {
         let dir = tempfile::tempdir().unwrap();
-        let client = HttpClient::new(&format!("file://{}", dir.path().to_string_lossy()));
+        let base = format!("file://{}", dir.path().to_string_lossy());
+        let client = HttpClient::with_api(&base, "file:///unused", None);
         assert_eq!(client.download("v1.0.0", "x"), Err(FetchError::NotFound));
     }
 

@@ -77,6 +77,14 @@ pub(crate) enum Command {
     /// replaced at run time, so a mirror (`BRANCH_TALLY_INSTALL_BASE_URL`) is accepted: it is
     /// trusted only as far as the signature.
     ///
+    /// Which release is the latest is not taken from the mirror: the latest release is read from
+    /// the GitHub API (api.github.com), even when a mirror is set, so a mirror cannot serve an old
+    /// release as the newest. The archive, SHA256SUMS and signature still come from the mirror. A
+    /// mirror needs --version if the API cannot be reached (so does an offline machine). A pinned
+    /// `--version` never calls the API. The API allows 60 requests
+    /// an hour without a token; a token is read from `GH_TOKEN`, or else `GITHUB_TOKEN`, and sent only
+    /// to the API.
+    ///
     /// A missing, malformed or mismatched signature installs nothing. Releases from before signing
     /// are refused, including with `--version`. To install one anyway, download it and check it by
     /// hand with `gh attestation verify` (see SECURITY.md).
