@@ -96,6 +96,29 @@ mk_latest() {
   rm -rf "$1/latest"
   mkdir -p "$1/latest"
   cp -R "$1/download/$2" "$1/latest/download"
+  mk_api "$2"
+}
+
+# mk_api <tag>: what the fake GitHub API answers for releases/latest, a pretty-printed subset of the
+# real response. The installers read it from file://$S/api (see run_install), or from the https
+# hosts the curl stub serves out of the same tree.
+mk_api() {
+  mkdir -p "$S/api/repos/IAmSkweetis/branch-tally/releases"
+  cat > "$S/api/repos/IAmSkweetis/branch-tally/releases/latest" <<API
+{
+  "url": "https://api.github.com/repos/IAmSkweetis/branch-tally/releases/1",
+  "tag_name": "$1",
+  "name": "$1",
+  "draft": false,
+  "assets": []
+}
+API
+}
+
+# set_api <body>: the fake API answers with exactly this text.
+set_api() {
+  mkdir -p "$S/api/repos/IAmSkweetis/branch-tally/releases"
+  printf '%s' "$1" > "$S/api/repos/IAmSkweetis/branch-tally/releases/latest"
 }
 
 # break_sums <root> <tag>: corrupt every hash in the release's SHA256SUMS.
@@ -115,6 +138,8 @@ fresh() {
   : > "$S/cosign.log"
   : > "$S/curl.log"
   : > "$S/wget.log"
+  : > "$S/curl.hdr"
+  : > "$S/curl.urls"
 }
 
 # The signer and source ref the fake attestations were really made with.
@@ -134,18 +159,28 @@ mk_gh() {
 #!/bin/sh
 for a in "\$@"; do printf '%s\n' "\$a" >> "$S/gh.log"; done
 cmd="\$1 \$2"
-signer= ref= issuer=
-while [ \$# -gt 0 ]; do
-  case \$1 in
-    --signer-workflow) signer=\$2; shift ;;
-    --source-ref) ref=\$2; shift ;;
-    --cert-oidc-issuer) issuer=\$2; shift ;;
-  esac
-  shift
-done
+signer= ref= issuer= repo= file=
+if [ "\$cmd" = "attestation verify" ]; then
+  shift 2
+  while [ \$# -gt 0 ]; do
+    case \$1 in
+      --signer-workflow) signer=\$2; shift ;;
+      --source-ref) ref=\$2; shift ;;
+      --cert-oidc-issuer) issuer=\$2; shift ;;
+      --repo) repo=\$2; shift ;;
+      -*) exit 2 ;;
+      *) file=\$1 ;;
+    esac
+    shift
+  done
+fi
 case "\$cmd" in
   "auth status") exit $1 ;;
   "attestation verify")
+    # gh attestation verify <file-path> --repo <owner/repo>: the archive must exist and --repo is
+    # mandatory (without --repo or --owner the real gh refuses).
+    [ -f "\$file" ] || exit 2
+    [ "\$repo" = IAmSkweetis/branch-tally ] || exit 2
     [ $2 -eq 0 ] || exit $2
     [ -z "\$signer" ] || [ "\$signer" = "$actual_wf" ] || exit 1
     [ -z "\$ref" ] || [ "\$ref" = "$actual_ref" ] || exit 1
@@ -166,15 +201,29 @@ mk_cosign() {
   cat > "$S/stubs/cosign" <<COSIGN
 #!/bin/sh
 for a in "\$@"; do printf '%s\n' "\$a" >> "$S/cosign.log"; done
-[ $1 -eq 0 ] || exit $1
-id= issuer=
+# The real interface: cosign verify-blob-attestation --bundle <provenance.sigstore.json>
+# --new-bundle-format --type slsaprovenance1 --certificate-identity <id> --certificate-oidc-issuer
+# <issuer> <blob>. A missing or different piece fails here as it would in cosign.
+[ "\$1" = verify-blob-attestation ] || exit 2
+shift
+id= issuer= bundle= type= newfmt=0 blob=
 while [ \$# -gt 0 ]; do
   case \$1 in
     --certificate-identity) id=\$2; shift ;;
     --certificate-oidc-issuer) issuer=\$2; shift ;;
+    --bundle) bundle=\$2; shift ;;
+    --type) type=\$2; shift ;;
+    --new-bundle-format) newfmt=1 ;;
+    -*) exit 2 ;;
+    *) blob=\$1 ;;
   esac
   shift
 done
+[ -f "\$bundle" ] && [ "\$(basename "\$bundle")" = provenance.sigstore.json ] || exit 2
+[ "\$newfmt" = 1 ] || exit 2
+[ "\$type" = slsaprovenance1 ] || exit 2
+[ -f "\$blob" ] || exit 2
+[ $1 -eq 0 ] || exit $1
 [ "\$id" = "$actual_id" ] || exit 1
 [ "\$issuer" = https://token.actions.githubusercontent.com ] || exit 1
 exit 0
@@ -192,11 +241,20 @@ while [ \$# -gt 0 ]; do
   printf '%s\n' "\$1" >> "$S/curl.log"
   case \$1 in
     -o) out=\$2; shift ;;
+    -H)
+      case \$2 in @*) cat "\${2#@}" >> "$S/curl.hdr" ;; *) printf '%s\n' "\$2" >> "$S/curl.hdr" ;; esac
+      shift ;;
     http*) url=\$1 ;;
   esac
   shift
 done
-cp "$R/\${url#https://mirror.example.test/}" "\$out"
+case \$url in
+  https://api.github.com/* | https://api.example.test/*)
+    printf '%s\n' "\$url" >> "$S/curl.urls"
+    p=\${url#https://*/}
+    cp "$S/api/\$p" "\$out" ;;
+  *) cp "$R/\${url#https://mirror.example.test/}" "\$out" ;;
+esac
 CURL
   chmod +x "$S/stubs/curl"
 }
@@ -227,7 +285,7 @@ run_install() {
   env -i PATH="$S/stubs:$FAKEBIN:${TOOLS:-$TOOLBIN}" HOME="$S/home" TMPDIR="$S/tmp" \
     FAKE_UNAME_S="${FAKE_UNAME_S:-Linux}" FAKE_UNAME_M="${FAKE_UNAME_M:-x86_64}" \
     FAKE_PROC_TRANSLATED="${FAKE_PROC_TRANSLATED:-0}" \
-    BRANCH_TALLY_INSTALL_BASE_URL="file://$R" "$@" >"$out" 2>"$err" </dev/null
+    BRANCH_TALLY_INSTALL_BASE_URL="file://$R" BRANCH_TALLY_INSTALL_API_URL="file://$S/api" "$@" >"$out" 2>"$err" </dev/null
   rc=$?
 }
 
@@ -658,6 +716,139 @@ check "--help calls the checksum an integrity check" contains "$out" "integrity"
 check "--help mentions gh attestation verify" contains "$out" "gh attestation verify"
 check "--help mentions cosign" contains "$out" "cosign"
 check "--help limits mirrors to https and file" contains "$out" "file://"
+
+# 17. F-04: "latest" comes from the GitHub API, not from the mirror.
+API_TAG_URL=https://api.github.com/repos/IAmSkweetis/branch-tally/releases/latest
+fresh api_wins
+mk_release "$R" v1.0.0 $X 1.0.0
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v1.0.0   # the mirror's latest/ is stale (a rollback)
+mk_api v2.0.0           # GitHub says v2.0.0
+sh_run --to "$D"
+check "api: exits 0" test "$rc" -eq 0
+check "api: installs the release GitHub names, not the mirror's latest" contains "$out" "branch-tally 2.0.0"
+check "api: no fallback warning when the API answered" lacks "$err" "not confirmed"
+
+# 17b. Fallback: API unreachable, rate limited or garbage. Warn loudly and use the mirror's latest.
+fresh api_down
+mk_release "$R" v1.0.0 $X 1.0.0
+mk_latest "$R" v1.0.0
+rm -rf "$S/api"
+sh_run --to "$D"
+check "api down: falls back and exits 0" test "$rc" -eq 0
+check "api down: installs the mirror's latest" contains "$out" "branch-tally 1.0.0"
+check "api down: warns latest was not confirmed by GitHub" contains "$err" "not confirmed by GitHub"
+check "api down: says an older release could be served" contains "$err" "older release"
+check "api down: names the mirror as the source" contains "$err" "mirror"
+check "api down: prints the --version route" contains "$err" "--version"
+rm -rf "$D"
+mk_gh 0 0
+sh_run --require-attestation --to "$D"
+check "api down: allowed under --require-attestation" test "$rc" -eq 0
+check "api down: still warns under --require-attestation" contains "$err" "not confirmed by GitHub"
+
+fresh api_garbage
+mk_release "$R" v1.0.0 $X 1.0.0
+mk_latest "$R" v1.0.0
+for garbage in '<html>rate limited</html>' '{"message":"API rate limit exceeded"}' '' '{"tag_name":"v1.2"}' '{"tag_name":"evil"}' \
+  '{"tag_name":"v1.0.0;rm -rf /"}' '{"tag_name":"v1.0.0.1"}' '{"tag_name":"v../../x"}'; do
+  set_api "$garbage"
+  sh_run --to "$D"
+  check "api garbage '$garbage': falls back with a warning" contains "$err" "not confirmed by GitHub"
+  check "api garbage '$garbage': installs the mirror's latest" contains "$out" "branch-tally 1.0.0"
+done
+
+# 17c. A minified response is parsed too, and a tag_name inside another field is not taken.
+fresh api_min
+mk_release "$R" v1.0.0 $X 1.0.0
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v1.0.0
+set_api '{"url":"x","body":"see \"tag_name\": \"v1.0.0\" here","tag_name":"v2.0.0","assets":[]}'
+sh_run --to "$D"
+check "api minified: reads the tag" contains "$out" "branch-tally 2.0.0"
+check "api minified: no warning" lacks "$err" "not confirmed"
+
+# 17d. The API base override: https:// or file:// only, printed when set.
+fresh api_scheme
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+for bad in http://api.example.test ftp://api.example.test api.example.test; do
+  run_install BRANCH_TALLY_INSTALL_API_URL="$bad" "$shell_under_test" "$installer" --to "$D"
+  check "api base '$bad' is rejected" test "$rc" -ne 0
+  check "api base '$bad' names the variable" contains "$err" "BRANCH_TALLY_INSTALL_API_URL"
+  check "api base '$bad' installs nothing" test ! -e "$D/branch-tally"
+done
+sh_run --to "$D"
+check "a custom api base is printed" contains "$out" "Using release API: file://$S/api"
+run_install BRANCH_TALLY_INSTALL_API_URL= "$shell_under_test" "$installer" --version v2.0.0 --to "$D"
+check "an empty api base means the default (nothing printed)" lacks "$out" "Using release API"
+
+# 17e. Pinned version: the API is not consulted.
+fresh api_pinned
+mk_release "$R" v1.0.0 $X 1.0.0
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+rm -rf "$S/api"
+sh_run --version v1.0.0 --to "$D"
+check "pinned: exits 0 without the API" test "$rc" -eq 0
+check "pinned: no fallback warning" lacks "$err" "not confirmed"
+
+# 17f. Over https: the default API URL, and the token as a bearer header that is never printed.
+fresh api_https
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_curl
+run_install BRANCH_TALLY_INSTALL_BASE_URL=https://mirror.example.test BRANCH_TALLY_INSTALL_API_URL= \
+  "$shell_under_test" "$installer" --to "$D"
+check "default api: exits 0" test "$rc" -eq 0
+check "default api: asks api.github.com releases/latest" contains "$S/curl.urls" "$API_TAG_URL"
+check "default api: no Authorization without a token" lacks "$S/curl.hdr" "Authorization"
+check "default api: curl is held to https" contains "$S/curl.log" "=https"
+
+fresh api_token
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_curl
+run_install BRANCH_TALLY_INSTALL_BASE_URL=https://mirror.example.test BRANCH_TALLY_INSTALL_API_URL=https://api.example.test \
+  GH_TOKEN=ghtok-AAA GITHUB_TOKEN=ghtok-BBB "$shell_under_test" "$installer" --to "$D"
+check "token: exits 0" test "$rc" -eq 0
+check "token: prints the custom API" contains "$out" "Using release API: https://api.example.test"
+check "token: GH_TOKEN is sent as a bearer token" contains "$S/curl.hdr" "Authorization: Bearer ghtok-AAA"
+check "token: GH_TOKEN wins over GITHUB_TOKEN" lacks "$S/curl.hdr" "ghtok-BBB"
+check "token: never on the command line" lacks "$S/curl.log" "ghtok-"
+check "token: never on stdout" lacks "$out" "ghtok-"
+check "token: never on stderr" lacks "$err" "ghtok-"
+: > "$S/curl.hdr"
+run_install BRANCH_TALLY_INSTALL_BASE_URL=https://mirror.example.test BRANCH_TALLY_INSTALL_API_URL=https://api.example.test \
+  GITHUB_TOKEN=ghtok-BBB "$shell_under_test" "$installer" --to "$D"
+check "token: GITHUB_TOKEN is used when GH_TOKEN is unset" contains "$S/curl.hdr" "Authorization: Bearer ghtok-BBB"
+check "token: GITHUB_TOKEN never on stderr" lacks "$err" "ghtok-"
+check "token: no token is sent to the mirror" test "$(grep -c Authorization "$S/curl.hdr")" -eq 1
+
+# 17g. A failing API call with a token still never prints it.
+fresh api_token_fail
+mk_release "$R" v1.0.0 $X 1.0.0
+mk_latest "$R" v1.0.0
+rm -rf "$S/api"
+GH_TOKEN=ghtok-CCC sh_run --to "$D"
+check "token on failure: fallback warns" contains "$err" "not confirmed by GitHub"
+check "token on failure: never printed" lacks "$err" "ghtok-CCC"
+
+# 17h. A trailing newline is not a valid version (case patterns reject it, unlike a regexp's $).
+fresh nl_version
+mk_release "$R" v1.0.0 $X 1.0.0
+mk_latest "$R" v1.0.0
+NL='
+'
+sh_run --version "v1.0.0$NL" --to "$D"
+check "version with a trailing newline is rejected" test "$rc" -ne 0
+check "version with a trailing newline installs nothing" test ! -e "$D/branch-tally"
+
+# 17i. --help documents the API base and the fallback.
+sh_run --help
+check "--help documents the API base variable" contains "$out" "BRANCH_TALLY_INSTALL_API_URL"
+check "--help mentions GH_TOKEN" contains "$out" "GH_TOKEN"
+check "--help explains the mirror fallback" contains "$out" "not confirmed by GitHub"
 
 printf '\n%s cases run, %s failed\n' "$cases" "$failures"
 [ "$failures" -eq 0 ] && [ "$cases" -gt 0 ]

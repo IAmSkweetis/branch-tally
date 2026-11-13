@@ -61,6 +61,10 @@ function New-Stub {
     $body += "if `"%1 %2`"==`"auth status`" exit /b $($Codes[0])`r`n"
     $body += "if `"%1 %2`"==`"attestation verify`" (`r`n"
     $body += "  if not $($Codes[1])==0 exit /b $($Codes[1])`r`n"
+    # The real interface: gh attestation verify <file-path> --repo <owner/repo>. The archive must
+    # exist, and --repo is mandatory (without --repo or --owner the real gh refuses).
+    $body += "  if not exist `"%3`" exit /b 2`r`n"
+    $body += "  echo %* | findstr /C:`"--repo IAmSkweetis/branch-tally `" >nul || exit /b 2`r`n"
     $body += "  echo %* | findstr /C:`"--signer-workflow $Signer `" >nul || exit /b 1`r`n"
     $body += "  echo %* | findstr /C:`"--source-ref $Ref `" >nul || exit /b 1`r`n"
     $body += "  echo %* | findstr /C:`"--cert-oidc-issuer https://token.actions.githubusercontent.com`" >nul || exit /b 1`r`n"
@@ -68,6 +72,13 @@ function New-Stub {
     $body += "exit /b 99`r`n"
   } else {
     if (-not $Signer) { $Signer = $script:GoodIdentity }
+    # The real interface: cosign verify-blob-attestation --bundle <provenance.sigstore.json>
+    # --new-bundle-format --type slsaprovenance1 --certificate-identity <id>
+    # --certificate-oidc-issuer <issuer> <blob>. A missing or different piece fails as in cosign.
+    $body += "if not `"%1`"==`"verify-blob-attestation`" exit /b 2`r`n"
+    $body += "echo %* | findstr /R /C:`"--bundle .*provenance\.sigstore\.json`" >nul || exit /b 2`r`n"
+    $body += "echo %* | findstr /C:`"--new-bundle-format`" >nul || exit /b 2`r`n"
+    $body += "echo %* | findstr /C:`"--type slsaprovenance1 `" >nul || exit /b 2`r`n"
     $body += "if not $($Codes[0])==0 exit /b $($Codes[0])`r`n"
     $body += "echo %* | findstr /C:`"--certificate-identity $Signer `" >nul || exit /b 1`r`n"
     $body += "echo %* | findstr /C:`"--certificate-oidc-issuer https://token.actions.githubusercontent.com`" >nul || exit /b 1`r`n"
@@ -103,6 +114,8 @@ function Invoke-Installer {
   $psi.Environment['TMP'] = $script:S.Tmp
   $psi.Environment['TMPDIR'] = $script:S.Tmp
   $psi.Environment['BRANCH_TALLY_INSTALL_BASE_URL'] = ([Uri]$script:S.Release).AbsoluteUri
+  $psi.Environment['BRANCH_TALLY_INSTALL_API_URL'] = ([Uri]$script:S.Api).AbsoluteUri
+  foreach ($k in @('GH_TOKEN', 'GITHUB_TOKEN')) { $psi.Environment.Remove($k) | Out-Null }
   # A PATH of the sandbox's stubs plus System32 (for cmd.exe), so the host's own gh and cosign can
   # never leak into a case.
   $psi.Environment['PATH'] = Get-SafePath
@@ -124,6 +137,7 @@ function Initialize-Sandbox {
     Release = Join-Path $root 'release'
     Dest    = Join-Path $root 'dest'
     Stubs   = Join-Path $root 'stubs'
+    Api     = Join-Path $root 'api'
   }
   foreach ($dir in @($sandbox.Home, $sandbox.Tmp, $sandbox.Release, $sandbox.Stubs)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
   $script:S = $sandbox
@@ -213,6 +227,16 @@ function Build-Latest {
   if (Test-Path $latest) { Remove-Item -LiteralPath $latest -Recurse -Force }
   New-Item -ItemType Directory -Path $latest | Out-Null
   Copy-Item -LiteralPath (Join-Path (Join-Path $Root 'download') $Tag) -Destination (Join-Path $latest 'download') -Recurse
+  Set-Api ('{' + "`n  `"url`": `"x`",`n  `"tag_name`": `"$Tag`",`n  `"assets`": []`n}")
+}
+
+function Set-Api {
+  # What the fake GitHub API answers for releases/latest: exactly this text. Without a call, there
+  # is no file, which is an unreachable API.
+  param([string]$Body)
+  $dir = Join-Path $script:S.Api 'repos\IAmSkweetis\branch-tally\releases'
+  New-Item -ItemType Directory -Path $dir -Force | Out-Null
+  Write-NoBom (Join-Path $dir 'latest') $Body
 }
 
 function Build-BadChecksum {
@@ -557,10 +581,110 @@ foreach ($badname in @("branch-tally-vevil-$target.zip", "branch-tally-v1.2-$tar
   Test-Case "remote tag in '$badname' installs nothing" (-not (Test-Path (Join-Path $D 'branch-tally.exe')))
 }
 
+# 13. F-04: "latest" comes from the GitHub API, not from the mirror.
+Initialize-Sandbox 'api_wins'
+$R = $script:S.Release; $D = $script:S.Dest
+Build-Release $R 'v1.0.0' $target '1.0.0'
+Build-Release $R 'v2.0.0' $target '2.0.0'
+Build-Latest $R 'v1.0.0'   # the mirror's latest/ is stale (a rollback)
+Set-Api '{"tag_name": "v2.0.0"}'
+$res = Invoke-Installer @('-To', $D)
+Test-Case 'api: exits 0' ($res.Rc -eq 0)
+Test-Case "api: installs the release GitHub names, not the mirror's latest" ($res.Out -like '*branch-tally 2.0.0*')
+Test-Case 'api: no fallback warning when the API answered' ($res.Err -notlike '*not confirmed*')
+
+# 13b. Fallback: API unreachable, rate limited or garbage. Warn loudly and use the mirror's latest.
+Initialize-Sandbox 'api_down'
+$R = $script:S.Release; $D = $script:S.Dest
+Build-Release $R 'v1.0.0' $target '1.0.0'
+Build-Latest $R 'v1.0.0'
+Remove-Item -LiteralPath $script:S.Api -Recurse -Force
+$res = Invoke-Installer @('-To', $D)
+Test-Case 'api down: falls back and exits 0' ($res.Rc -eq 0)
+Test-Case "api down: installs the mirror's latest" ($res.Out -like '*branch-tally 1.0.0*')
+Test-Case 'api down: warns latest was not confirmed by GitHub' ($res.Err -like '*not confirmed by GitHub*')
+Test-Case 'api down: says an older release could be served' ($res.Err -like '*older release*')
+Test-Case 'api down: names the mirror as the source' ($res.Err -like '*mirror*')
+Test-Case 'api down: prints the -Version route' ($res.Err -like '*-Version*')
+Remove-Item -LiteralPath $D -Recurse -Force
+New-Stub 'gh' @(0, 0)
+$res = Invoke-Installer @('-To', $D, '-RequireAttestation')
+Test-Case 'api down: allowed under -RequireAttestation' ($res.Rc -eq 0)
+Test-Case 'api down: still warns under -RequireAttestation' ($res.Err -like '*not confirmed by GitHub*')
+
+Initialize-Sandbox 'api_garbage'
+$R = $script:S.Release; $D = $script:S.Dest
+Build-Release $R 'v1.0.0' $target '1.0.0'
+Build-Latest $R 'v1.0.0'
+foreach ($garbage in @('<html>rate limited</html>', '{"message":"API rate limit exceeded"}', '', '{"tag_name":"v1.2"}', '{"tag_name":"evil"}',
+    '{"tag_name":"v1.0.0;rm -rf /"}', '{"tag_name":"v1.0.0.1"}', '{"tag_name":"v1.0.0\n"}', '{"tag_name":["v1.0.0"]}', '[]')) {
+  Set-Api $garbage
+  $res = Invoke-Installer @('-To', $D)
+  Test-Case "api garbage '$garbage': falls back with a warning" ($res.Err -like '*not confirmed by GitHub*')
+  Test-Case "api garbage '$garbage': installs the mirror's latest" ($res.Out -like '*branch-tally 1.0.0*')
+}
+
+# 13c. The API base override: https:// or file:// only (any case), printed when set.
+Initialize-Sandbox 'api_scheme'
+$R = $script:S.Release; $D = $script:S.Dest
+Build-Release $R 'v2.0.0' $target '2.0.0'
+Build-Latest $R 'v2.0.0'
+foreach ($bad in @('http://api.example.test', 'ftp://api.example.test', 'api.example.test')) {
+  $res = Invoke-Installer @('-To', $D) @{ BRANCH_TALLY_INSTALL_API_URL = $bad }
+  Test-Case "api base '$bad' is rejected" ($res.Rc -ne 0)
+  Test-Case "api base '$bad' names the variable" ($res.Err -like '*BRANCH_TALLY_INSTALL_API_URL*')
+  Test-Case "api base '$bad' installs nothing" (-not (Test-Path (Join-Path $D 'branch-tally.exe')))
+}
+$res = Invoke-Installer @('-To', $D)
+Test-Case 'a custom api base is printed' ($res.Out -like '*Using release API: file://*')
+
+# 13d. file:// is recognised in any case, in the mirror check and in Get-Remote alike.
+$upper = 'FILE://' + ([Uri]$R).AbsoluteUri.Substring(7)
+$res = Invoke-Installer @('-To', $D) @{ BRANCH_TALLY_INSTALL_BASE_URL = $upper }
+Test-Case 'an uppercase FILE:// mirror installs' ($res.Rc -eq 0)
+
+# 13e. Pinned version: the API is not consulted.
+Initialize-Sandbox 'api_pinned'
+$R = $script:S.Release; $D = $script:S.Dest
+Build-Release $R 'v1.0.0' $target '1.0.0'
+Build-Release $R 'v2.0.0' $target '2.0.0'
+Build-Latest $R 'v2.0.0'
+Remove-Item -LiteralPath $script:S.Api -Recurse -Force
+$res = Invoke-Installer @('-Version', 'v1.0.0', '-To', $D)
+Test-Case 'pinned: exits 0 without the API' ($res.Rc -eq 0)
+Test-Case 'pinned: no fallback warning' ($res.Err -notlike '*not confirmed*')
+
+# 13f. A trailing newline is not a valid version (a regexp $ would accept it).
+$res = Invoke-Installer @('-To', $D) @{ BRANCH_TALLY_INSTALL_VERSION = "v1.0.0`n" }
+Test-Case 'version with a trailing newline is rejected' ($res.Rc -ne 0)
+
+# 13g. A token on a failing lookup is never printed. (The bearer header and the redirect rules apply
+# to https:// only. A file:// API sends no request, so they cannot be exercised here: see the
+# static checks below and the report.)
+Initialize-Sandbox 'api_token_fail'
+$R = $script:S.Release; $D = $script:S.Dest
+Build-Release $R 'v1.0.0' $target '1.0.0'
+Build-Latest $R 'v1.0.0'
+Remove-Item -LiteralPath $script:S.Api -Recurse -Force
+$res = Invoke-Installer @('-To', $D) @{ GH_TOKEN = 'ghtok-CCC' }
+Test-Case 'token on failure: fallback warns' ($res.Err -like '*not confirmed by GitHub*')
+Test-Case 'token on failure: never printed' (($res.Out + $res.Err) -notlike '*ghtok-CCC*')
+
+# 13h. Static checks of the redirect handling, since no https server is available to the suite.
+$src = [IO.File]::ReadAllText($installer)
+Test-Case 'Get-Remote turns automatic redirects off' ($src -like '*-MaximumRedirection 0*')
+Test-Case 'Get-Remote has a hop limit' ($src -like '*$maxRedirects*')
+Test-Case 'Get-Remote refuses a non-https hop' ($src -like '*refusing to follow a non-https redirect*')
+Test-Case 'Get-Remote compares the file scheme case-insensitively' ($src -like "*StartsWith('file://', [System.StringComparison]::OrdinalIgnoreCase)*")
+Test-Case 'the version check uses \z, not $' ($src.Contains('[0-9]+\.[0-9]+\.[0-9]+\z') -and -not $src.Contains('[0-9]+\.[0-9]+\.[0-9]+$'''))
+
 # 12. The help names the new parameter.
 $helpText = [IO.File]::ReadAllText($installer)
 Test-Case 'help documents -RequireAttestation' ($helpText -like '*-RequireAttestation*' -and $helpText -like '*BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION*')
 Test-Case 'help calls the checksum an integrity check' ($helpText -like '*integrity check*')
+Test-Case 'help documents the API base variable' ($helpText -like '*BRANCH_TALLY_INSTALL_API_URL*')
+Test-Case 'help mentions GH_TOKEN' ($helpText -like '*GH_TOKEN*')
+Test-Case 'help explains the mirror fallback' ($helpText -like '*not confirmed by GitHub*')
 
 [Console]::Out.WriteLine('')
 [Console]::Out.WriteLine("$($script:cases) cases run, $($script:failures) failed")
