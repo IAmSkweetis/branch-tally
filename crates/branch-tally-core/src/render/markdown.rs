@@ -35,6 +35,7 @@ pub(super) fn n(x: u64) -> String {
 /// Python's `ts[5:16].replace('T', ' ')`: a slice by characters, empty when `ts` is short.
 fn clock(ts: &str) -> String {
     ts.chars()
+        .filter(|c| c.is_ascii_digit() || matches!(c, '-' | ':' | 'T' | 'Z' | '.' | '+'))
         .skip(5)
         .take(11)
         .collect::<String>()
@@ -44,7 +45,13 @@ fn clock(ts: &str) -> String {
 /// A session span end. A redacted summary already holds dates (or empty), not timestamps: print
 /// them whole rather than slice them as clock times.
 fn when(ts: &str, redacted: bool) -> String {
-    if redacted { ts.to_owned() } else { clock(ts) }
+    if redacted {
+        ts.chars()
+            .filter(|c| c.is_ascii_digit() || *c == '-')
+            .collect()
+    } else {
+        clock(ts)
+    }
 }
 
 /// Millions of tokens to one decimal, as `f"{x / 1e6:.1f}M"`. The cast is exact below 2^53.
@@ -78,7 +85,10 @@ fn price_note(costs: &Costs) -> String {
             PriceTableSource::Cache => "cached from LiteLLM",
             PriceTableSource::Override => ".tally/prices.toml",
         };
-        format!(" \u{b7} prices as of {} ({source})", table.as_of)
+        format!(
+            " \u{b7} prices as of {} ({source})",
+            crate::text::replace_control_chars(&table.as_of)
+        )
     };
     if costs.is_floor() {
         let _ = write!(
@@ -162,8 +172,11 @@ fn floor_statement(h: &HeuristicBreakdown, total_tokens: u64, o: &mut Vec<String
 }
 
 /// Recorded text on one line: a line break would end a table row, a heading or the footnote.
+/// Every other control character (ESC, C1, bidi overrides) becomes U+FFFD, so none reaches a
+/// terminal or reorders what a reader sees (#95).
 fn one_line(s: &str) -> String {
-    s.replace("\r\n", " ").replace(['\r', '\n'], " ")
+    let flat = s.replace("\r\n", " ").replace(['\r', '\n'], " ");
+    crate::text::replace_control_chars(&flat).into_owned()
 }
 
 /// Escapes each pipe for a GFM table cell (#39). The cell splitter treats a backslash as escaping
@@ -209,25 +222,6 @@ pub(super) fn code(s: &str, in_table: bool) -> String {
         ""
     };
     format!("{fence}{pad}{body}{pad}{fence}")
-}
-
-/// Recorded text as a plain table cell (#39). Backslashes and backticks are escaped so they can't
-/// escape a pipe or open a code span. `&`, `<` and `>` become entities so no raw HTML reaches the
-/// PR body. Pipes are escaped so they can't end the cell.
-fn plain(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for ch in one_line(s).chars() {
-        match ch {
-            '\\' => out.push_str("\\\\"),
-            '`' => out.push_str("\\`"),
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '|' => out.push_str("\\|"),
-            _ => out.push(ch),
-        }
-    }
-    out
 }
 
 /// A subagent cost as text: a dash when there is no price (or no entry), "at least $X" for a
@@ -309,7 +303,7 @@ fn subagent_section(summary: &Summary, costs: &Costs, show_cost: bool, o: &mut V
             };
             o.push(format!(
                 "| {ws} | {} | {} | {} | {} | {} |{cost}",
-                plain(&r.subagent),
+                code(&r.subagent, true),
                 model_text(&r.model),
                 n(r.calls),
                 usage.join(" | "),
@@ -357,6 +351,19 @@ fn subagent_section(summary: &Summary, costs: &Costs, show_cost: bool, o: &mut V
     o.push(text);
 }
 
+/// The "who" cell: each agent as its own code span, or the em dash [`SessionRow::who`] uses when
+/// there are none.
+fn who_cell(s: &SessionRow) -> String {
+    if s.agents.is_empty() {
+        return "\u{2014}".to_owned();
+    }
+    s.agents
+        .iter()
+        .map(|a| code(a, true))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// The sessions table, in the order given, ending in a blank line. A redacted summary's header
 /// says the span is dates.
 fn session_table(ordered: &[&(SessionId, SessionRow)], redacted: bool, o: &mut Vec<String>) {
@@ -379,7 +386,7 @@ fn session_table(ordered: &[&(SessionId, SessionRow)], redacted: bool, o: &mut V
         o.push(format!(
             "| {} | {where_} | {} | {} \u{2192} {} | {} | {} |",
             code(&short, true),
-            plain(&s.who()),
+            who_cell(s),
             when(&s.first, redacted),
             when(&s.last, redacted),
             n(s.calls),
@@ -511,7 +518,7 @@ fn attribution_details(summary: &Summary, o: &mut Vec<String>) {
         let _ = write!(
             line,
             "| {} | {} | {} |",
-            plain(attr),
+            code(attr, true),
             n(b.calls),
             n(b.tokens())
         );
@@ -534,8 +541,11 @@ pub fn wrap(report: &str) -> String {
 pub fn splice(body: &str, report: &str) -> String {
     let body = body.replace("\r\n", "\n");
     let marked = wrap(report);
-    if let (Some(i), Some(j)) = (body.find(START), body.find(END))
-        && j > i
+    // The last END after the first START: a name inside the report that spells a marker cannot
+    // end the region early and leave a stale tail that grows on every run.
+    if let Some(i) = body.find(START)
+        && let Some(j) = body.rfind(END)
+        && j >= i + START.len()
     {
         return format!("{}{marked}{}", &body[..i], &body[j + END.len()..]);
     }

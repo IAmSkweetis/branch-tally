@@ -11,7 +11,7 @@ expression: "markdown(&s, &c, false)"
 | Session | Where | Agents | Span (UTC date) | Calls | Tokens |
 |---|---|---|---|--:|--:|
 | `s3` | main checkout | — |  →  | 1 | 0.0M |
-| `s1` | worktree | agent-1 | 2026-01-01 → 2026-01-01 | 1 | 0.1M |
+| `s1` | worktree | `agent-1` | 2026-01-01 → 2026-01-01 | 1 | 0.1M |
 | `s2` | main checkout | — | 2026-01-02 → 2026-01-03 | 2 | 1.2M |
 
 <sub>Branch `feat/x` · 3 session(s), 1 in a worktree · 1,234 of 3 calls from subagents · identifiers redacted</sub>
@@ -20,8 +20,8 @@ expression: "markdown(&s, &c, false)"
 
 | Attribution | Calls | Tokens |
 |---|--:|--:|
-| agent:x | 1 | 90 |
-| main | 2 | 10 |
-| skill | 1 | 10 |
+| `agent:x` | 1 | 90 |
+| `main` | 2 | 10 |
+| `skill` | 1 | 10 |
 
 </details>
