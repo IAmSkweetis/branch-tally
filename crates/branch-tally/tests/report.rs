@@ -691,3 +691,55 @@ fn strict_never_shows_the_subagent_usage_section() {
         assert!(!stdout(&json).contains("\"subagents\""), "{scenario}");
     }
 }
+
+/// Rewrites the priced-models transcript in the world's projects directory: the unpriced model id
+/// gets terminal and bidi controls, and one record's timestamp stops being RFC 3339.
+fn hostile_world() -> World {
+    let world = World::scenario("priced-models");
+    let mut rewritten = 0;
+    for dir in fs::read_dir(world.projects()).unwrap() {
+        let file = dir.unwrap().path().join("s1.jsonl");
+        if !file.is_file() {
+            continue;
+        }
+        let text = fs::read_to_string(&file).unwrap();
+        let text = text
+            .replace("claude-mystery-9", "claude-mystery-\\u001b[31m\\u202e9")
+            .replace("2026-01-01T00:00:04.000Z", "not-a-timestamp");
+        fs::write(&file, text).unwrap();
+        rewritten += 1;
+    }
+    assert_eq!(rewritten, 1);
+    world
+}
+
+#[test]
+fn control_characters_in_recorded_text_never_reach_stderr() {
+    let out = hostile_world().run(&["report", "main", "--json"]);
+    assert_eq!(out.status.code(), Some(0));
+    let err = stderr(&out);
+    assert!(
+        err.contains("warning: no price for claude-mystery-"),
+        "{err}"
+    );
+    for bad in ['\u{1b}', '\u{202e}'] {
+        assert!(!err.contains(bad), "{err:?}");
+    }
+    assert!(err.contains('\u{fffd}'), "{err:?}");
+}
+
+#[test]
+fn malformed_timestamps_are_counted_in_a_stderr_note_with_no_content() {
+    let out = hostile_world().run(&["report", "main", "--json"]);
+    let err = stderr(&out);
+    assert!(
+        err.contains(
+            "note: 1 record(s) had an unreadable timestamp; they were kept but are undated\n"
+        ),
+        "{err}"
+    );
+    assert!(!err.contains("not-a-timestamp"), "{err}");
+    // A clean run says nothing about timestamps.
+    let clean = World::scenario("priced-models").run(&["report", "main", "--json"]);
+    assert!(!stderr(&clean).contains("timestamp"));
+}
