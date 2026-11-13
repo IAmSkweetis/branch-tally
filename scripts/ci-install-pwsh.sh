@@ -33,7 +33,14 @@ case $(uname -s) in
   MINGW* | MSYS* | CYGWIN*) os=win; archive="PowerShell-${version}-win-${arch}.zip" ;;
   *) echo "error: no PowerShell build for $(uname -s)" >&2; exit 1 ;;
 esac
-eval "sha256=\$sha256_${os}_${arch}"
+case ${os}_${arch} in
+  linux_x64) sha256=$sha256_linux_x64 ;;
+  linux_arm64) sha256=$sha256_linux_arm64 ;;
+  osx_x64) sha256=$sha256_osx_x64 ;;
+  osx_arm64) sha256=$sha256_osx_arm64 ;;
+  win_x64) sha256=$sha256_win_x64 ;;
+  win_arm64) sha256=$sha256_win_arm64 ;;
+esac
 
 if command -v sha256sum >/dev/null 2>&1; then
   sum() { sha256sum "$1" | cut -d' ' -f1; }
@@ -63,7 +70,7 @@ else
   path_entry=$dest
 fi
 
-got=$("$exe" -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()' | tr -d '\r')
+got=$("$exe" -NoProfile -NonInteractive -Command "\$PSVersionTable.PSVersion.ToString()" | tr -d '\r')
 [ "$got" = "$version" ] ||
   { echo "error: installed pwsh reports $got, want $version" >&2; exit 1; }
 [ -z "${GITHUB_PATH:-}" ] || echo "$path_entry" >>"$GITHUB_PATH"

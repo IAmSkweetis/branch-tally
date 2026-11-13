@@ -187,7 +187,7 @@ are pinned in `ci.yml`.
 
 **`mise.toml`.** `mise install` at the repository root sets up a dev machine with every one of those
 pins (`rust`, `just`, `cargo-nextest`, `cargo-deny`, `gitleaks`, `git-cliff`, `rumdl`, `zizmor`,
-`mdbook`, `mdbook-mermaid`, `minisign`, `powershell`). It is a
+`mdbook`, `mdbook-mermaid`, `minisign`, `powershell`, `shellcheck`). It is a
 **local convenience, not an authority**: the justfile, the workflows, the `scripts/ci-install-*.sh`
 scripts (minisign and pwsh, each pinned by version and archive sha256) and `rust-toolchain.toml`
 still decide what CI runs, and nothing in CI or the hooks calls mise. `just check-pins` (part of
@@ -195,12 +195,14 @@ still decide what CI runs, and nothing in CI or the hooks calls mise. `just chec
 version that differs, a pinned tool missing from `mise.toml`, or a tool in `mise.toml` that nothing
 else pins (so mise can't grow a pin of its own). To bump a tool, change it where it is really
 pinned, then in `mise.toml` in the same commit. Backends: `aqua:` (via the short registry name) for
-`just`, `cargo-deny`, `gitleaks`, `git-cliff`, `rumdl`, `zizmor`, `mdbook`, `minisign` and
-`powershell` (PowerShell 7, the `pwsh` the installer jobs run; Windows PowerShell 5.1 ships with
-Windows and can't be installed anywhere else); `cargo:cargo-nextest` (not in the aqua registry;
-compiles from source unless `cargo-binstall` is installed); `github:badboy/mdbook-mermaid` (no
-registry entry). `uv`, `git`, `sh` and the installer linters are not pinned anywhere, so they are
-not in `mise.toml`; install them yourself.
+`just`, `cargo-deny`, `gitleaks`, `git-cliff`, `rumdl`, `zizmor`, `mdbook`, `minisign`, `shellcheck`
+(pinned by the `installers.yml` lint job's `tool:` line) and `powershell` (PowerShell 7, the `pwsh`
+the installer jobs run; Windows PowerShell 5.1 ships with Windows and can't be installed anywhere
+else); `cargo:cargo-nextest` (not in the aqua registry; compiles from source unless `cargo-binstall`
+is installed); `github:badboy/mdbook-mermaid` (no registry entry). `uv`, `git` and `sh` are not
+pinned anywhere, so they are not in `mise.toml`; install them yourself. PSScriptAnalyzer is pinned
+(in `installers.yml`) but is a PowerShell module, not a mise tool:
+`Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser`.
 
 `mise.toml` also lists `rust`, even though `rustup` already reads `rust-toolchain.toml` and installs
 that channel the first time `cargo` runs. The file stays the authority (it also carries the

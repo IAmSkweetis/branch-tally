@@ -329,7 +329,7 @@ both fail, the error states that the binary now lives at `<path>.old` and to ren
 
 Two layers. `installers.yml` runs on a pull request or push to `main` that changes `install.sh`,
 `install.ps1`, `tests/install/**`, the `scripts/lint-install.*`, `scripts/test-install.sh` and
-`scripts/ci-install-pwsh.sh` helpers or the workflow itself: ShellCheck on the shell files,
+`scripts/ci-install-pwsh.sh` helpers or the workflow itself: ShellCheck (pinned) on the shell files,
 PSScriptAnalyzer (pinned, warnings fail) on the PowerShell files, and the two offline test scripts
 (`sh tests/install/install_test.sh`, `pwsh -NoProfile -File tests/install/install_test.ps1`) on
 Ubuntu, macOS and Windows. Every job runs the pinned pwsh that `scripts/ci-install-pwsh.sh`

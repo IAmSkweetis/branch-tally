@@ -47,9 +47,9 @@ jobs:
           persist-credentials: false
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: just@1.59.0
-      # ShellCheck ships on the runner image; pwsh is the pinned one, put first on PATH. CI is set,
-      # so a missing tool is an error.
+          tool: just@1.59.0,shellcheck@0.11.0
+      # ShellCheck comes from install-action above and pwsh from the script below, both pinned and
+      # put first on PATH, not the runner image's. CI is set, so a missing tool is an error.
       - name: Install pwsh (pinned)
         shell: bash
         run: sh scripts/ci-install-pwsh.sh

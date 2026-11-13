@@ -3,7 +3,7 @@
 # rust-toolchain.toml are, and `just check-pins` (part of `just ci`) fails if this file drifts
 # from them. Change a version there first, then here. See docs/references/dev_workflow.md.
 #
-# Not listed because nothing pins them: uv (and so uvx), git, sh, ShellCheck, PSScriptAnalyzer.
+# Not listed because nothing pins them: uv (and so uvx), git, sh, PSScriptAnalyzer.
 # Windows PowerShell 5.1 ships with Windows and cannot be installed elsewhere.
 
 [tools]
@@ -27,5 +27,7 @@ mdbook = "0.5.4"
 minisign = "0.12"
 # Pinned (with the archive sha256s) in scripts/ci-install-pwsh.sh, which the installer CI jobs run.
 powershell = "7.7.0"
+# Pinned in .github/workflows/installers.yml (taiki-e/install-action), for lint-install.
+shellcheck = "0.11.0"
 # No aqua registry entry; the github backend takes the release binaries.
 "github:badboy/mdbook-mermaid" = "0.17.1"
