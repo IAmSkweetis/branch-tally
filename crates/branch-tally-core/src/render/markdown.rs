@@ -64,8 +64,8 @@ pub(super) fn millions(tokens: u64) -> String {
 }
 
 /// The total cost cell. A partial total is a floor (Governance II), so the cell says so itself.
-fn total_cost_cell(costs: &Costs, ambiguous: bool) -> String {
-    let floor = if costs.is_floor() || ambiguous {
+fn total_cost_cell(costs: &Costs, ambiguous: bool, overflowed: bool) -> String {
+    let floor = if costs.is_floor() || ambiguous || overflowed {
         "at least "
     } else {
         ""
@@ -168,6 +168,21 @@ fn floor_statement(h: &HeuristicBreakdown, total_tokens: u64, o: &mut Vec<String
         n(h.ambiguous.tokens),
         n(h.ambiguous.calls),
     ));
+    o.push(String::new());
+}
+
+/// When a token or call total saturated, every total is a floor and unreliable (#96, Governance
+/// II): say so. Pushes nothing otherwise.
+fn overflow_statement(overflowed: bool, o: &mut Vec<String>) {
+    if !overflowed {
+        return;
+    }
+    o.push(
+        "**Totals overflowed and are unreliable**: a token or call count exceeded the largest \
+         value the tool can hold, so every total here is at least what is shown and the real \
+         figure is unknown."
+            .to_owned(),
+    );
     o.push(String::new());
 }
 
@@ -290,7 +305,7 @@ fn subagent_section(summary: &Summary, costs: &Costs, show_cost: bool, o: &mut V
                 let t = r.total();
                 vec![
                     n(t.input),
-                    n(t.cache_write_5m + t.cache_write_1h),
+                    n(t.cache_write_5m.saturating_add(t.cache_write_1h)),
                     n(t.cache_read),
                     n(t.output),
                     n(t.thinking),
@@ -433,14 +448,18 @@ pub fn markdown(summary: &Summary, costs: &Costs, show_cost: bool) -> String {
             model_text(model),
             n(b.calls),
             n(b.input),
-            n(b.cache_write_5m + b.cache_write_1h),
+            n(b.cache_write_5m.saturating_add(b.cache_write_1h)),
             n(b.cache_read),
             n(b.output),
             n(b.thinking),
         ));
     }
     let total_cell = if show_cost {
-        total_cost_cell(costs, summary.footnote.heuristics.any_ambiguous())
+        total_cost_cell(
+            costs,
+            summary.footnote.heuristics.any_ambiguous(),
+            summary.footnote.totals_overflowed,
+        )
     } else {
         String::new()
     };
@@ -448,7 +467,7 @@ pub fn markdown(summary: &Summary, costs: &Costs, show_cost: bool) -> String {
         "| **Total** | **{}** | **{}** | **{}** | **{}** | **{}** | **{}** |{total_cell}",
         n(total.calls),
         n(total.input),
-        n(total.cache_write_5m + total.cache_write_1h),
+        n(total.cache_write_5m.saturating_add(total.cache_write_1h)),
         n(total.cache_read),
         n(total.output),
         n(total.thinking),
@@ -458,6 +477,7 @@ pub fn markdown(summary: &Summary, costs: &Costs, show_cost: bool) -> String {
     session_table(&ordered, summary.redacted, &mut o);
 
     floor_statement(heur, total.tokens(), &mut o);
+    overflow_statement(summary.footnote.totals_overflowed, &mut o);
 
     let mode = if summary.mode == Mode::Timeline {
         " \u{b7} timeline mode"
@@ -475,6 +495,9 @@ pub fn markdown(summary: &Summary, costs: &Costs, show_cost: bool) -> String {
         heuristic_note(heur),
         work_branch_note(summary.work_branch.as_ref()),
     );
+    if summary.footnote.totals_overflowed {
+        note.push_str(" \u{b7} totals overflowed, unreliable");
+    }
     if summary.redacted {
         note.push_str(" \u{b7} identifiers redacted");
     }
