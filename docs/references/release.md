@@ -210,15 +210,22 @@ same place as the archive. Only the build-provenance attestation proves origin
 ([decision 0004](../decisions/0004-release-provenance.md)). After the checksum check the installer
 verifies it with the first tool that is available:
 
-1. `gh`, when on PATH and logged in (`gh auth status` succeeds):
-   `gh attestation verify <archive> --repo IAmSkweetis/branch-tally`.
+1. `gh`, when on PATH and logged in (`gh auth status` succeeds): `gh attestation verify <archive>
+   --repo IAmSkweetis/branch-tally --signer-workflow
+   IAmSkweetis/branch-tally/.github/workflows/release.yml --source-ref refs/heads/main
+   --cert-oidc-issuer https://token.actions.githubusercontent.com`.
 2. Otherwise `cosign`, when on PATH: `cosign verify-blob-attestation` of the archive against the
-   release asset `provenance.sigstore.json`, with `--certificate-identity-regexp` pinned to
-   this repository's `.github/workflows/release.yml` (on any ref) and
-   `--certificate-oidc-issuer https://token.actions.githubusercontent.com`. A release with no
-   bundle counts as "could not verify", not as a pass.
-3. Otherwise it warns on stderr that provenance was **not** verified, prints the `gh attestation
-   verify` command to run, and installs.
+   release asset `provenance.sigstore.json`, with an exact `--certificate-identity
+   https://github.com/IAmSkweetis/branch-tally/.github/workflows/release.yml@refs/heads/main`
+   (no regexp) and `--certificate-oidc-issuer https://token.actions.githubusercontent.com`. A
+   release with no bundle counts as "could not verify", not as a pass.
+3. Otherwise it warns on stderr that provenance was **not** verified, prints the full `gh
+   attestation verify` command above (with the same pinned flags) to run, and installs.
+
+The signer is pinned to `release.yml` on `main`, not merely to the repository: `--repo` alone
+accepts an attestation from any workflow in the repository that can write one, and
+`release.yml` also starts from `workflow_dispatch`, which can run on any branch. A release is
+the `workflow_run` on `main`, so any other ref is rejected.
 
 A verification that runs and fails is a hard failure: nothing is installed, and `cosign` is not
 tried after a failing `gh`. `--require-attestation` (`-RequireAttestation`, or

@@ -117,26 +117,67 @@ fresh() {
   : > "$S/wget.log"
 }
 
-# mk_gh <auth rc> <verify rc>: a gh stub that logs its arguments, one per line, to $S/gh.log.
+# The signer and source ref the fake attestations were really made with.
+GOOD_WORKFLOW=IAmSkweetis/branch-tally/.github/workflows/release.yml
+GOOD_REF=refs/heads/main
+GOOD_IDENTITY=https://github.com/IAmSkweetis/branch-tally/.github/workflows/release.yml@refs/heads/main
+
+# mk_gh <auth rc> <verify rc> [signer workflow] [source ref]: a gh stub that logs its arguments, one
+# per line, to $S/gh.log. The fake attestation was signed by the given workflow on the given ref
+# (default: release.yml on main). Like the real gh, it enforces a signer or ref only when the
+# matching flag is passed: with no --signer-workflow any signer is accepted, which is the hole the
+# installer must close.
 mk_gh() {
+  actual_wf=${3:-$GOOD_WORKFLOW}
+  actual_ref=${4:-$GOOD_REF}
   cat > "$S/stubs/gh" <<GH
 #!/bin/sh
 for a in "\$@"; do printf '%s\n' "\$a" >> "$S/gh.log"; done
-case "\$1 \$2" in
+cmd="\$1 \$2"
+signer= ref= issuer=
+while [ \$# -gt 0 ]; do
+  case \$1 in
+    --signer-workflow) signer=\$2; shift ;;
+    --source-ref) ref=\$2; shift ;;
+    --cert-oidc-issuer) issuer=\$2; shift ;;
+  esac
+  shift
+done
+case "\$cmd" in
   "auth status") exit $1 ;;
-  "attestation verify") exit $2 ;;
+  "attestation verify")
+    [ $2 -eq 0 ] || exit $2
+    [ -z "\$signer" ] || [ "\$signer" = "$actual_wf" ] || exit 1
+    [ -z "\$ref" ] || [ "\$ref" = "$actual_ref" ] || exit 1
+    [ -z "\$issuer" ] || [ "\$issuer" = https://token.actions.githubusercontent.com ] || exit 1
+    exit 0 ;;
 esac
 exit 99
 GH
   chmod +x "$S/stubs/gh"
 }
 
-# mk_cosign <rc>: a cosign stub that logs its arguments, one per line, to $S/cosign.log.
+# mk_cosign <rc> [signer identity]: a cosign stub that logs its arguments, one per line, to
+# $S/cosign.log. Its fake bundle was signed by the given identity (default: release.yml on main).
+# Verification passes only with an exact --certificate-identity equal to it and the Actions issuer;
+# a regexp, or no identity, is refused.
 mk_cosign() {
+  actual_id=${2:-$GOOD_IDENTITY}
   cat > "$S/stubs/cosign" <<COSIGN
 #!/bin/sh
 for a in "\$@"; do printf '%s\n' "\$a" >> "$S/cosign.log"; done
-exit $1
+[ $1 -eq 0 ] || exit $1
+id= issuer=
+while [ \$# -gt 0 ]; do
+  case \$1 in
+    --certificate-identity) id=\$2; shift ;;
+    --certificate-oidc-issuer) issuer=\$2; shift ;;
+  esac
+  shift
+done
+[ "\$id" = "$actual_id" ] || exit 1
+[ "\$issuer" = https://token.actions.githubusercontent.com ] || exit 1
+exit 0
 COSIGN
   chmod +x "$S/stubs/cosign"
 }
@@ -386,6 +427,11 @@ check "gh pass installs" test -x "$D/branch-tally"
 check "gh pass ran attestation verify" contains "$S/gh.log" "attestation"
 check "gh pass pins the repository" contains "$S/gh.log" "IAmSkweetis/branch-tally"
 check "gh pass uses --repo" contains "$S/gh.log" "--repo"
+check "gh pass pins the signer workflow flag" contains "$S/gh.log" "--signer-workflow"
+check "gh pass pins the signer workflow to release.yml" contains "$S/gh.log" "$GOOD_WORKFLOW"
+check "gh pass pins the source ref flag" contains "$S/gh.log" "--source-ref"
+check "gh pass pins the source ref to main" contains "$S/gh.log" "refs/heads/main"
+check "gh pass pins the issuer" contains "$S/gh.log" "https://token.actions.githubusercontent.com"
 check "gh pass verifies the archive" contains "$S/gh.log" "branch-tally-v2.0.0-$X.tar.gz"
 check "gh pass says provenance was verified" contains "$out" "Provenance verified"
 
@@ -424,7 +470,9 @@ check "cosign pass exits 0" test "$rc" -eq 0
 check "cosign pass installs" test -x "$D/branch-tally"
 check "cosign pass did not run gh attestation verify" lacks "$S/gh.log" "attestation"
 check "cosign pass uses the bundle" contains "$S/cosign.log" "provenance.sigstore.json"
-check "cosign pass pins the workflow identity" contains "$S/cosign.log" '/IAmSkweetis/branch-tally/\.github/workflows/release\.yml@'
+check "cosign pass pins an exact identity" contains "$S/cosign.log" "--certificate-identity"
+check "cosign pass pins release.yml on main" contains "$S/cosign.log" "$GOOD_IDENTITY"
+check "cosign pass uses no identity regexp" lacks "$S/cosign.log" "--certificate-identity-regexp"
 check "cosign pass pins the issuer" contains "$S/cosign.log" "https://token.actions.githubusercontent.com"
 check "cosign pass verifies the archive" contains "$S/cosign.log" "branch-tally-v2.0.0-$X.tar.gz"
 check "cosign pass says provenance was verified" contains "$out" "Provenance verified"
@@ -491,6 +539,55 @@ mk_gh 1 0
 sh_run --require-attestation --to "$D"
 check "logged-out gh with no cosign is unavailable (strict fails)" test "$rc" -ne 0
 check "logged-out gh never ran attestation verify" lacks "$S/gh.log" "attestation"
+
+# 12j. An attestation from another workflow, or another ref, in this repository must not install.
+fresh gh_other_wf
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_gh 0 0 IAmSkweetis/branch-tally/.github/workflows/other.yml refs/heads/main
+sh_run --to "$D"
+check "gh: attestation from another workflow exits non-zero" test "$rc" -ne 0
+check "gh: attestation from another workflow installs nothing" test ! -e "$D/branch-tally"
+
+fresh gh_other_ref
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_gh 0 0 "$GOOD_WORKFLOW" refs/heads/some-branch
+sh_run --to "$D"
+check "gh: attestation from another ref exits non-zero" test "$rc" -ne 0
+check "gh: attestation from another ref installs nothing" test ! -e "$D/branch-tally"
+
+fresh cosign_other_wf
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_cosign 0 https://github.com/IAmSkweetis/branch-tally/.github/workflows/other.yml@refs/heads/main
+sh_run --to "$D"
+check "cosign: bundle from another workflow exits non-zero" test "$rc" -ne 0
+check "cosign: bundle from another workflow installs nothing" test ! -e "$D/branch-tally"
+
+fresh cosign_other_ref
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_cosign 0 https://github.com/IAmSkweetis/branch-tally/.github/workflows/release.yml@refs/heads/feature
+sh_run --to "$D"
+check "cosign: bundle from another ref exits non-zero" test "$rc" -ne 0
+check "cosign: bundle from another ref installs nothing" test ! -e "$D/branch-tally"
+
+# 12k. The manual command, in the warning and in --help, carries the same pins.
+fresh manual_cmd
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+sh_run --to "$D"
+check "warning command pins the signer workflow" contains "$err" "--signer-workflow $GOOD_WORKFLOW"
+check "warning command pins the source ref" contains "$err" "--source-ref refs/heads/main"
+check "warning command pins the issuer" contains "$err" "--cert-oidc-issuer https://token.actions.githubusercontent.com"
+sh_run --require-attestation --to "$D"
+check "strict failure command pins the signer workflow" contains "$err" "--signer-workflow $GOOD_WORKFLOW"
+check "strict failure command pins the source ref" contains "$err" "--source-ref refs/heads/main"
+sh_run --help
+check "--help command pins the signer workflow" contains "$out" "--signer-workflow $GOOD_WORKFLOW"
+check "--help command pins the source ref" contains "$out" "--source-ref refs/heads/main"
+check "--help names the exact cosign identity" contains "$out" "$GOOD_IDENTITY"
 
 # 13. F-06: mirror URL scheme.
 fresh scheme

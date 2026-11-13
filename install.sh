@@ -13,8 +13,13 @@ set -eu
 REPO=IAmSkweetis/branch-tally
 DEFAULT_BASE_URL=https://github.com/$REPO/releases
 ISSUER=https://token.actions.githubusercontent.com
-# The signer must be this repository's release workflow, on any ref it runs from.
-IDENTITY_REGEXP='^https://github\.com/IAmSkweetis/branch-tally/\.github/workflows/release\.yml@refs/(heads|tags)/.+$'
+# The signer must be this repository's release workflow, run from main. release.yml starts from
+# workflow_run on main, and a manual dispatch on another branch is not a release.
+SIGNER_WORKFLOW=$REPO/.github/workflows/release.yml
+SOURCE_REF=refs/heads/main
+SIGNER_IDENTITY=https://github.com/$SIGNER_WORKFLOW@$SOURCE_REF
+# The gh flags that hold an attestation to that signer, for the command we run and the one we print.
+GH_PINS="--repo $REPO --signer-workflow $SIGNER_WORKFLOW --source-ref $SOURCE_REF --cert-oidc-issuer $ISSUER"
 
 usage() {
   cat <<'USAGE'
@@ -43,9 +48,14 @@ prove who built the archive, because the checksum file comes from the same place
 Only the build-provenance attestation proves origin. After the checksum check this script verifies
 it, using the first of these that is available:
 
-  1. gh (logged in):  gh attestation verify <archive> --repo IAmSkweetis/branch-tally
-  2. cosign:          verifies the release's provenance.sigstore.json, with the signer pinned to
-                      this repository's .github/workflows/release.yml and the GitHub Actions issuer.
+  1. gh (logged in):  gh attestation verify <archive> --repo IAmSkweetis/branch-tally \
+                        --signer-workflow IAmSkweetis/branch-tally/.github/workflows/release.yml \
+                        --source-ref refs/heads/main \
+                        --cert-oidc-issuer https://token.actions.githubusercontent.com
+  2. cosign:          verifies the release's provenance.sigstore.json with an exact
+                      --certificate-identity
+                      https://github.com/IAmSkweetis/branch-tally/.github/workflows/release.yml@refs/heads/main
+                      and --certificate-oidc-issuer https://token.actions.githubusercontent.com
   3. neither:         warns that provenance was NOT verified, prints the command to run, and
                       installs. --require-attestation turns this warning into a failure.
 
@@ -136,19 +146,21 @@ cleanup() { rm -rf "$tmp"; }
 # --require-attestation.
 unverified() {
   if [ "$require_attestation" = 1 ]; then
-    die "build provenance could not be verified ($1) and --require-attestation is set; nothing installed. Install gh or cosign, or run: gh attestation verify $archive --repo $REPO"
+    die "build provenance could not be verified ($1) and --require-attestation is set; nothing installed. Install gh or cosign, or run: gh attestation verify $archive $GH_PINS"
   fi
   warn "provenance NOT verified: $1."
   warn "The checksum is an integrity check only; it does not prove who built this archive."
   warn "To verify it yourself, download $url/$archive and run:"
-  warn "  gh attestation verify $archive --repo $REPO"
+  warn "  gh attestation verify $archive $GH_PINS"
 }
 
 # verify_provenance: verify the downloaded archive's attestation. Returns normally when verified or
 # when unavailable and not required; exits on a verification that ran and failed.
 verify_provenance() {
   if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-    if gh attestation verify "$tmp/$archive" --repo "$REPO" >"$tmp/attest.out" 2>&1; then
+    # $GH_PINS is deliberately unquoted: it is a fixed list of words with no spaces inside a word.
+    # shellcheck disable=SC2086
+    if gh attestation verify "$tmp/$archive" $GH_PINS >"$tmp/attest.out" 2>&1; then
       info "Provenance verified with gh: $archive was built by $REPO"
       return 0
     fi
@@ -162,10 +174,10 @@ verify_provenance() {
     fi
     if cosign verify-blob-attestation --bundle "$tmp/provenance.sigstore.json" --new-bundle-format \
       --type slsaprovenance1 \
-      --certificate-identity-regexp "$IDENTITY_REGEXP" \
+      --certificate-identity "$SIGNER_IDENTITY" \
       --certificate-oidc-issuer "$ISSUER" \
       "$tmp/$archive" >"$tmp/attest.out" 2>&1; then
-      info "Provenance verified with cosign: $archive was built by $REPO's release workflow"
+      info "Provenance verified with cosign: $archive was built by $SIGNER_WORKFLOW on $SOURCE_REF"
       return 0
     fi
     cat "$tmp/attest.out" >&2
