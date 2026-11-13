@@ -13,6 +13,7 @@ use report::Failure;
 mod capture;
 mod cli;
 mod config;
+mod ledger_check;
 mod prices;
 mod project;
 mod pyrepr;
@@ -26,6 +27,9 @@ fn main() -> ExitCode {
         cli::Command::Project(args) => project::run(&args),
         cli::Command::Record(args) => report::record(&args).map_err(Failure::from),
         cli::Command::Capture => capture::run().map_err(Failure::from),
+        cli::Command::Ledger(cli::LedgerCommand::Check(args)) => {
+            ledger_check::run(&args).map_err(Failure::from)
+        }
         cli::Command::Prices(command) => prices::run(&command).map_err(Failure::from).map(|text| {
             // Verbatim UTF-8 with LF, whatever the console codepage.
             let mut out = std::io::stdout().lock();
