@@ -222,6 +222,19 @@ fn notes(report: &ProjectReport, o: &mut String) {
 
 /// The Mermaid `xychart-beta` of the cumulative series, one point per branch. Labels are dates:
 /// a branch name never enters the chart source. A floor point has `*` on its label.
+/// Why a series point is a floor, read from the dated branches the series is built from. Overflow
+/// is named only when a dated row overflowed; otherwise the cause is an unpriced model, as before.
+fn floor_causes(report: &ProjectReport) -> &'static str {
+    let dated = || report.rows.iter().filter(|r| r.last_call.is_some());
+    let overflowed = dated().any(|r| r.totals_overflowed);
+    let unpriced = dated().any(|r| r.cost.is_floor() || !r.unpriced_models.is_empty());
+    match (unpriced, overflowed) {
+        (true, true) => "an unpriced model and totals overflowed, unreliable",
+        (false, true) => "totals overflowed, unreliable",
+        _ => "an unpriced model",
+    }
+}
+
 fn chart(report: &ProjectReport, o: &mut String) {
     if report.series.is_empty() {
         o.push_str("No dated branches, so there is no cost chart.\n");
@@ -255,9 +268,11 @@ fn chart(report: &ProjectReport, o: &mut String) {
     let _ = writeln!(o, "    line [{}]", values.join(", "));
     o.push_str("```\n");
     if any_floor {
-        o.push_str(
-            "\nPoints marked * are floors: that branch or an earlier one has an unpriced model, \
-             so the real cost is at least this.\n",
+        let _ = writeln!(
+            o,
+            "\nPoints marked * are floors: that branch or an earlier one has {}, so the real cost \
+             is at least this.",
+            floor_causes(report)
         );
     }
 }
@@ -1127,6 +1142,55 @@ mod tests {
             "{md}"
         );
         assert!(md.contains("**at least $3.75**"), "{md}");
+    }
+
+    fn floor_line(md: &str) -> String {
+        md.lines()
+            .find(|l| l.starts_with("Points marked *"))
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    #[test]
+    fn markdown_star_explanation_names_overflow_alone() {
+        let mut r = exact();
+        r.rows[1].totals_overflowed = true;
+        r.series[1].is_floor = true;
+        let line = floor_line(&project_markdown(&r));
+        assert!(line.contains("totals overflowed, unreliable"), "{line}");
+        assert!(!line.contains("unpriced"), "{line}");
+    }
+
+    #[test]
+    fn markdown_star_explanation_names_unpriced_alone() {
+        let mut r = exact();
+        r.rows[1].cost = cost(2.5, 1);
+        r.series[1].is_floor = true;
+        let line = floor_line(&project_markdown(&r));
+        assert!(line.contains("an unpriced model"), "{line}");
+        assert!(!line.contains("overflow"), "{line}");
+    }
+
+    #[test]
+    fn markdown_star_explanation_names_both_causes() {
+        let mut r = exact();
+        r.rows[0].totals_overflowed = true;
+        r.rows[1].cost = cost(2.5, 1);
+        r.series[0].is_floor = true;
+        r.series[1].is_floor = true;
+        let line = floor_line(&project_markdown(&r));
+        assert!(line.contains("an unpriced model"), "{line}");
+        assert!(line.contains("totals overflowed, unreliable"), "{line}");
+    }
+
+    #[test]
+    fn markdown_star_explanation_without_overflow_is_unchanged() {
+        let line = floor_line(&project_markdown(&messy()));
+        assert_eq!(
+            line,
+            "Points marked * are floors: that branch or an earlier one has an unpriced model, \
+             so the real cost is at least this."
+        );
     }
 
     #[test]
