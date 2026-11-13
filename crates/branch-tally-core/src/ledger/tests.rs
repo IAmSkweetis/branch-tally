@@ -589,3 +589,16 @@ fn the_explicit_path_keeps_following_a_symlink() {
     append(&link, &recs, "b", Mode::Claim, None, &Identity, &CLOCK).unwrap();
     assert_eq!(read(&real).unwrap().entries().len(), 1);
 }
+
+#[test]
+fn an_entry_with_an_agent_id_reads_back_as_a_sidechain_and_one_without_does_not() {
+    let mut sub = selected("r-sub", "feat/a", 5);
+    sub.attributed.record.is_sidechain = false;
+    let back = LedgerEntry::from_selected(&sub, "b", Mode::Claim, None).to_selected(None);
+    assert!(back.attributed.record.is_sidechain);
+
+    let mut main_session = selected("r-main", "feat/a", 5);
+    main_session.attributed.record.agent_id = None;
+    let back = LedgerEntry::from_selected(&main_session, "b", Mode::Claim, None).to_selected(None);
+    assert!(!back.attributed.record.is_sidechain);
+}
