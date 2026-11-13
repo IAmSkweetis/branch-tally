@@ -79,7 +79,7 @@ warning: no price for claude-mystery-9 in the price table (as of 2026-11-09); th
 
 | Attribution | Calls | Tokens |
 |---|--:|--:|
-| main | 7 | 117,337,218 |
+| `main` | 7 | 117,337,218 |
 
 </details>
 <!-- token-report:end -->
@@ -96,13 +96,18 @@ The first line went to stderr; everything else is stdout. Piece by piece:
 - **A floor.** `claude-mystery-9` is not in the price table, so its cost is `—`, stderr names it,
   and the total reads "at least $106.93". The tokens are still counted.
 - **The session table.** One row per Claude Code session that contributed: where it ran (the main
-  checkout or a worktree), the named agents it used, the UTC time span, its calls and its tokens in
-  millions.
+  checkout or a worktree), the named agents it used (— when none), the UTC time span, its calls
+  and its tokens in millions.
 - **The footnote.** The branch, how many sessions ran in a worktree, how many calls came from
   subagents, which attribution heuristics were used (with their call and token counts), and the
   price table's date and source.
 - **Breakdown by skill / agent.** The same tokens split by the skill or named agent that made the
   calls. `main` is the session's own top-level work.
+
+Names that come from the transcripts (model ids, branches, session ids, worktrees, and agent,
+skill and subagent names) are printed as code, so a name that contains Markdown, HTML, a link or
+an `@mention` shows as plain text in a pull request. See
+[Recorded text in the output](cli.md#recorded-text-in-the-output).
 
 When subagents did part of the work, a **Subagent usage** section follows, with one row per
 subagent, the workspace it ran in and its cost, plus a line saying how many subagent calls had no

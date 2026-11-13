@@ -168,6 +168,7 @@ What a ledger report tells you on stderr, as counts only:
 | `note: unattributed counts unavailable from the ledger` | A live report can say how many calls in the repository could not be attributed to any branch: the [unstamped calls](cli.md#unstamped-calls) line (the JSON `unstamped` key) and the subagent section's unattributed counts. The ledger only holds the requested branch's calls, so it can't, and those counts are left out. With `--with-live` they come from the live transcripts and the note is not printed. |
 | `note: ledger mixes modes (claim, timeline); the numbers combine them` | The branch was recorded under more than one attribution mode. |
 | `note: skipped N ledger line(s): …` | Lines that were malformed or written by an unsupported ledger version were skipped and counted. |
+| `note: N record(s) had an unreadable timestamp; they were kept but are undated` | Ledger lines whose `ts` is not strict RFC 3339 (see [Timestamps](cli.md#timestamps)). The lines are used and counted, but treated as having no timestamp. With `--with-live`, a separate line of the same form counts the live transcripts' records. |
 | `note: N ledger request(s) had conflicting lines; kept the latest` | Two lines with the same key held different data. The one with the latest `recorded_at` is used. |
 
 A duplicate line, such as one left by a union merge or by recording twice, is collapsed silently:
@@ -239,7 +240,7 @@ One JSON object per line, append-only. A line holds:
 | `harness` | The agent harness, `claude-code`. |
 | `session_id` | The Claude Code session id. |
 | `agent_id` | The subagent's id, when a subagent made the call. |
-| `ts` | The call's timestamp. |
+| `ts` | The call's timestamp, as the transcript recorded it. Left out when the transcript's timestamp is missing or not strict RFC 3339 (see [Timestamps](cli.md#timestamps)). |
 | `model` | The model id. |
 | `recorded_for` | The branch `record` was run for. |
 | `mode` | The attribution mode: `claim`, `strict` or `timeline`. |
