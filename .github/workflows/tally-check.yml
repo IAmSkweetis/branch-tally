@@ -43,6 +43,7 @@ jobs:
       - name: Check the ledger and captures against the base
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: sh scripts/ci-tally-check.sh target/release/branch-tally "$PR_NUMBER"
