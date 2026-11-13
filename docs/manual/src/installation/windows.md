@@ -19,8 +19,9 @@ PowerShell.
 
 1. Picks the build for the machine's **OS** architecture, not the PowerShell process's, so a
    32-bit or emulated PowerShell on an arm64 machine still gets the arm64 build.
-2. Resolves "latest" to a concrete version by reading the release's `SHA256SUMS`, without calling
-   the GitHub API. Everything after that is downloaded from that one version.
+2. Resolves "latest" to a concrete version by asking the GitHub API (see
+   [Which release is the latest](#which-release-is-the-latest)). Everything after that is
+   downloaded from that one version.
 3. Downloads `SHA256SUMS` and `branch-tally-<version>-<target>.zip`, and checks the archive's
    SHA-256 against its line in `SHA256SUMS`. **A mismatch, or an archive missing from
    `SHA256SUMS`, stops the install and nothing is written.** This is an integrity check: it
@@ -35,6 +36,29 @@ PowerShell.
 7. If the install directory is not on your `PATH`, prints two commands: one that adds it for your
    user (new terminals pick it up), and one that adds it to the current terminal only. It never
    edits your `PATH` itself.
+
+## Which release is the latest
+
+Without `-Version`, the installer asks the GitHub API
+(`https://api.github.com/repos/IAmSkweetis/branch-tally/releases/latest`) which release is the
+latest, even when a mirror is set. A mirror serving an older release as "latest" could otherwise
+roll you back to a version with a known bug.
+
+If the API can't be reached, is rate limited, or answers with something that isn't a `vX.Y.Z`
+tag, the installer falls back to the mirror's `latest/download/SHA256SUMS`. It warns on stderr
+(`install.ps1: warning: could not read the latest release from …`) that "latest" came from the
+mirror and was not confirmed by GitHub, so an older release could be served, and suggests
+`install.ps1 -Version vX.Y.Z`. The fallback goes ahead even with `-RequireAttestation`, because the
+archive's checksum and provenance are still checked. To rule it out, pin `-Version`. That is also
+the way to install from a mirror that can't reach `api.github.com`.
+
+The API allows 60 requests an hour without a token. If `GH_TOKEN` is set, or else
+`GITHUB_TOKEN`, the installer sends it as a bearer token to the API lookup, and to nothing else.
+It never prints the token.
+
+The protection against being rolled back has limits. It doesn't hold in the fallback above, nor
+against someone who can intercept `api.github.com` itself, for example a proxy whose certificate
+your machine trusts.
 
 ## Checking where the archive came from
 
@@ -81,13 +105,20 @@ Every option has a parameter and an environment variable. A parameter overrides 
 | `-Version <vX.Y.Z>` | `BRANCH_TALLY_INSTALL_VERSION` | `latest` | Install this release instead of the latest. The leading `v` is optional. |
 | `-To <dir>` | `BRANCH_TALLY_INSTALL_DIR` | `%USERPROFILE%\.local\bin` | Install into this directory. It is created if missing. |
 | `-RequireAttestation` | `BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION` | off | Fail unless provenance was verified with `gh` or `cosign`. The variable turns it on when set to `1`, `true` or `yes`. |
-| none | `BRANCH_TALLY_INSTALL_BASE_URL` | `https://github.com/IAmSkweetis/branch-tally/releases` | Download from a mirror with the same layout. Only `https://` and `file://` URLs are accepted. |
+| none | `BRANCH_TALLY_INSTALL_BASE_URL` | `https://github.com/IAmSkweetis/branch-tally/releases` | Download from a mirror with the same layout (`<base>/download/<tag>/…`, and `<base>/latest/download/SHA256SUMS` for the fallback). Only `https://` and `file://` URLs are accepted. |
+| none | `BRANCH_TALLY_INSTALL_API_URL` | `https://api.github.com` | Where "latest" is looked up. Only `https://` and `file://` URLs are accepted. It is trusted exactly as much as the mirror. |
 
 A version must be of the form `vMAJOR.MINOR.PATCH`; anything else is an error.
 
 When `BRANCH_TALLY_INSTALL_BASE_URL` is set to anything other than the default, the installer
-prints `Using release mirror: <url>` first, so you can see where it is downloading from. A mirror
-only changes the source; the checksum and provenance checks are the same.
+prints `Using release mirror: <url>` first, so you can see where it is downloading from. Likewise,
+a non-default `BRANCH_TALLY_INSTALL_API_URL` prints `Using release API: <url>`. A mirror only
+changes the source; the checksum and provenance checks are the same, and "latest" still comes from
+the API (see [Which release is the latest](#which-release-is-the-latest)).
+
+Every download follows redirects one hop at a time, at most 5, and refuses any hop that isn't
+`https://`, on Windows PowerShell 5.1 and PowerShell 7 alike. A token is not sent on a redirect to
+another host.
 
 `irm | iex` cannot pass parameters, so with the one-liner use the environment variables:
 
@@ -111,10 +142,12 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Version v0.6.1 -To C:\to
 The installer writes `install.ps1: error: <reason>` to stderr when, among other things:
 
 - a version is malformed;
-- `BRANCH_TALLY_INSTALL_BASE_URL` does not start with `https://` or `file://`;
+- `BRANCH_TALLY_INSTALL_BASE_URL` or `BRANCH_TALLY_INSTALL_API_URL` does not start with `https://`
+  or `file://`;
 - it is run on something other than Windows (use the [Linux and macOS](linux-macos.md) installer
   there), or the architecture is not x64 or arm64;
-- the latest release has no build for your target;
+- the release has no build for your target, or a download hits a non-`https://` redirect or more
+  than 5 redirects;
 - a download fails, the checksum does not match, or the archive is not listed in `SHA256SUMS`;
 - a provenance check with `gh` or `cosign` fails, or none could run and `-RequireAttestation` is
   set;

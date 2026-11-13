@@ -44,6 +44,10 @@ branch-tally update            # ask, then install the latest release
 branch-tally update --check    # only say whether a different version is available
 ```
 
+It asks the GitHub API which release is the latest, even when a mirror is set, and fails rather
+than guess if the API can't be reached; pass `--version` then. Without `--version` it never
+installs a release older than the one running.
+
 Before it trusts anything it downloads, it checks the release's minisign signature
 (`SHA256SUMS.minisig`) against the release key built into the binary. That signature is its proof
 of origin. Only then does it check the archive against `SHA256SUMS`. It asks before replacing

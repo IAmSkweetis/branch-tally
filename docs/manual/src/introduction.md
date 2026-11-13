@@ -56,9 +56,9 @@ sent to GitHub.
 
 Reports do show session ids, agent and skill names, worktree names and timestamps. `--redact` hides
 those identifiers in the output (see the [CLI reference](cli.md#redaction)). The only network calls
-branch-tally makes are `prices update`, which downloads a public price list, `update`, which
-downloads a branch-tally release, and `report --pr`, which runs the GitHub CLI (`gh`) to edit your
-pull request.
+branch-tally makes are `prices update`, which downloads a public price list, `update`, which asks
+the GitHub API for the latest release and downloads a branch-tally release, and `report --pr`,
+which runs the GitHub CLI (`gh`) to edit your pull request.
 
 ## How it works
 
