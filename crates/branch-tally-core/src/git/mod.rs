@@ -45,6 +45,13 @@ pub enum GitError {
         /// The subcommand whose output was unusable.
         subcommand: &'static str,
     },
+    /// An argument was refused before git was run (option injection, or a path that is not
+    /// repository-relative).
+    #[error("invalid {what} for git")]
+    InvalidArgument {
+        /// Which argument: `rev` or `path`.
+        what: &'static str,
+    },
 }
 
 fn display_code(code: Option<i32>) -> String {
@@ -111,6 +118,19 @@ pub trait Git {
     /// [`GitError`] when the tool cannot run or the setting is unset ([`GitError::Failed`], exit
     /// status 1), or is empty ([`GitError::UnexpectedOutput`]).
     fn init_default_branch(&self, repo: &Path) -> Result<String, GitError>;
+
+    /// The bytes of the repository-relative `path` as of `rev`.
+    ///
+    /// `Ok(None)` means `rev` resolves but holds no file at `path`. A `rev` that does not
+    /// resolve to a commit is an `Err`, never `None`, so a typo cannot read as "file deleted".
+    /// Errors never carry file contents.
+    ///
+    /// # Errors
+    ///
+    /// [`GitError::InvalidArgument`] for a `rev` starting with `-` or a `path` that is empty,
+    /// absolute or contains `..`; [`GitError::Failed`] when `rev` is unknown or `repo` is not a
+    /// repository; [`GitError::Spawn`] when git cannot run.
+    fn file_at(&self, repo: &Path, rev: &str, path: &Path) -> Result<Option<Vec<u8>>, GitError>;
 }
 
 /// Extract the default branch from `git symbolic-ref --short refs/remotes/origin/HEAD` output
@@ -262,6 +282,65 @@ impl Git for SystemGit {
         }
         Ok(name.to_owned())
     }
+
+    fn file_at(&self, repo: &Path, rev: &str, path: &Path) -> Result<Option<Vec<u8>>, GitError> {
+        const RESOLVE: &str = "rev-parse --verify <rev>";
+        const SHOW: &str = "cat-file blob <rev>:<path>";
+        check_rev(rev)?;
+        let rel = repo_relative_spec(path)?;
+        // Resolve the rev on its own first: `cat-file` exits the same way for a missing path and
+        // an unknown rev, and a typo must not read as "the file does not exist".
+        let commit = format!("{rev}^{{commit}}");
+        Self::run(
+            repo,
+            RESOLVE,
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                "--end-of-options",
+                &commit,
+            ],
+        )?;
+        let spec = format!("{rev}:{rel}");
+        let output = Command::new("git")
+            .args(["cat-file", "blob", &spec])
+            .current_dir(repo)
+            .output()
+            .map_err(|source| GitError::Spawn {
+                subcommand: SHOW,
+                source,
+            })?;
+        // stderr is discarded unread: it can echo the spec, and the rev is already known good.
+        Ok(output.status.success().then_some(output.stdout))
+    }
+}
+
+/// Refuse a rev git would parse as an option.
+fn check_rev(rev: &str) -> Result<(), GitError> {
+    if rev.is_empty() || rev.starts_with('-') {
+        return Err(GitError::InvalidArgument { what: "rev" });
+    }
+    Ok(())
+}
+
+/// The `/`-separated form of a repository-relative path, as `<rev>:<path>` needs on every
+/// platform. Only plain components are accepted: no root, drive prefix, `.` or `..`.
+fn repo_relative_spec(path: &Path) -> Result<String, GitError> {
+    let mut parts = Vec::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(part) => match part.to_str() {
+                Some(s) => parts.push(s),
+                None => return Err(GitError::InvalidArgument { what: "path" }),
+            },
+            _ => return Err(GitError::InvalidArgument { what: "path" }),
+        }
+    }
+    if parts.is_empty() {
+        return Err(GitError::InvalidArgument { what: "path" });
+    }
+    Ok(parts.join("/"))
 }
 
 /// A scripted [`Git`] for tests, keyed by the directory passed in.
@@ -276,6 +355,8 @@ pub struct FakeGit {
     worktrees: BTreeMap<PathBuf, Vec<Worktree>>,
     default_branches: BTreeMap<PathBuf, String>,
     init_default_branches: BTreeMap<PathBuf, String>,
+    /// Known revs per repo; the value maps repo-relative path (forward slashes) to bytes.
+    revs: BTreeMap<(PathBuf, String), BTreeMap<String, Vec<u8>>>,
 }
 
 impl FakeGit {
@@ -335,6 +416,30 @@ impl FakeGit {
             .insert(repo.into(), branch.into());
         self
     }
+
+    /// Script `file_at(repo, rev, path)` to return `bytes`. Also makes `rev` a known ref.
+    /// `path` is repository-relative with forward slashes.
+    #[must_use]
+    pub fn with_file_at(
+        mut self,
+        repo: impl Into<PathBuf>,
+        rev: impl Into<String>,
+        path: impl Into<String>,
+        bytes: Vec<u8>,
+    ) -> Self {
+        self.revs
+            .entry((repo.into(), rev.into()))
+            .or_default()
+            .insert(path.into(), bytes);
+        self
+    }
+
+    /// Make `rev` a known ref in `repo` that holds no scripted files.
+    #[must_use]
+    pub fn with_ref(mut self, repo: impl Into<PathBuf>, rev: impl Into<String>) -> Self {
+        self.revs.entry((repo.into(), rev.into())).or_default();
+        self
+    }
 }
 
 impl Git for FakeGit {
@@ -385,6 +490,18 @@ impl Git for FakeGit {
                 code: Some(1),
             })
     }
+
+    fn file_at(&self, repo: &Path, rev: &str, path: &Path) -> Result<Option<Vec<u8>>, GitError> {
+        check_rev(rev)?;
+        let rel = repo_relative_spec(path)?;
+        self.revs
+            .get(&(repo.to_path_buf(), rev.to_owned()))
+            .map(|files| files.get(&rel).cloned())
+            .ok_or(GitError::Failed {
+                subcommand: "rev-parse --verify <rev>",
+                code: Some(1),
+            })
+    }
 }
 
 #[cfg(test)]
@@ -417,6 +534,29 @@ mod default_branch_tests {
         let f = FakeGit::new().with_init_default_branch("/r", "trunk");
         assert_eq!(f.init_default_branch(Path::new("/r")).unwrap(), "trunk");
         assert!(f.init_default_branch(Path::new("/other")).is_err());
+    }
+
+    #[test]
+    fn fake_file_at_scripted_missing_and_unknown_ref() {
+        let f = FakeGit::new()
+            .with_file_at("/r", "base", "a/l.jsonl", b"bytes".to_vec())
+            .with_ref("/r", "empty");
+        let at = |rev: &str, p: &str| f.file_at(Path::new("/r"), rev, Path::new(p));
+        assert_eq!(at("base", "a/l.jsonl").unwrap(), Some(b"bytes".to_vec()));
+        assert_eq!(at("base", "other").unwrap(), None);
+        assert_eq!(at("empty", "a/l.jsonl").unwrap(), None);
+        assert!(matches!(
+            at("bogus", "a/l.jsonl"),
+            Err(GitError::Failed { .. })
+        ));
+        assert!(matches!(
+            f.file_at(Path::new("/x"), "base", Path::new("a/l.jsonl")),
+            Err(GitError::Failed { .. })
+        ));
+        assert!(matches!(
+            at("-x", "a"),
+            Err(GitError::InvalidArgument { what: "rev" })
+        ));
     }
 
     #[test]
