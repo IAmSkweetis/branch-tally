@@ -230,57 +230,130 @@ case $(cd "$scratch/detect" && CODE_CHANGED=false GITHUB_OUTPUT=/dev/stdout sh "
   *) wrong=$((wrong + 1)); echo "WRONG: ci-detect skipped without a notice" >&2 ;;
 esac
 
-# ci-tally-check.sh: `changed` reports whether a PR touched .tally/, and `run` calls the base-built
-# binary, passing when the base predates `ledger check` (with a warning) and failing when the
-# binary is missing or the check itself fails.
+# ci-tally-check.sh: fetches refs/pull/<N>/merge as data, derives base (first parent) and head (the
+# merge commit), skips when .tally/ is untouched, and otherwise runs the binary inside a
+# ::stop-commands:: block, translating its `warning: ` and `note: ` lines. Needs a stand-in binary
+# and a local "remote" that serves refs/pull/<N>/merge.
 tally_sh="$(cd "$dir" && pwd)/ci-tally-check.sh"
 tr="$scratch/tally"
-mkdir -p "$tr"
+mkdir -p "$tr/remote" "$tr/work"
 (
-  cd "$tr" || exit 1
+  cd "$tr/remote" || exit 1
   git init -q -b main . && git config user.email t@example.com && git config user.name t
   git config commit.gpgsign false
   echo a >a.txt && git add a.txt && git commit -q -m "chore: base"
-  git rev-parse HEAD >"$scratch/tally-base"
-  git checkout -q -b topic
-  echo b >b.txt && git add b.txt && git commit -q -m "chore: no tally"
-  git rev-parse HEAD >"$scratch/tally-notally"
-  mkdir .tally && echo '{}' >.tally/ledger.jsonl && git add .tally && git commit -q -m "chore: tally"
+  # PR 1 touches .tally/. Main moves on after the PR branched, so the merge commit's first parent
+  # differs from the PR's recorded base (the stale-base case).
+  git checkout -q -b pr1 && mkdir .tally && echo '{}' >.tally/ledger.jsonl &&
+    git add .tally && git commit -q -m "chore: tally"
+  git checkout -q main && echo m >m.txt && git add m.txt && git commit -q -m "chore: main moves"
+  git rev-parse HEAD >"$scratch/tally-base1"
+  git checkout -q -b merge1 && git merge -q --no-ff -m merge pr1
+  git update-ref refs/pull/1/merge HEAD
+  # PR 2 does not touch .tally/.
+  git checkout -q main && git checkout -q -b pr2 && echo b >b.txt && git add b.txt &&
+    git commit -q -m "chore: no tally"
+  git checkout -q main && git checkout -q -b merge2 && git merge -q --no-ff -m merge pr2
+  git update-ref refs/pull/2/merge HEAD
+  git checkout -q main
+  cd ../work && git init -q -b main . && git remote add origin "$tr/remote" &&
+    git fetch -q origin main && git reset -q --hard FETCH_HEAD
 ) >/dev/null 2>&1
-tally_base=$(cat "$scratch/tally-base")
-tally_changed() {
-  # tally_changed <expected true|false> <rev to check out>
-  total=$((total + 1))
-  got=$(cd "$tr" && git checkout -q "$2" 2>/dev/null && GITHUB_OUTPUT=/dev/stdout sh "$tally_sh" changed "$tally_base" 2>&1)
-  case $got in
-    *"changed=$1"*) ;;
-    *) wrong=$((wrong + 1)); echo "WRONG: ci-tally-check changed at $2: expected $1: $got" >&2 ;;
-  esac
-}
-tally_changed false "$(cat "$scratch/tally-notally")"
-tally_changed true topic
-total=$((total + 1))
-if (cd "$tr" && GITHUB_OUTPUT=/dev/stdout sh "$tally_sh" changed no-such-ref >/dev/null 2>&1); then
-  wrong=$((wrong + 1))
-  echo "WRONG: ci-tally-check changed accepted a bad base ref" >&2
-fi
+# tally_bin <name> <exit> <output lines...>: a stand-in binary that records its arguments.
 tally_bin() {
-  # tally_bin <name> <help exit> <check exit>: a stand-in binary.
-  printf '#!/bin/sh\nif [ "$3" = "--help" ]; then exit %s; fi\nexit %s\n' "$2" "$3" >"$scratch/$1"
-  chmod +x "$scratch/$1"
+  name=$1 code=$2
+  shift 2
+  {
+    printf '#!/bin/sh\nprintf "%%s\\n" "$*" >"%s.args"\n' "$scratch/$name"
+    for line in "$@"; do printf 'echo %s >&2\n' "'$line'"; done
+    printf 'exit %s\n' "$code"
+  } >"$scratch/$name"
+  chmod +x "$scratch/$name"
 }
-tally_bin tb-ok 0 0
-tally_bin tb-viol 0 1
-tally_bin tb-old 2 0
-expect accept "$tally_sh" run "$scratch/tb-ok" "$tally_base" topic
-expect reject "$tally_sh" run "$scratch/tb-viol" "$tally_base" topic
-expect accept "$tally_sh" run "$scratch/tb-old" "$tally_base" topic
-expect reject "$tally_sh" run "$scratch/tb-missing" "$tally_base" topic
-expect reject "$tally_sh" run "$scratch/tb-ok" "$tally_base"
+tally_run() {
+  # tally_run <binary> <pr>: the script's combined output; its exit status is the function's.
+  (cd "$tr/work" && HEAD_REF=feat/x BASE_REF=main sh "$tally_sh" "$@" 2>&1)
+}
+tally_bin tb-ok 0 "note: 2 new ledger line(s) recorded for branch other" \
+  "warning: .tally/prices.toml differs from base"
+tally_bin tb-viol 1 "error: bad line"
+tally_bin tb-inject 0 "::error::pwned" "warning: ::error::nested" "::add-mask::secret"
+
+# a passing check, with notice and warning translation, and the exact interface
 total=$((total + 1))
-case $(sh "$tally_sh" run "$scratch/tb-old" "$tally_base" topic 2>&1) in
-  *"::warning"*"predates"*) ;;
-  *) wrong=$((wrong + 1)); echo "WRONG: ci-tally-check skipped a predating base without a warning" >&2 ;;
+out=$(tally_run "$scratch/tb-ok" 1)
+rc=$?
+[ "$rc" -eq 0 ] || { wrong=$((wrong + 1)); echo "WRONG: tally-check passing run exited $rc: $out" >&2; }
+case $out in
+  *"::notice::2 new ledger line(s) recorded for branch other"*) ;;
+  *) wrong=$((wrong + 1)); echo "WRONG: tally-check did not translate note: to ::notice::: $out" >&2 ;;
+esac
+case $out in
+  *"::warning::.tally/prices.toml differs from base"*) ;;
+  *) wrong=$((wrong + 1)); echo "WRONG: tally-check did not translate warning: to ::warning::: $out" >&2 ;;
+esac
+# base = first parent of the merge (main after it moved), head = the merge commit
+want_base=$(cat "$scratch/tally-base1")
+want_head=$(git -C "$tr/remote" rev-parse refs/pull/1/merge)
+total=$((total + 1))
+case $(cat "$scratch/tb-ok.args") in
+  "ledger check --base $want_base --head $want_head --head-branch feat/x --base-branch main") ;;
+  *) wrong=$((wrong + 1)); echo "WRONG: tally-check passed the wrong arguments: $(cat "$scratch/tb-ok.args")" >&2 ;;
+esac
+
+# a failing check fails the job
+total=$((total + 1))
+tally_run "$scratch/tb-viol" 1 >/dev/null && { wrong=$((wrong + 1)); echo "WRONG: tally-check passed a failing binary" >&2; }
+
+# nothing changed under .tally/: skipped quickly, reports success, never runs the binary
+rm -f "$scratch/tb-viol.args"
+total=$((total + 1))
+out=$(tally_run "$scratch/tb-viol" 2)
+rc=$?
+if [ "$rc" -ne 0 ] || [ -e "$scratch/tb-viol.args" ]; then
+  wrong=$((wrong + 1)); echo "WRONG: tally-check did not skip an untouched .tally/ (exit $rc): $out" >&2
+fi
+case $out in
+  *"::notice"*"no .tally/"*) ;;
+  *) wrong=$((wrong + 1)); echo "WRONG: tally-check skip printed no notice: $out" >&2 ;;
+esac
+
+# a missing merge ref (conflicted PR) fails, never passes
+total=$((total + 1))
+out=$(tally_run "$scratch/tb-ok" 99)
+rc=$?
+[ "$rc" -ne 0 ] || { wrong=$((wrong + 1)); echo "WRONG: tally-check passed a missing merge ref" >&2; }
+case $out in
+  *"::error"*"merge"*) ;;
+  *) wrong=$((wrong + 1)); echo "WRONG: missing merge ref gave no clear error: $out" >&2 ;;
+esac
+
+# a missing binary, missing refs and a non-numeric PR number all fail
+total=$((total + 1))
+tally_run "$scratch/tb-missing" 1 >/dev/null && { wrong=$((wrong + 1)); echo "WRONG: tally-check passed a missing binary" >&2; }
+total=$((total + 1))
+(cd "$tr/work" && sh "$tally_sh" "$scratch/tb-ok" 1 >/dev/null 2>&1) &&
+  { wrong=$((wrong + 1)); echo "WRONG: tally-check ran without HEAD_REF/BASE_REF" >&2; }
+total=$((total + 1))
+tally_run "$scratch/tb-ok" "1;echo" >/dev/null && { wrong=$((wrong + 1)); echo "WRONG: tally-check accepted a non-numeric PR number" >&2; }
+
+# workflow-command injection: the binary's output sits inside a stop-commands block whose token it
+# cannot know, and nothing outside the block is a command from it
+total=$((total + 1))
+out=$(tally_run "$scratch/tb-inject" 1)
+rc=$?
+[ "$rc" -eq 0 ] || { wrong=$((wrong + 1)); echo "WRONG: injection run exited $rc: $out" >&2; }
+verdict=$(printf '%s\n' "$out" | awk '
+  /^::stop-commands::/ && !open && !done { tok = substr($0, 18); open = 1; next }
+  open && $0 == "::" tok "::" { open = 0; done = 1; next }
+  open { next }
+  /^::error::pwned|^::add-mask::/ { bad = 1 }
+  END { print (done && !bad) ? "ok" : "bad" }')
+[ "$verdict" = ok ] || { wrong=$((wrong + 1)); echo "WRONG: injected command escaped the stop-commands block: $out" >&2; }
+# the re-emitted warning carries the injected text as data, on one ::warning:: line
+case $out in
+  *"::warning::::error::nested"*) ;;
+  *) wrong=$((wrong + 1)); echo "WRONG: injected warning was not re-emitted as plain warning text: $out" >&2 ;;
 esac
 
 echo "check scripts: $total cases, $wrong wrong"
