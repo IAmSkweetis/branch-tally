@@ -117,7 +117,7 @@ fn tail(note_end: &str) -> String {
     format!(
         "\n\n| Session | Where | Agents | Span (UTC) | Calls | Tokens |\n\
          |---|---|---|---|--:|--:|\n\
-         | `s2` | worktree | a, x | 01-01 10:00 \u{2192} 01-01 10:30 | 1 | 0.1M |\n\
+         | `s2` | worktree | `a`, `x` | 01-01 10:00 \u{2192} 01-01 10:30 | 1 | 0.1M |\n\
          | `abcdefgh` | main checkout | \u{2014} | 01-02 03:04 \u{2192} 01-02 05:06 | 2 | 1.2M |\n\
          \n\
          <sub>Branch `feat/x` \u{b7} 2 session(s), 1 in a worktree \u{b7} 1,234 of 3 calls from \
@@ -127,9 +127,9 @@ fn tail(note_end: &str) -> String {
          \n\
          | Attribution | Calls | Tokens |\n\
          |---|--:|--:|\n\
-         | agent:x | 1 | 90 |\n\
-         | main | 2 | 10 |\n\
-         | skill | 1 | 10 |\n\
+         | `agent:x` | 1 | 90 |\n\
+         | `main` | 2 | 10 |\n\
+         | `skill` | 1 | 10 |\n\
          \n\
          </details>"
     )
@@ -648,11 +648,11 @@ fn markdown_lists_each_workspace_and_subagent_row_with_totals() {
         | Workspace | Subagent | Model | Calls | Input | Cache write | Cache read | Output | (thinking) \
         | Tokens | Est. cost |\n\
         |---|---|---|--:|--:|--:|--:|--:|--:|--:|--:|\n\
-        | main checkout | Explore | `claude-a` | 4 | 1,000 | 300 | 9,000 | 1,700 | 500 | 12,000 | $0.50 |\n\
-        | worktree `agent-a1` | Core Implementer | `claude-a` | 20 | 4,000 | 100,000 | 300,000 | 6,000 \
+        | main checkout | `Explore` | `claude-a` | 4 | 1,000 | 300 | 9,000 | 1,700 | 500 | 12,000 | $0.50 |\n\
+        | worktree `agent-a1` | `Core Implementer` | `claude-a` | 20 | 4,000 | 100,000 | 300,000 | 6,000 \
         | 2,000 | 410,000 | at least $12.25 |\n\
-        | worktree `agent-a1` | Reviewer | `claude-a` | 2 | 500 | 0 | 4,000 | 500 | 0 | 5,000 | \u{2014} |\n\
-        | worktree `agent-b2` | Harness Source Author | `claude-a` | 18 | 80,000 | 0 | 200,000 | 100,000 \
+        | worktree `agent-a1` | `Reviewer` | `claude-a` | 2 | 500 | 0 | 4,000 | 500 | 0 | 5,000 | \u{2014} |\n\
+        | worktree `agent-b2` | `Harness Source Author` | `claude-a` | 18 | 80,000 | 0 | 200,000 | 100,000 \
         | 10,000 | 380,000 | \u{2014} |\n\
         \n\
         807,000 tokens (44 calls) from 4 dispatched subagent(s) across 3 workspace(s) \
@@ -732,7 +732,7 @@ fn markdown_escapes_pipes_in_subagent_cells() {
     let md = markdown(&s, &c, false);
     assert!(
         md.contains(
-            "| main checkout | a\\|b | \u{2014} | 1 | \u{2014} | \u{2014} | \u{2014} | \u{2014} | \u{2014} | 1 |"
+            "| main checkout | `a\\|b` | \u{2014} | 1 | \u{2014} | \u{2014} | \u{2014} | \u{2014} | \u{2014} | 1 |"
         ),
         "{md}"
     );
@@ -795,17 +795,17 @@ fn unknown_workspace_row_is_labelled_in_markdown_and_unambiguous_in_json() {
     let md = markdown(&s, &c, false);
     assert!(
         md.contains(
-            "| unknown workspace | Explore | \u{2014} | 2 | \u{2014} | \u{2014} | \u{2014} | \u{2014} | \u{2014} | 10 |"
+            "| unknown workspace | `Explore` | \u{2014} | 2 | \u{2014} | \u{2014} | \u{2014} | \u{2014} | \u{2014} | 10 |"
         ),
         "{md}"
     );
     assert!(
         md.contains(
-            "| worktree `unknown` | Explore | \u{2014} | 1 | \u{2014} | \u{2014} | \u{2014} | \u{2014} | \u{2014} | 5 |"
+            "| worktree `unknown` | `Explore` | \u{2014} | 1 | \u{2014} | \u{2014} | \u{2014} | \u{2014} | \u{2014} | 5 |"
         ),
         "{md}"
     );
-    assert!(!md.contains("| main checkout | Explore"), "{md}");
+    assert!(!md.contains("| main checkout | `Explore`"), "{md}");
     let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
     let rows = v["subagents"]["rows"].as_array().unwrap();
     assert_eq!(rows[0]["workspaceKind"], "unknown");
@@ -825,7 +825,7 @@ fn markdown_drops_the_subagent_cost_column_and_total_under_no_cost() {
     let want = "| Workspace | Subagent | Model | Calls | Input | Cache write | Cache read | Output \
         | (thinking) | Tokens |\n\
         |---|---|---|--:|--:|--:|--:|--:|--:|--:|\n\
-        | main checkout | Explore | `claude-a` | 4 | 1,000 | 300 | 9,000 | 1,700 | 500 | 12,000 |\n";
+        | main checkout | `Explore` | `claude-a` | 4 | 1,000 | 300 | 9,000 | 1,700 | 500 | 12,000 |\n";
     assert!(md.contains(want), "{md}");
     let section = &md[md.find("### Subagent usage").unwrap()..md.find("<details>").unwrap()];
     assert!(!section.to_lowercase().contains("est. cost"), "{section}");
@@ -859,7 +859,7 @@ fn markdown_without_a_model_split_shows_dashes_not_zero_usage() {
     let md = markdown(&s, &c, true);
     assert!(
         md.contains(
-            "| main checkout | Old | \u{2014} | 3 | \u{2014} | \u{2014} | \u{2014} | \u{2014} | \u{2014} \
+            "| main checkout | `Old` | \u{2014} | 3 | \u{2014} | \u{2014} | \u{2014} | \u{2014} | \u{2014} \
              | 99 | \u{2014} |\n"
         ),
         "{md}"
@@ -924,7 +924,7 @@ fn markdown_subagent_model_column_follows_subagent_and_survives_no_cost() {
         "{md}"
     );
     assert!(
-        md.contains("| main checkout | Explore | `claude-a` | 4 | 1,000 |"),
+        md.contains("| main checkout | `Explore` | `claude-a` | 4 | 1,000 |"),
         "{md}"
     );
 }
@@ -955,11 +955,11 @@ fn a_subagent_with_two_models_is_two_rows_each_with_its_own_model_and_cost() {
     c.subagent_total = row_cost(3.0, 2, 0);
     let md = markdown(&s, &c, true);
     assert!(
-        md.contains("| main checkout | Explore | `claude-a` | 1 |"),
+        md.contains("| main checkout | `Explore` | `claude-a` | 1 |"),
         "{md}"
     );
     assert!(
-        md.contains("| main checkout | Explore | `claude-b` | 2 |"),
+        md.contains("| main checkout | `Explore` | `claude-b` | 2 |"),
         "{md}"
     );
     assert!(md.contains("from 1 dispatched subagent(s)"), "{md}");
@@ -974,7 +974,7 @@ fn a_subagent_with_two_models_is_two_rows_each_with_its_own_model_and_cost() {
 fn a_row_from_before_the_model_field_shows_a_dash_and_null_in_json() {
     let (mut s, c) = sample();
     s.subagents.rows = vec![sub_row(Workspace::Main, "old", 1, 1, &["x"])];
-    assert!(markdown(&s, &c, false).contains("| main checkout | old | \u{2014} | 1 |"));
+    assert!(markdown(&s, &c, false).contains("| main checkout | `old` | \u{2014} | 1 |"));
     let v: serde_json::Value = serde_json::from_str(&json(&s, &c)).unwrap();
     assert!(v["subagents"]["rows"][0]["model"].is_null());
 }
@@ -1254,12 +1254,24 @@ fn hostile_sample() -> (Summary, Costs) {
         ("m<b>&".to_owned(), bucket(1, 0, 0, 0, 30, 0, 1)),
         (r"m\|bs".to_owned(), bucket(1, 0, 0, 0, 20, 0, 1)),
         ("m\nnl".to_owned(), bucket(1, 0, 0, 0, 10, 0, 1)),
+        (
+            "m\u{1b}[31m\u{202e}rtl".to_owned(),
+            bucket(1, 0, 0, 0, 5, 0, 1),
+        ),
     ];
     c.by_model = s.by_model.iter().map(|(m, _)| (m.clone(), None)).collect();
     s.by_attribution = vec![
         ("agent:<x>|y".to_owned(), bucket(0, 0, 0, 0, 30, 0, 1)),
         ("skill:`z`".to_owned(), bucket(0, 0, 0, 0, 20, 0, 1)),
         (r"back\slash|".to_owned(), bucket(0, 0, 0, 0, 10, 0, 1)),
+        (
+            "[k](http://e.co) ![](http://i.co/x.png) http://bare.co @user #123 *em*".to_owned(),
+            bucket(0, 0, 0, 0, 5, 0, 1),
+        ),
+        (
+            "skill:\u{1b}[2J\u{202e}".to_owned(),
+            bucket(0, 0, 0, 0, 4, 0, 1),
+        ),
     ];
     s.sessions = vec![(
         SessionId::new("ab|`<x"),
@@ -1324,20 +1336,52 @@ fn code_span_cells_escape_pipes_and_fence_past_backticks() {
 }
 
 #[test]
-fn text_cells_escape_pipes_backticks_angle_brackets_and_ampersands() {
+fn name_cells_are_code_spans_so_markdown_and_html_stay_literal() {
     let (s, c) = hostile_sample();
     let md = markdown(&s, &c, false);
     for cell in [
-        r"| &lt;d&gt;, \`c\`, a\|b, e&amp;f |",
-        r"| agent:&lt;x&gt;\|y |",
-        r"| skill:\`z\` |",
-        r"| back\\slash\| |",
-        r"| &lt;img src=x&gt;\|\` |",
+        r"| `<d>`, `` `c` ``, `a\|b`, `e&f` |",
+        r"| `agent:<x>\|y` |",
+        r"| `` skill:`z` `` |",
+        r"| `back\slash\|` |",
+        r"| `` <img src=x>\|` `` |",
+        "| `[k](http://e.co) ![](http://i.co/x.png) http://bare.co @user #123 *em*` |",
     ] {
         assert!(md.contains(cell), "missing {cell}\n{md}");
     }
-    assert!(!md.contains("<img"), "{md}");
-    assert!(!md.contains("<d>"), "{md}");
+    // No name cell is left as live text: the only angle brackets are inside code spans.
+    assert!(!md.contains("&lt;") && !md.contains("&amp;"), "{md}");
+}
+
+#[test]
+fn control_characters_never_reach_markdown() {
+    let (s, c) = hostile_sample();
+    for show_cost in [true, false] {
+        let md = markdown(&s, &c, show_cost);
+        let bad: Vec<_> = md
+            .chars()
+            .filter(|&ch| ch != '\n' && branch_tally_core::text::is_unsafe_control(ch))
+            .collect();
+        assert!(bad.is_empty(), "{bad:?}\n{md}");
+    }
+    let md = markdown(&s, &c, false);
+    assert!(md.contains("`m\u{FFFD}[31m\u{FFFD}rtl`"), "{md}");
+    assert!(md.contains("`skill:\u{FFFD}[2J\u{FFFD}`"), "{md}");
+}
+
+#[test]
+fn a_hostile_session_span_is_filtered_to_the_timestamp_alphabet() {
+    let (mut s, c) = hostile_sample();
+    s.sessions[0].1.first = "2026-01-01T10:00:00Z|[a](//x.co)@u<img>\u{1b}".to_owned();
+    let md = markdown(&s, &c, false);
+    let line = md
+        .lines()
+        .find(|l| l.contains("main checkout"))
+        .unwrap_or("");
+    assert!(
+        !line.contains("](") && !line.contains('@') && !line.contains("<img"),
+        "{md}"
+    );
 }
 
 #[test]
@@ -1426,4 +1470,32 @@ fn json_has_a_top_level_unstamped_key_only_when_there_are_some() {
     let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
     assert_eq!(v["unstamped"]["calls"], 2);
     assert_eq!(v["unstamped"]["tokens"], 2_221);
+}
+
+#[test]
+fn splice_uses_the_last_end_after_the_first_start() {
+    let body = format!("a\n{START}\nold {END} tail {END}\nz");
+    assert_eq!(splice(&body, "n"), format!("a\n{START}\nn\n{END}\nz"));
+}
+
+#[test]
+fn splice_ignores_an_end_before_the_start() {
+    let body = format!("{END} head\n{START}\nold\n{END}\nz");
+    assert_eq!(
+        splice(&body, "n"),
+        format!("{END} head\n{START}\nn\n{END}\nz")
+    );
+}
+
+#[test]
+fn splicing_a_hostile_report_repeatedly_is_idempotent() {
+    let (mut s, c) = hostile_sample();
+    s.by_model[0].0 = format!("m{END}tail{START}x");
+    s.branch = format!("b{END}");
+    let report = markdown(&s, &c, true);
+    let once = splice("pr body", &report);
+    let twice = splice(&once, &report);
+    let thrice = splice(&twice, &report);
+    assert_eq!(once, twice);
+    assert_eq!(twice, thrice);
 }
