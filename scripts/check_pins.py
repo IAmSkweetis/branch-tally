@@ -23,6 +23,7 @@ JUSTFILE_PINS = {
     "mdbook": "mdbook_version",
     "mdbook-mermaid": "mdbook_mermaid_version",
 }
+MINISIGN_SCRIPT = Path("scripts/ci-install-minisign.sh")
 VENDORED = [Path("docs/manual/svg-pan-zoom.min.js")]
 
 
@@ -56,6 +57,27 @@ def workflow_pins(root: Path) -> tuple[dict[str, str], list[str]]:
     return pins, problems
 
 
+def minisign_pin(root: Path) -> tuple[str | None, list[str]]:
+    """The minisign version pinned in scripts/ci-install-minisign.sh, and any problems with the pin.
+
+    The script is the only place CI gets minisign, pinned by version and archive sha256. The
+    sha256 can't be re-derived offline, so it is checked for shape; the version is then compared
+    with mise.toml like every other tool.
+    """
+    path = root / MINISIGN_SCRIPT
+    if not path.is_file():
+        return None, [f"minisign: {MINISIGN_SCRIPT} is missing"]
+    text = _read(path)
+    version = re.search(r"^version=(\S+)\s*$", text, re.MULTILINE)
+    sha = re.search(r"^sha256=(\S*)\s*$", text, re.MULTILINE)
+    problems = []
+    if not version or not re.fullmatch(r"\d+\.\d+(\.\d+)?", version.group(1)):
+        problems.append(f"minisign: {MINISIGN_SCRIPT} has no well-formed `version=` pin")
+    if not sha or not re.fullmatch(r"[0-9a-f]{64}", sha.group(1)):
+        problems.append(f"minisign: {MINISIGN_SCRIPT} has no well-formed 64-hex `sha256=` pin")
+    return (version.group(1) if version and not problems else None), problems
+
+
 def mise_tools(root: Path) -> tuple[dict[str, str], list[str]]:
     path = root / "mise.toml"
     if not path.is_file():
@@ -82,6 +104,10 @@ def check(root: Path) -> list[str]:
     problems += wf_problems
     for tool, version in wf.items():
         expected[tool] = (version, ".github/workflows")
+    minisign, minisign_problems = minisign_pin(root)
+    problems += minisign_problems
+    if minisign:
+        expected["minisign"] = (minisign, str(MINISIGN_SCRIPT))
     channel = tomllib.loads(_read(root / "rust-toolchain.toml"))["toolchain"]["channel"]
     expected["rust"] = (channel, "rust-toolchain.toml")
 
