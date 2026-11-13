@@ -37,6 +37,10 @@ function Write-NoBom {
   [IO.File]::WriteAllText($Path, $Text, (New-Object System.Text.UTF8Encoding($false)))
 }
 
+$script:GoodWorkflow = 'IAmSkweetis/branch-tally/.github/workflows/release.yml'
+$script:GoodRef = 'refs/heads/main'
+$script:GoodIdentity = 'https://github.com/IAmSkweetis/branch-tally/.github/workflows/release.yml@refs/heads/main'
+
 function Get-SafePath {
   param([string]$Prefix = '')
   $p = "$($script:S.Stubs);$env:windir\System32;$env:windir"
@@ -46,15 +50,28 @@ function Get-SafePath {
 
 function New-Stub {
   # A .cmd stub for gh or cosign in the sandbox that logs its arguments to <name>.log. For gh,
-  # $Codes is @(auth status rc, attestation verify rc). For cosign, @(rc).
-  param([string]$Name, [int[]]$Codes)
+  # $Codes is @(auth status rc, attestation verify rc). For cosign, @(rc). The fake attestation was
+  # signed by $Signer (gh: workflow path, cosign: certificate identity) on $Ref (gh only). Verify
+  # succeeds only when the argv carries the pinned flag with exactly that value, so an attestation
+  # "from another workflow or ref", or a missing pin, fails.
+  param([string]$Name, [int[]]$Codes, [string]$Signer = '', [string]$Ref = $script:GoodRef)
   $body = "@echo off`r`necho %*>>`"%~dp0$Name.log`"`r`n"
   if ($Name -eq 'gh') {
+    if (-not $Signer) { $Signer = $script:GoodWorkflow }
     $body += "if `"%1 %2`"==`"auth status`" exit /b $($Codes[0])`r`n"
-    $body += "if `"%1 %2`"==`"attestation verify`" exit /b $($Codes[1])`r`n"
+    $body += "if `"%1 %2`"==`"attestation verify`" (`r`n"
+    $body += "  if not $($Codes[1])==0 exit /b $($Codes[1])`r`n"
+    $body += "  echo %* | findstr /C:`"--signer-workflow $Signer `" >nul || exit /b 1`r`n"
+    $body += "  echo %* | findstr /C:`"--source-ref $Ref `" >nul || exit /b 1`r`n"
+    $body += "  echo %* | findstr /C:`"--cert-oidc-issuer https://token.actions.githubusercontent.com`" >nul || exit /b 1`r`n"
+    $body += "  exit /b 0`r`n)`r`n"
     $body += "exit /b 99`r`n"
   } else {
-    $body += "exit /b $($Codes[0])`r`n"
+    if (-not $Signer) { $Signer = $script:GoodIdentity }
+    $body += "if not $($Codes[0])==0 exit /b $($Codes[0])`r`n"
+    $body += "echo %* | findstr /C:`"--certificate-identity $Signer `" >nul || exit /b 1`r`n"
+    $body += "echo %* | findstr /C:`"--certificate-oidc-issuer https://token.actions.githubusercontent.com`" >nul || exit /b 1`r`n"
+    $body += "exit /b 0`r`n"
   }
   Write-NoBom (Join-Path $script:S.Stubs "$Name.cmd") $body
 }
@@ -365,6 +382,9 @@ Test-Case 'gh pass exits 0' ($res.Rc -eq 0)
 Test-Case 'gh pass installs' (Test-Path (Join-Path $D 'branch-tally.exe'))
 Test-Case 'gh pass ran attestation verify' ($ghLog -like '*attestation verify*')
 Test-Case 'gh pass pins the repository' ($ghLog -like '*--repo IAmSkweetis/branch-tally*')
+Test-Case 'gh pass pins the signer workflow' ($ghLog -like "*--signer-workflow $script:GoodWorkflow *")
+Test-Case 'gh pass pins the source ref to main' ($ghLog -like '*--source-ref refs/heads/main *')
+Test-Case 'gh pass pins the issuer' ($ghLog -like '*--cert-oidc-issuer https://token.actions.githubusercontent.com*')
 Test-Case 'gh pass verifies the archive' ($ghLog -like "*branch-tally-v2.0.0-$target.zip*")
 Test-Case 'gh pass says provenance was verified' ($res.Out -like '*Provenance verified*')
 
@@ -406,7 +426,8 @@ Test-Case 'cosign pass exits 0' ($res.Rc -eq 0)
 Test-Case 'cosign pass installs' (Test-Path (Join-Path $D 'branch-tally.exe'))
 Test-Case 'cosign pass did not run gh attestation verify' ((Get-StubLog 'gh') -notlike '*attestation*')
 Test-Case 'cosign pass uses the bundle' ($cosignLog -like '*provenance.sigstore.json*')
-Test-Case 'cosign pass pins the workflow identity' ($cosignLog -like '*/IAmSkweetis/branch-tally/\.github/workflows/release\.yml@*')
+Test-Case 'cosign pass pins an exact identity' ($cosignLog -like "*--certificate-identity $script:GoodIdentity *")
+Test-Case 'cosign pass uses no identity regexp' ($cosignLog -notlike '*--certificate-identity-regexp*')
 Test-Case 'cosign pass pins the issuer' ($cosignLog -like '*https://token.actions.githubusercontent.com*')
 Test-Case 'cosign pass says provenance was verified' ($res.Out -like '*Provenance verified*')
 
@@ -475,6 +496,39 @@ New-Stub 'gh' @(1, 0)
 $res = Invoke-Installer @('-To', $D, '-RequireAttestation')
 Test-Case 'logged-out gh with no cosign is unavailable (strict fails)' ($res.Rc -ne 0)
 Test-Case 'logged-out gh never ran attestation verify' ((Get-StubLog 'gh') -notlike '*attestation*')
+
+# 9j. An attestation from another workflow, or another ref, in this repository must not install.
+foreach ($case in @(
+    @{ Name = 'gh_other_wf'; Tool = 'gh'; Signer = 'IAmSkweetis/branch-tally/.github/workflows/other.yml'; Ref = $script:GoodRef; Label = 'gh: attestation from another workflow' },
+    @{ Name = 'gh_other_ref'; Tool = 'gh'; Signer = $script:GoodWorkflow; Ref = 'refs/heads/some-branch'; Label = 'gh: attestation from another ref' },
+    @{ Name = 'cosign_other_wf'; Tool = 'cosign'; Signer = 'https://github.com/IAmSkweetis/branch-tally/.github/workflows/other.yml@refs/heads/main'; Ref = ''; Label = 'cosign: bundle from another workflow' },
+    @{ Name = 'cosign_other_ref'; Tool = 'cosign'; Signer = 'https://github.com/IAmSkweetis/branch-tally/.github/workflows/release.yml@refs/heads/feature'; Ref = ''; Label = 'cosign: bundle from another ref' })) {
+  Initialize-Sandbox $case.Name
+  $R = $script:S.Release; $D = $script:S.Dest
+  Build-Release $R 'v2.0.0' $target '2.0.0'
+  Build-Latest $R 'v2.0.0'
+  if ($case.Tool -eq 'gh') { New-Stub 'gh' @(0, 0) $case.Signer $case.Ref } else { New-Stub 'cosign' @(0) $case.Signer }
+  $res = Invoke-Installer @('-To', $D)
+  Test-Case "$($case.Label) exits non-zero" ($res.Rc -ne 0)
+  Test-Case "$($case.Label) installs nothing" (-not (Test-Path (Join-Path $D 'branch-tally.exe')))
+}
+
+# 9k. The manual command, in the warning and the strict failure, carries the same pins.
+Initialize-Sandbox 'manual_cmd'
+$R = $script:S.Release; $D = $script:S.Dest
+Build-Release $R 'v2.0.0' $target '2.0.0'
+Build-Latest $R 'v2.0.0'
+$res = Invoke-Installer @('-To', $D)
+Test-Case 'warning command pins the signer workflow' ($res.Err -like "*--signer-workflow $script:GoodWorkflow*")
+Test-Case 'warning command pins the source ref' ($res.Err -like '*--source-ref refs/heads/main*')
+Test-Case 'warning command pins the issuer' ($res.Err -like '*--cert-oidc-issuer https://token.actions.githubusercontent.com*')
+Remove-Item -LiteralPath $D -Recurse -Force
+$res = Invoke-Installer @('-To', $D, '-RequireAttestation')
+Test-Case 'strict failure command pins the signer workflow' ($res.Err -like "*--signer-workflow $script:GoodWorkflow*")
+Test-Case 'strict failure command pins the source ref' ($res.Err -like '*--source-ref refs/heads/main*')
+$helpText = [IO.File]::ReadAllText($installer)
+Test-Case 'help names the pinned signer workflow and ref' ($helpText -like "*--signer-workflow $script:GoodWorkflow*" -and $helpText -like '*--source-ref refs/heads/main*')
+Test-Case 'help names the exact cosign identity' ($helpText -like "*$script:GoodIdentity*")
 
 # 10. F-06: mirror URL scheme, and the effective source.
 Initialize-Sandbox 'scheme'

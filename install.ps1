@@ -13,9 +13,14 @@ who built the archive, because the checksum file comes from the same place as th
 build-provenance attestation proves origin. After the checksum check this script verifies it, using
 the first of these that is available:
 
-  1. gh, logged in:  gh attestation verify <archive> --repo IAmSkweetis/branch-tally
-  2. cosign:         verifies the release's provenance.sigstore.json, with the signer pinned to this
-                     repository's .github/workflows/release.yml and the GitHub Actions issuer.
+  1. gh, logged in:  gh attestation verify <archive> --repo IAmSkweetis/branch-tally `
+                       --signer-workflow IAmSkweetis/branch-tally/.github/workflows/release.yml `
+                       --source-ref refs/heads/main `
+                       --cert-oidc-issuer https://token.actions.githubusercontent.com
+  2. cosign:         verifies the release's provenance.sigstore.json with an exact
+                     --certificate-identity
+                     https://github.com/IAmSkweetis/branch-tally/.github/workflows/release.yml@refs/heads/main
+                     and --certificate-oidc-issuer https://token.actions.githubusercontent.com
   3. neither:        warns that provenance was NOT verified, prints the command to run, and installs.
                      -RequireAttestation turns this warning into a failure.
 
@@ -65,8 +70,13 @@ function Install-BranchTally {
   $repo = 'IAmSkweetis/branch-tally'
   $defaultBase = "https://github.com/$repo/releases"
   $issuer = 'https://token.actions.githubusercontent.com'
-  # The signer must be this repository's release workflow, on any ref it runs from.
-  $identityRegexp = '^https://github\.com/IAmSkweetis/branch-tally/\.github/workflows/release\.yml@refs/(heads|tags)/.+$'
+  # The signer must be this repository's release workflow, run from main. release.yml starts from
+  # workflow_run on main, and a manual dispatch on another branch is not a release.
+  $signerWorkflow = "$repo/.github/workflows/release.yml"
+  $sourceRef = 'refs/heads/main'
+  $signerIdentity = "https://github.com/$signerWorkflow@$sourceRef"
+  # The gh flags that hold an attestation to that signer, for the command we run and the one we print.
+  $ghPins = @('--repo', $repo, '--signer-workflow', $signerWorkflow, '--source-ref', $sourceRef, '--cert-oidc-issuer', $issuer)
 
   if ([string]::IsNullOrEmpty($Version)) { $Version = $env:BRANCH_TALLY_INSTALL_VERSION }
   if ([string]::IsNullOrEmpty($Version)) { $Version = 'latest' }
@@ -160,12 +170,12 @@ function Install-BranchTally {
   function Write-Unverified {
     param([string]$Reason)
     if ($RequireAttestation) {
-      throw "build provenance could not be verified ($Reason) and -RequireAttestation is set; nothing installed. Install gh or cosign, or run: gh attestation verify $archive --repo $repo"
+      throw "build provenance could not be verified ($Reason) and -RequireAttestation is set; nothing installed. Install gh or cosign, or run: gh attestation verify $archive $($ghPins -join ' ')"
     }
     [Console]::Error.WriteLine("install.ps1: warning: provenance NOT verified: $Reason.")
     [Console]::Error.WriteLine('The checksum is an integrity check only; it does not prove who built this archive.')
     [Console]::Error.WriteLine("To verify it yourself, download $url/$archive and run:")
-    [Console]::Error.WriteLine("  gh attestation verify $archive --repo $repo")
+    [Console]::Error.WriteLine("  gh attestation verify $archive $($ghPins -join ' ')")
   }
 
   function Confirm-Provenance {
@@ -176,7 +186,7 @@ function Install-BranchTally {
     if ($gh) {
       $auth = Invoke-Native $gh.Source @('auth', 'status')
       if ($auth.Code -eq 0) {
-        $r = Invoke-Native $gh.Source @('attestation', 'verify', $Zip, '--repo', $repo)
+        $r = Invoke-Native $gh.Source (@('attestation', 'verify', $Zip) + $ghPins)
         if ($r.Code -eq 0) {
           Write-Output "Provenance verified with gh: $archive was built by $repo"
           return
@@ -197,11 +207,11 @@ function Install-BranchTally {
       $r = Invoke-Native $cosign.Source @(
         'verify-blob-attestation', '--bundle', $bundle, '--new-bundle-format',
         '--type', 'slsaprovenance1',
-        '--certificate-identity-regexp', $identityRegexp,
+        '--certificate-identity', $signerIdentity,
         '--certificate-oidc-issuer', $issuer,
         $Zip)
       if ($r.Code -eq 0) {
-        Write-Output "Provenance verified with cosign: $archive was built by $repo's release workflow"
+        Write-Output "Provenance verified with cosign: $archive was built by $signerWorkflow on $sourceRef"
         return
       }
       [Console]::Error.Write($r.Out)
