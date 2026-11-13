@@ -24,9 +24,9 @@ a tool the user already has.
 - **Releases sign `SHA256SUMS` with minisign** (Ed25519). The signature ships as the release asset
   `SHA256SUMS.minisig`. Its trusted comment is exactly `branch-tally <tag> SHA256SUMS` (for example
   `branch-tally v1.2.3 SHA256SUMS`), so a signature for one release can't be replayed as another.
-  The maintainer generates the keypair. The secret key exists only as a GitHub Actions secret,
-  used only by `release.yml`'s publish job. No agent or test ever handles it, and tests use a
-  throwaway test key.
+  The maintainer generates the keypair offline. In the pipeline, the secret key exists only as a
+  GitHub Actions secret, used only by `release.yml`'s publish job. No agent or test ever handles it,
+  and tests use a throwaway test key.
 - **`update` is strict.** It verifies `SHA256SUMS.minisig` against the public key compiled into the
   binary and checks the trusted comment names the tag being installed, before it trusts any
   checksum. A missing, invalid or mismatched signature installs nothing. A release from before
@@ -47,6 +47,19 @@ a tool the user already has.
   as `vMAJOR.MINOR.PATCH`.
 - **Wording.** The checksum is described as an integrity check everywhere. Only the signature and
   the attestation are described as proof of origin.
+- **"Latest" comes from the GitHub API, not the mirror.** A signature proves a file is a genuine
+  release, not that it is the newest one, so a mirror or proxy serving an older signed release as
+  "latest" could roll users back to a known-vulnerable version. `update` and the installers
+  resolve the latest tag from `api.github.com` even when a mirror is set, using `GH_TOKEN` or
+  `GITHUB_TOKEN` when present. When the API can't be reached, `update` fails and asks for
+  `--version`. The installers fall back to the mirror's `latest/download/SHA256SUMS` with a
+  warning.
+- **`update` never downgrades unless asked.** Without `--version`, it never installs a release
+  older than the running binary, even with `--force`, which only reinstalls the same version. An
+  explicit `--version` pin may still go older.
+- **The post-release install check verifies provenance for real.** `install-check` runs the
+  installers with `--require-attestation` through `gh` and through a pinned `cosign`, and verifies
+  `SHA256SUMS.minisig` with minisign, so a wrong flag or pin fails CI instead of every user.
 
 ## Consequences
 
@@ -55,5 +68,12 @@ a tool the user already has.
 - Losing or leaking the signing key needs a new binary with a new public key. Rotation is a
   release, and binaries that only know the old key can't verify the new one.
 - `curl | sh` stays dependency-free. Without `gh` or `cosign` it installs unverified, and says so.
+- Rollback protection is partial. It holds against a malicious mirror, but not against an attacker
+  who can intercept `api.github.com` itself (for example a proxy with a trusted root), nor in
+  the installers when the API is unreachable and they fall back. A signed "latest" pointer would
+  close that and is not part of this decision.
+- An air-gapped mirror can't resolve "latest" for `update`. Pin `--version` there.
+- Binaries released before this change check only `SHA256SUMS` when they update, so the first
+  update to a signed release is still same-origin. Every update after it is verified.
 - F-05 (#97: no approval gate before publishing, mutable tags) is separate. A signature made by a
   compromised pipeline still verifies.
