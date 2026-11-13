@@ -114,6 +114,13 @@ pub fn project_markdown(report: &ProjectReport) -> String {
         n(t.usage.tokens()),
         millions(t.usage.tokens())
     );
+    if report.is_overflowed() {
+        o.push_str(
+            "**Totals overflowed and are unreliable**: a token or call count exceeded the largest \
+             value the tool can hold, so every total here is at least what is shown and the real \
+             figure is unknown.\n\n",
+        );
+    }
     o.push_str(
         "| Branch | Last call | Calls | Tokens | Cost |\n| --- | --- | ---: | ---: | ---: |\n",
     );
@@ -215,6 +222,19 @@ fn notes(report: &ProjectReport, o: &mut String) {
 
 /// The Mermaid `xychart-beta` of the cumulative series, one point per branch. Labels are dates:
 /// a branch name never enters the chart source. A floor point has `*` on its label.
+/// Why a series point is a floor, read from the dated branches the series is built from. Overflow
+/// is named only when a dated row overflowed; otherwise the cause is an unpriced model, as before.
+fn floor_causes(report: &ProjectReport) -> &'static str {
+    let dated = || report.rows.iter().filter(|r| r.last_call.is_some());
+    let overflowed = dated().any(|r| r.totals_overflowed);
+    let unpriced = dated().any(|r| r.cost.is_floor() || !r.unpriced_models.is_empty());
+    match (unpriced, overflowed) {
+        (true, true) => "an unpriced model and totals overflowed, unreliable",
+        (false, true) => "totals overflowed, unreliable",
+        _ => "an unpriced model",
+    }
+}
+
 fn chart(report: &ProjectReport, o: &mut String) {
     if report.series.is_empty() {
         o.push_str("No dated branches, so there is no cost chart.\n");
@@ -248,9 +268,11 @@ fn chart(report: &ProjectReport, o: &mut String) {
     let _ = writeln!(o, "    line [{}]", values.join(", "));
     o.push_str("```\n");
     if any_floor {
-        o.push_str(
-            "\nPoints marked * are floors: that branch or an earlier one has an unpriced model, \
-             so the real cost is at least this.\n",
+        let _ = writeln!(
+            o,
+            "\nPoints marked * are floors: that branch or an earlier one has {}, so the real cost \
+             is at least this.",
+            floor_causes(report)
         );
     }
 }
@@ -288,8 +310,11 @@ pub fn project_json(report: &ProjectReport) -> String {
     let _ = writeln!(
         o,
         "  \"totalTokensIsFloor\": {},",
-        t.uncertain.any_ambiguous()
+        t.uncertain.any_ambiguous() || report.is_overflowed()
     );
+    if report.is_overflowed() {
+        o.push_str("  \"totalsOverflowed\": true,\n");
+    }
     let _ = writeln!(o, "  \"totalCostUSD\": {},", float(t.cost.known));
     let _ = writeln!(o, "  \"totalCostIsFloor\": {},", report.is_floor());
     let _ = writeln!(
@@ -323,11 +348,16 @@ pub fn project_json(report: &ProjectReport) -> String {
                 float(r.cost.known)
             };
             let comma = if i + 1 == report.rows.len() { "" } else { "," };
+            let overflow = if r.totals_overflowed {
+                ", \"totalsOverflowed\": true"
+            } else {
+                ""
+            };
             let _ = writeln!(
                 o,
                 "    {{ \"branch\": {}, \"lastCall\": {last}, \"calls\": {}, \"tokens\": {}, \
                  \"costUSD\": {usd}, \"costIsFloor\": {}, \"unpricedModels\": {}, \
-                 \"heuristics\": {}, \"undatedCalls\": {} }}{comma}",
+                 \"heuristics\": {}, \"undatedCalls\": {}{overflow} }}{comma}",
                 string(&r.branch),
                 r.usage.calls,
                 r.usage.tokens(),
@@ -423,6 +453,9 @@ pub fn project_svg(report: &ProjectReport) -> String {
     let mut footer = Vec::new();
     if report.series.iter().any(|p| p.is_floor) {
         footer.push("hollow = floor (at least), dashed line leads to a floor".to_owned());
+    }
+    if report.is_overflowed() {
+        footer.push("totals overflowed, unreliable".to_owned());
     }
     if report.undated_branches > 0 {
         footer.push(format!(
@@ -1062,5 +1095,131 @@ mod tests {
             assert!(last < h, "n={n} last={last} h={h}");
             assert!(h >= 360.0);
         }
+    }
+
+    // ---- Overflowed totals (#96) ----
+
+    /// `exact()` with the first branch and the project totals saturated.
+    fn overflowed() -> ProjectReport {
+        let mut r = exact();
+        r.rows[0].totals_overflowed = true;
+        r.totals.totals_overflowed = true;
+        r.totals.usage.input = u64::MAX;
+        r
+    }
+
+    #[test]
+    fn markdown_without_overflow_never_mentions_it() {
+        for r in [exact(), messy()] {
+            let md = project_markdown(&r);
+            assert!(!md.contains("verflow"), "{md}");
+        }
+    }
+
+    #[test]
+    fn markdown_overflow_is_stated_and_totals_and_rows_are_floors() {
+        let md = project_markdown(&overflowed());
+        assert!(
+            md.contains("**Totals overflowed and are unreliable**"),
+            "{md}"
+        );
+        assert!(md.contains("Project total: **at least $3.75**"), "{md}");
+        assert!(md.contains("| at least $1.25 |"), "{md}");
+        assert!(md.contains("| $2.50 |"), "{md}");
+        assert!(
+            md.contains("title \"Cumulative cost (USD, at least $3.75)\""),
+            "{md}"
+        );
+    }
+
+    #[test]
+    fn markdown_row_overflow_alone_labels_the_project_unreliable() {
+        let mut r = exact();
+        r.rows[1].totals_overflowed = true;
+        let md = project_markdown(&r);
+        assert!(
+            md.contains("**Totals overflowed and are unreliable**"),
+            "{md}"
+        );
+        assert!(md.contains("**at least $3.75**"), "{md}");
+    }
+
+    fn floor_line(md: &str) -> String {
+        md.lines()
+            .find(|l| l.starts_with("Points marked *"))
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    #[test]
+    fn markdown_star_explanation_names_overflow_alone() {
+        let mut r = exact();
+        r.rows[1].totals_overflowed = true;
+        r.series[1].is_floor = true;
+        let line = floor_line(&project_markdown(&r));
+        assert!(line.contains("totals overflowed, unreliable"), "{line}");
+        assert!(!line.contains("unpriced"), "{line}");
+    }
+
+    #[test]
+    fn markdown_star_explanation_names_unpriced_alone() {
+        let mut r = exact();
+        r.rows[1].cost = cost(2.5, 1);
+        r.series[1].is_floor = true;
+        let line = floor_line(&project_markdown(&r));
+        assert!(line.contains("an unpriced model"), "{line}");
+        assert!(!line.contains("overflow"), "{line}");
+    }
+
+    #[test]
+    fn markdown_star_explanation_names_both_causes() {
+        let mut r = exact();
+        r.rows[0].totals_overflowed = true;
+        r.rows[1].cost = cost(2.5, 1);
+        r.series[0].is_floor = true;
+        r.series[1].is_floor = true;
+        let line = floor_line(&project_markdown(&r));
+        assert!(line.contains("an unpriced model"), "{line}");
+        assert!(line.contains("totals overflowed, unreliable"), "{line}");
+    }
+
+    #[test]
+    fn markdown_star_explanation_without_overflow_is_unchanged() {
+        let line = floor_line(&project_markdown(&messy()));
+        assert_eq!(
+            line,
+            "Points marked * are floors: that branch or an earlier one has an unpriced model, \
+             so the real cost is at least this."
+        );
+    }
+
+    #[test]
+    fn json_overflow_flag_appears_only_when_set() {
+        let plain = project_json(&exact());
+        assert!(!plain.contains("verflow"), "{plain}");
+        let j = project_json(&overflowed());
+        assert!(j.contains("\"totalsOverflowed\": true,"), "{j}");
+        assert!(j.contains("\"totalCostIsFloor\": true"), "{j}");
+        assert!(j.contains("\"totalTokensIsFloor\": true"), "{j}");
+        let branch = j.lines().find(|l| l.contains("feat/a")).unwrap_or_default();
+        assert!(branch.contains("\"totalsOverflowed\": true"), "{j}");
+        assert!(branch.contains("\"costIsFloor\": true"), "{j}");
+        let other = j.lines().find(|l| l.contains("feat/b")).unwrap_or_default();
+        assert!(!other.contains("verflow"), "{j}");
+        assert!(serde_json::from_str::<serde_json::Value>(&j).is_ok(), "{j}");
+    }
+
+    #[test]
+    fn svg_overflow_is_labelled_and_exact_svg_is_unchanged() {
+        assert!(!project_svg(&exact()).contains("verflow"));
+        let s = project_svg(&overflowed());
+        assert!(
+            s.contains("<title>Cumulative cost: at least $3.75</title>"),
+            "{s}"
+        );
+        assert!(s.contains("totals overflowed, unreliable"), "{s}");
+        let (vb_h, attr_h, ys) = svg_geometry(&s);
+        assert!((vb_h - attr_h).abs() < f64::EPSILON, "{s}");
+        assert!(ys.iter().all(|y| *y < vb_h), "{s}");
     }
 }

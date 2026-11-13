@@ -168,6 +168,14 @@ expected behaviour directly, next to the same issue number. `malformed-and-keyle
   and `branch-tally/tests/report.rs` (inline in `tests/render.rs`). Each test asserts the
   keys are present and consistent with the per-model costs, removes only those, then compares
   everything else to the goldens exactly. Markdown is not compared with the reference.
+- Output divergence (#96, overflow): when `footnote.totals_overflowed` is set the JSON report has a
+  top-level `totalsOverflowed: true` (absent otherwise, so goldens are unchanged) and
+  `totalCostIsFloor` is true. The Markdown report adds a "Totals overflowed and are unreliable"
+  statement and a footnote segment, and labels the total cost "at least".
+  The project report (`project --format json`) carries the same flag per branch and in total
+  (`totalsOverflowed: true`, absent otherwise); Markdown adds the same statement and labels the
+  total, the branch cost and the chart "at least", and the SVG footer says "totals overflowed,
+  unreliable". `report` also sets the footnote flag when the unstamped count saturates.
 - Output divergence #6 (subagent rollup): when `Summary.subagents` is not empty, the JSON report has
   a top-level `subagents` object (`calls`, `tokens`, `dispatched`, `workspaces`, `worktrees`,
   `unattributedCalls`, `unattributedTokens`, `unlinkedInTotalCalls`, `unlinkedInTotalTokens`,

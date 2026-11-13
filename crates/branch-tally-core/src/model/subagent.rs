@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use super::{AgentId, AttributedRecord, BranchBasis, Bucket, SessionId};
+use super::{AgentId, AttributedRecord, BranchBasis, Bucket, SessionId, saturating_add_flag};
 
 /// One dispatch link a source found: a parent session launched the subagent `agent_id`.
 ///
@@ -153,18 +153,18 @@ impl SubagentRow {
     /// The row's usage summed over its models. Empty `by_model` gives an all-zero bucket.
     #[must_use]
     pub fn total(&self) -> Bucket {
-        self.by_model
-            .iter()
-            .fold(Bucket::default(), |mut t, (_, b)| {
-                t.input += b.input;
-                t.cache_write_5m += b.cache_write_5m;
-                t.cache_write_1h += b.cache_write_1h;
-                t.cache_read += b.cache_read;
-                t.output += b.output;
-                t.thinking += b.thinking;
-                t.calls += b.calls;
-                t
-            })
+        self.total_checked().0
+    }
+
+    /// [`SubagentRow::total`] plus `true` when any field saturated at `u64::MAX`.
+    #[must_use]
+    pub fn total_checked(&self) -> (Bucket, bool) {
+        let mut total = Bucket::default();
+        let mut overflowed = false;
+        for (_, b) in &self.by_model {
+            overflowed |= total.saturating_add_assign(b);
+        }
+        (total, overflowed)
     }
 }
 
@@ -202,19 +202,36 @@ impl SubagentSummary {
         attributed
             .iter()
             .filter(|a| a.basis == BranchBasis::SubagentUnlinked)
-            .fold((0, 0), |(c, t), a| (c + 1, t + a.record.usage.tokens()))
+            .fold((0u64, 0u64), |(c, t), a| {
+                (
+                    c.saturating_add(1),
+                    t.saturating_add(a.record.usage.tokens()),
+                )
+            })
     }
 
     /// Calls across all rows (rolled-up records only; unlinked ones are not in any row).
     #[must_use]
     pub fn calls(&self) -> u64 {
-        self.rows.iter().map(|r| r.calls).sum()
+        self.rows.iter().fold(0, |t, r| t.saturating_add(r.calls))
     }
 
     /// Tokens across all rows.
     #[must_use]
     pub fn tokens(&self) -> u64 {
-        self.rows.iter().map(|r| r.tokens).sum()
+        self.rows.iter().fold(0, |t, r| t.saturating_add(r.tokens))
+    }
+
+    /// `(calls, tokens)` across all rows, plus `true` when either sum saturated at `u64::MAX`.
+    #[must_use]
+    pub fn totals_checked(&self) -> (u64, u64, bool) {
+        let (mut calls, mut tokens) = (0, 0);
+        let mut over = false;
+        for r in &self.rows {
+            over |= saturating_add_flag(&mut calls, r.calls);
+            over |= saturating_add_flag(&mut tokens, r.tokens);
+        }
+        (calls, tokens, over)
     }
 
     /// Distinct dispatched subagents (distinct agent ids) across all rows, so only subagents whose
@@ -310,6 +327,60 @@ mod tests {
     fn totals_come_from_the_rows() {
         let s = sample();
         assert_eq!((s.calls(), s.tokens()), (6, 510));
+    }
+
+    #[test]
+    fn row_total_saturates_and_flags_overflow() {
+        let big = Bucket {
+            input: u64::MAX,
+            calls: 1,
+            ..Bucket::default()
+        };
+        let mut r = row(Workspace::Main, "a", 1, 1, &["x"]);
+        r.by_model = vec![("m".to_owned(), big), ("n".to_owned(), big)];
+        let (t, over) = r.total_checked();
+        assert!(over);
+        assert_eq!((t.input, t.calls), (u64::MAX, 2));
+        assert_eq!(r.total().input, u64::MAX);
+    }
+
+    #[test]
+    fn row_total_of_small_values_does_not_flag() {
+        let b = Bucket {
+            input: 1,
+            calls: 1,
+            ..Bucket::default()
+        };
+        let mut r = row(Workspace::Main, "a", 1, 1, &["x"]);
+        r.by_model = vec![("m".to_owned(), b), ("n".to_owned(), b)];
+        let want = Bucket {
+            input: 2,
+            calls: 2,
+            ..Bucket::default()
+        };
+        assert_eq!(r.total_checked(), (want, false));
+    }
+
+    #[test]
+    fn summary_totals_saturate_and_flag_overflow() {
+        let mut s = sample();
+        assert_eq!(s.totals_checked(), (6, 510, false));
+        s.rows[0].tokens = u64::MAX;
+        s.rows[1].calls = u64::MAX;
+        let (c, t, over) = s.totals_checked();
+        assert!(over);
+        assert_eq!((c, t), (u64::MAX, u64::MAX));
+        assert_eq!(s.tokens(), u64::MAX);
+        assert_eq!(s.calls(), u64::MAX);
+    }
+
+    #[test]
+    fn unattributed_count_saturates_instead_of_wrapping() {
+        let a = vec![
+            attributed(BranchBasis::SubagentUnlinked, u64::MAX),
+            attributed(BranchBasis::SubagentUnlinked, 5),
+        ];
+        assert_eq!(SubagentSummary::count_unattributed(&a), (2, u64::MAX));
     }
 
     #[test]

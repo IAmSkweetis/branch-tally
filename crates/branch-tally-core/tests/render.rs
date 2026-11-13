@@ -1525,3 +1525,69 @@ fn splicing_a_hostile_report_repeatedly_is_idempotent() {
     assert_eq!(once, twice);
     assert_eq!(twice, thrice);
 }
+
+/// A priced, otherwise certain report whose totals saturated (#96).
+fn overflowed() -> (Summary, Costs) {
+    let (mut s, mut c) = sample();
+    s.footnote.totals_overflowed = true;
+    c.by_model = vec![
+        ("claude-a".to_owned(), Some(0.125)),
+        ("claude-b".to_owned(), Some(1.0)),
+    ];
+    c.unpriced_models = 0;
+    (s, c)
+}
+
+#[test]
+fn markdown_says_overflowed_totals_are_unreliable_and_a_floor() {
+    let (s, c) = overflowed();
+    let md = markdown(&s, &c, true);
+    assert!(
+        md.contains("**Totals overflowed and are unreliable**"),
+        "{md}"
+    );
+    assert!(md.contains("**at least $2.67**"), "{md}");
+    assert!(md.contains(" \u{b7} totals overflowed, unreliable"), "{md}");
+    let no_cost = markdown(&s, &c, false);
+    assert!(
+        no_cost.contains("**Totals overflowed and are unreliable**"),
+        "{no_cost}"
+    );
+    assert!(
+        no_cost.contains("totals overflowed, unreliable"),
+        "{no_cost}"
+    );
+}
+
+#[test]
+fn markdown_is_unchanged_when_totals_did_not_overflow() {
+    let (mut s, c) = overflowed();
+    s.footnote.totals_overflowed = false;
+    let md = markdown(&s, &c, true);
+    assert!(!md.contains("overflow"), "{md}");
+    assert!(!md.contains("at least"), "{md}");
+}
+
+#[test]
+fn markdown_does_not_wrap_or_panic_on_saturated_cache_writes() {
+    let (mut s, c) = overflowed();
+    s.total.cache_write_5m = u64::MAX;
+    s.total.cache_write_1h = u64::MAX;
+    s.by_model[0].1.cache_write_5m = u64::MAX;
+    s.by_model[0].1.cache_write_1h = 1;
+    let md = markdown(&s, &c, true);
+    assert!(md.contains("18,446,744,073,709,551,615"), "{md}");
+}
+
+#[test]
+fn json_carries_totals_overflowed_only_when_true() {
+    let (s, c) = overflowed();
+    let j = json(&s, &c);
+    assert!(j.contains("  \"totalsOverflowed\": true,\n"), "{j}");
+    assert!(j.contains("  \"totalCostIsFloor\": true,\n"), "{j}");
+    let (mut s, c) = overflowed();
+    s.footnote.totals_overflowed = false;
+    let j = json(&s, &c);
+    assert!(!j.contains("totalsOverflowed"), "{j}");
+    assert!(j.contains("  \"totalCostIsFloor\": false,\n"), "{j}");
+}

@@ -84,12 +84,37 @@ pub enum Harness {
     ClaudeCode,
 }
 
+/// Adds `add` into `*total`, saturating at `u64::MAX`. Returns `true` when it saturated.
+/// Token and call counts can come from an unauthenticated ledger, so totals never use bare `+`.
+pub fn saturating_add_flag(total: &mut u64, add: u64) -> bool {
+    let (sum, over) = total.overflowing_add(add);
+    *total = if over { u64::MAX } else { sum };
+    over
+}
+
+/// Sums `values`, or `None` when the sum overflows `u64`.
+fn sum_checked(values: impl IntoIterator<Item = u64>) -> Option<u64> {
+    values.into_iter().try_fold(0u64, u64::checked_add)
+}
+
 impl Usage {
     /// The reference's `Record.tokens`: input, both cache writes, cache read and output.
     /// `thinking` is excluded because it is already inside `output`.
     #[must_use]
     pub fn tokens(&self) -> u64 {
-        self.input + self.cache_write_5m + self.cache_write_1h + self.cache_read + self.output
+        self.checked_tokens().unwrap_or(u64::MAX)
+    }
+
+    /// [`Usage::tokens`], or `None` when the sum overflows `u64`.
+    #[must_use]
+    pub fn checked_tokens(&self) -> Option<u64> {
+        sum_checked([
+            self.input,
+            self.cache_write_5m,
+            self.cache_write_1h,
+            self.cache_read,
+            self.output,
+        ])
     }
 }
 
@@ -258,6 +283,23 @@ impl Record {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn usage_tokens_saturate_and_checked_tokens_reports_overflow() {
+        let big = Usage {
+            input: u64::MAX,
+            output: 1,
+            ..Usage::default()
+        };
+        assert_eq!(big.tokens(), u64::MAX);
+        assert_eq!(big.checked_tokens(), None);
+        let small = Usage {
+            input: 1,
+            output: 2,
+            ..Usage::default()
+        };
+        assert_eq!(small.checked_tokens(), Some(3));
+    }
 
     fn sample() -> Record {
         let mut r = Record::new(

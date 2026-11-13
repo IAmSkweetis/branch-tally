@@ -10,6 +10,7 @@ branch-tally <COMMAND>
 | [`record`](#branch-tally-record) | Append this branch's attributed usage to the repository ledger (write only). |
 | [`project`](#branch-tally-project) | Report project-wide totals and the cost-over-time series from the ledger. |
 | [`capture`](#branch-tally-capture) | Record this session's branch from a Claude Code hook payload on stdin. Run by the [capture plugin](integration/claude-code.md), not by hand. |
+| [`ledger check`](#branch-tally-ledger-check) | Fail unless a branch's `.tally/` files, in the working tree or at a given commit, are a well-formed append to a base ref's. |
 | [`prices update`](#branch-tally-prices-update) | Refresh the per-user price cache from the LiteLLM model price list. |
 | [`prices show`](#branch-tally-prices-show) | Show which price table reports would use, with its source, date and path. |
 | [`config show`](#branch-tally-config-show) | Show the config file path, whether it was found, and each effective value and its source. |
@@ -31,6 +32,10 @@ Global options:
 | `0` | Success. |
 | `1` | The command failed. A one-line message on stderr says why: no records for the branch, a bad config file, a missing ledger, a `gh` failure, and so on. |
 | `2` | The command line is wrong: an unknown flag, a bad value, two conflicting flags, or a flag that needs another one. A usage message goes to stderr. |
+| `3` | `report --from-ledger` or `project` stopped because the ledger has conflicting lines for one request, and `--allow-ledger-conflicts` was not given. See [Conflicting ledger lines](ledger.md#conflicting-ledger-lines). |
+
+Scripts that treat any non-zero exit as a failure need no change. A script that tests for exit 1
+specifically will not see a conflict stop as a failure; test for non-zero instead.
 
 ## Output streams
 
@@ -70,6 +75,7 @@ Reports the token usage and estimated cost for `BRANCH` (default: the current br
 | `--from-ledger` | | Report from the [ledger](ledger.md) instead of the live transcripts. Works with no transcripts. |
 | `--with-live` | | With `--from-ledger`, also read this machine's live transcripts. The ledger wins where both have a call, so nothing is counted twice. |
 | `--ledger <PATH>` | `.tally/ledger.jsonl` | The ledger file, used with `--from-ledger`. The default is at the root of the current checkout. |
+| `--allow-ledger-conflicts` | off | Needs `--from-ledger`. Carry on when the ledger has conflicting lines for one request, using the latest line for each. Without it such a ledger stops the run with exit 3. See [Conflicting ledger lines](ledger.md#conflicting-ledger-lines). |
 
 Each flag that has a [config file](config.md) key overrides it for one run. Precedence is flag,
 then config file, then built-in default.
@@ -83,7 +89,7 @@ These are command-line errors (exit 2):
 - `--strict` with `--timeline`, and `--md` with `--json`;
 - both halves of an on/off pair: `--cost` with `--no-cost`, `--redact` with `--no-redact`,
   `--keep-names` with `--redact-names`;
-- `--with-live` without `--from-ledger`;
+- `--with-live` or `--allow-ledger-conflicts` without `--from-ledger`;
 - `--work-branch` when the effective mode is not timeline. The mode can come from `--mode
   timeline`, `--timeline` or the config file's `mode = "timeline"`. A `work-branch` set only in
   the config file is ignored outside timeline mode rather than being an error.
@@ -186,16 +192,43 @@ and `<!-- token-report:end -->` markers. It has, in order:
 2. the session table: each session's id, where it ran (main checkout or worktree), its named
    agents, its UTC time span, calls and tokens (in millions);
 3. a bold "Token total is at least …" line, when some calls were ambiguous;
-4. a footnote: the branch and mode, session and subagent counts, the heuristics used, the
-   work-branch rule in timeline mode, whether identifiers were redacted, the price table's date
-   and source, unpriced models, and a reminder that costs are estimates at list API rates;
-5. a line such as "1 call(s) / 1,115 tokens in this repository carry no branch stamp and are not
+4. a bold "Totals overflowed and are unreliable" statement, when a total was too large to hold
+   (see [Overflowed totals](#overflowed-totals));
+5. a footnote: the branch and mode, session and subagent counts, the heuristics used, the
+   work-branch rule in timeline mode, `totals overflowed, unreliable` when they did, whether
+   identifiers were redacted, the price table's date and source, unpriced models, and a reminder
+   that costs are estimates at list API rates;
+6. a line such as "1 call(s) / 1,115 tokens in this repository carry no branch stamp and are not
    attributed to any branch", when there are any (see [Unstamped calls](#unstamped-calls));
-6. a **Subagent usage** section, when subagents did part of the work: one row per subagent and
+7. a **Subagent usage** section, when subagents did part of the work: one row per subagent and
    model with its workspace, plus how many subagent calls had no dispatch link;
-7. a collapsed **Breakdown by skill / agent** table.
+8. a collapsed **Breakdown by skill / agent** table.
 
 With `--no-cost`, the cost columns are left out.
+
+#### Overflowed totals
+
+Every token and call count is held as an unsigned 64-bit integer, whose largest value is
+18,446,744,073,709,551,615. Real usage comes nowhere near it, but a ledger line can claim any
+number, so a sum can reach that limit. When one does, branch-tally stops it at the limit rather
+than wrapping around to a small number, and says the result can't be trusted:
+
+- the Markdown report adds this statement after the session table:
+
+  ```text
+  **Totals overflowed and are unreliable**: a token or call count exceeded the largest value the
+  tool can hold, so every total here is at least what is shown and the real figure is unknown.
+  ```
+
+  (The real statement is a single line; it is wrapped here to fit the page.)
+- the footnote includes `totals overflowed, unreliable`;
+- the total cost cell reads `at least $X`;
+- the JSON has `"totalsOverflowed": true`, and `totalCostIsFloor` is `true`.
+
+Every figure shown is then a floor. A total this large usually means the ledger holds a line that
+no real API call produced. [`ledger check`](#branch-tally-ledger-check) rejects new ledger lines
+with a token field above 10,000,000, so running it in CI on each pull request keeps such a line out
+of the ledger.
 
 #### Recorded text in the output
 
@@ -222,7 +255,8 @@ contributors control. The Markdown report shows them as text, never as formattin
 | `redacted` | `true` when `--redact` was on. Absent otherwise. |
 | `totalCalls` | API calls in the report. |
 | `totalCostUSD` | The estimated total cost in US dollars. |
-| `totalCostIsFloor` | `true` when the cost is a lower bound, for example because a model is unpriced. |
+| `totalCostIsFloor` | `true` when the cost is a lower bound: a model is unpriced, some calls were ambiguous, or a total overflowed. |
+| `totalsOverflowed` | `true` when a token or call total reached the largest value the tool can hold, so every total is an unreliable floor (see [Overflowed totals](#overflowed-totals)). Absent otherwise. |
 | `unpricedModels` | Model ids that had no price. |
 | `priceTable` | `asOf` (the table's date) and `source`: `"bundled"`, `"cache"` or `"override"`. |
 | `heuristics` | Calls and tokens per attribution heuristic (`sessionClaim`, `worktreeRecovery`, `originRecovery`, `dispatcherRollUp`, `timelineForward`, `timelineCarried`) and `ambiguous`, plus `isFloor`. `captured` is added only when [hook captures](captures.md) placed at least one call. Absent when no heuristic applied. |
@@ -335,6 +369,7 @@ identifiers.
 | `note: N record(s) had an unreadable timestamp; they were kept but are undated` | Transcript records whose timestamp is not strict RFC 3339 (see [Timestamps](#timestamps)). Each is still counted in calls, tokens and cost, but has no time. The timestamp text itself is never printed. Printed by `report` and `record`. |
 | `note: skipped N capture line(s) in .tally/captures.jsonl: …` | Hook capture lines that were malformed, written by an unsupported version, or of an unknown kind. Counted, not hidden. Printed by `report` and `record`. |
 | `note: git worktree list was unavailable, so worktree recovery was skipped` | `git worktree list` failed, so subagent calls in worktrees could not be recovered. |
+| `note: using the repository price override (.tally/prices.toml); prices are not the bundled or cached table` | Costs come from the repository's own price table, not from branch-tally's. Printed in every output format; stdout is unchanged. See [Which price table is used](#which-price-table-is-used). |
 | The ledger notes | See [Report from the ledger](ledger.md#report-from-the-ledger). |
 
 Recorded text in these messages, such as a model id or a branch, has its control characters
@@ -364,6 +399,16 @@ reported in the `note: N record(s) had an unreadable timestamp; …` line above.
 | `refusing to use <path>: it is …` | A default `.tally/` path is a symbolic link or the wrong kind of file. See [Symbolic links are refused](ledger.md#symbolic-links-are-refused). |
 | `cannot read price table <path>: …` | The price override or cache could not be read. A refused `.tally/prices.toml` shows as `refusing to use …` instead; see [Which price table is used](#which-price-table-is-used). |
 | `config file <path> …` | The config file is invalid. See [Config reference](config.md#errors). |
+
+With `--from-ledger`, a ledger that has conflicting lines for one request stops the report with
+exit 3, not 1:
+
+```text
+error: N ledger request(s) have conflicting lines, so the reported cost depends on which line wins. Inspect the ledger, or pass --allow-ledger-conflicts to proceed with the latest line for each
+```
+
+It gives a count only, never a request id or line text. See
+[Conflicting ledger lines](ledger.md#conflicting-ledger-lines).
 
 ## `branch-tally record`
 
@@ -423,6 +468,7 @@ model is shown as a floor, "at least $X". What the report holds and how to read 
 | ------ | ------- | ---- |
 | `--repo <PATH>` | `.` | The repository, used to find the default ledger and the price table. |
 | `--ledger <PATH>` | `.tally/ledger.jsonl` | The ledger file. The default is at the root of the current checkout. |
+| `--allow-ledger-conflicts` | off | Carry on when the ledger has conflicting lines for one request, using the latest line for each. Without it such a ledger stops the run with exit 3. See [Conflicting ledger lines](ledger.md#conflicting-ledger-lines). |
 | `--format <FORMAT>` | `md` | Output format: `md` or `json`. See [Output formats](project.md#output-formats). |
 | `--md` | | Same as `--format md`. |
 | `--json` | | Same as `--format json`. |
@@ -447,9 +493,14 @@ is printed on stdout.
 | `cannot write graph <path>: <error>` | `--export-graph` could not write the file, for example because its directory does not exist. |
 | `config file <path> …` | The config file is missing (with `--config`) or invalid. See [Config reference](config.md#errors). |
 
+A ledger with conflicting lines for one request stops `project` with exit 3 and the same
+`error: N ledger request(s) have conflicting lines, …` line as `report --from-ledger`, unless
+`--allow-ledger-conflicts` is given. That applies to a file named with `--ledger` too.
+
 A ledger with no lines is not an error: the report says `No branches recorded in the ledger.` The
 ledger notes on stderr are the same as for `report --from-ledger`; see
-[Report from the ledger](ledger.md#report-from-the-ledger).
+[Report from the ledger](ledger.md#report-from-the-ledger). The price override note is the same as
+for `report`; see [What the report says on stderr](#what-the-report-says-on-stderr).
 
 ## `branch-tally capture`
 
@@ -485,6 +536,112 @@ described in [Hook captures](captures.md).
   ```text
   capture: refusing to write: .tally/ or its captures file is a symlink or not a regular file
   ```
+
+## `branch-tally ledger check`
+
+```text
+branch-tally ledger check --base <REF> [--head <REV>] [--head-branch <NAME>]
+  [--base-branch <NAME>] [--repo <PATH>]
+```
+
+Compares `.tally/ledger.jsonl` and `.tally/captures.jsonl` on the head with the same files at
+`--base`, and fails unless the head only adds well-formed lines. The head is the working tree, or
+the commit named by `--head`. It also warns when `.tally/prices.toml` differs. It is meant for CI
+on a pull request. Why you would run it, and how, is in
+[Checking ledger changes](ledger.md#checking-ledger-changes).
+
+| Option | Default | Does |
+| ------ | ------- | ---- |
+| `--base <REF>` | required | The ref to compare against, such as `origin/main` or a commit id. |
+| `--head <REV>` | working tree | Read the head's `.tally/ledger.jsonl`, `captures.jsonl` and `prices.toml` from this commit, through git, instead of from the working tree. The working tree is not read at all. |
+| `--head-branch <NAME>` | current branch | The branch under review. New lines recorded for it are checked without a note; see the rules below. Required when the current branch can't be read, as on a detached HEAD. |
+| `--base-branch <NAME>` | repository default branch | The branch the head merges into. No new line may be recorded for it. Without this option it is the branch `origin/HEAD` points to. When that can't be found, the check exits 1 and asks for it. It is never guessed from `--base`. |
+| `--repo <PATH>` | `.` | The repository. Any directory inside the checkout works. |
+
+Without `--head`, the files are read from the working tree, so uncommitted changes are checked too.
+A file missing on one side counts as empty.
+
+**Rules.** Lines are compared byte for byte, apart from a trailing carriage return. Blank lines are
+ignored.
+
+- Every line in a file at the base must still be in the head's copy. It may have moved, but not
+  changed. A removed or edited base line is a violation.
+- Every new line must parse.
+- A new **ledger** line must also:
+  - not be recorded for the base branch (`recorded_for` is not `--base-branch`). If the head
+    branch and the base branch are the same, every new ledger line fails this rule;
+  - have a `recorded_at` that is present, strict RFC 3339 (see [Timestamps](#timestamps)) and
+    not later than the time of the check;
+  - not reuse a `request_id` and `recorded_for` pair that a base line already has;
+  - not share its `request_id` and `recorded_for` pair with an earlier new line while holding
+    different data (`conflicts with an earlier new line for the same request`). Once merged, such
+    a pair would make `report --from-ledger` and `project` stop with exit 3. An exact repeat that
+    differs only in `recorded_at` is allowed;
+  - have no token field (`input`, `cache_write_5m`, `cache_write_1h`, `cache_read`, `output`,
+    `thinking`) above 10,000,000.
+
+  A new ledger line whose `ts` is present but unreadable counts as unparseable here, although a
+  report would keep such a line as undated.
+- A new **captures** line must have a `ts` that is strict RFC 3339 and not later than the time of
+  the check.
+
+New ledger lines may be recorded for a branch other than the head and the base, such as usage
+backfilled for an earlier branch. That is allowed, but each such branch gets a note with its line
+count. When `.tally/prices.toml` on the head is not byte-identical to the base's, including when
+it was added or deleted, the check prints a warning. The
+[price override](#which-price-table-is-used) sets every cost, so review that change by hand.
+Neither the notes nor the warning changes the exit status.
+
+**Output.** Everything goes to stderr. The notes and the warning come first:
+
+```text
+note: N new ledger line(s) recorded for branch <name>
+warning: .tally/prices.toml differs from base
+```
+
+A branch name in a note is printed safely: control characters are replaced with `�` (U+FFFD), and
+a name that starts with `::` gets a backslash in front, so it can't be read as a GitHub Actions
+workflow command.
+
+A clean check then prints one line and exits 0. The line names `--base` as you gave it:
+
+```text
+ledger check: clean against origin/main
+```
+
+Otherwise it prints one line per violation, then a count, and exits 1. Each line names the file,
+the line number in the head's copy (or `removed base line`) and the rule. It never prints line
+text, request ids or session ids. For example, from a synthetic repository checked with
+`--base main`, where the branch under review is `feat/x` and line 10 is recorded for `docs/old`:
+
+```text
+note: 1 new ledger line(s) recorded for branch docs/old
+warning: .tally/prices.toml differs from base
+ledger: line 3: recorded for the base branch
+ledger: line 4: missing recorded_at
+ledger: line 5: future timestamp
+ledger: line 6: token field output over the 10000000 ceiling
+ledger: line 7: unparseable
+ledger: line 8: invalid timestamp
+ledger: line 9: duplicate of a base request
+captures: line 1: future timestamp
+captures: removed base line: a base line was removed or changed
+ledger check: 9 violation(s) against main
+```
+
+Here the captures file's only base line was replaced by a new one, so the check reports both the
+new line and the removed one. One line can break several rules, and each is listed: a line
+recorded for the base branch that also repeats a base request gets both
+`recorded for the base branch` and `duplicate of a base request`.
+
+| Message (stderr, exit 1) | Cause |
+| ------------------------ | ----- |
+| `ledger check: cannot read ledger.jsonl at base '<REF>': …` | `--base` is not a ref or commit in this repository. In CI, fetch enough history for the base to be present. |
+| `ledger check: cannot read ledger.jsonl at head '<REV>': …` | `--head` is not a ref or commit in this repository. |
+| `ledger check: <path> is not inside a git checkout (…)` | `--repo`, or the current directory, is not in a git checkout. |
+| `ledger check: cannot tell the current branch (detached HEAD?); pass --head-branch` | No `--head-branch`, and the current branch could not be read, for example on a detached HEAD. |
+| `ledger check: cannot tell the base branch (…); pass --base-branch` | No `--base-branch`, and the repository has no `origin/HEAD`. |
+| `ledger check: refusing to use <path>: it is …` | Without `--head`: `.tally`, or a file the check reads inside it, is a symbolic link or the wrong kind of file in the working tree. See [Symbolic links are refused](ledger.md#symbolic-links-are-refused). |
 
 ## `branch-tally prices update`
 
@@ -538,6 +695,18 @@ A model id is priced by the longest model key that is a prefix of it, so `claude
 prices `claude-fable-5-1[1m]`. A model that matches nothing is unpriced, and the report says so.
 A malformed override or cache stops the report with a message naming the file; it is never
 skipped silently.
+
+The override is a file in the repository, so anyone who can commit to it can change every cost
+branch-tally reports there. Whenever `report` or `project` prices with the override, it prints
+this on stderr, in Markdown and JSON output alike, and leaves stdout unchanged:
+
+```text
+note: using the repository price override (.tally/prices.toml); prices are not the bundled or cached table
+```
+
+The JSON report also says so, with `"source": "override"` in `priceTable`, and `prices show` prints
+`source: override` and the file's path. Review changes to `.tally/prices.toml` as you would code.
+[`ledger check`](#branch-tally-ledger-check) prints a warning when a pull request changes it.
 
 The override is read only from a real `.tally/` directory, and never through a symbolic link (see
 [Symbolic links are refused](ledger.md#symbolic-links-are-refused)). With no `.tally/` directory

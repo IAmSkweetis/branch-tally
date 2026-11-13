@@ -97,6 +97,17 @@ pub(crate) fn resolve_table(locations: &Locations) -> Result<PriceTable, String>
         .map_err(|e| one_line(&fs.refusal.take().unwrap_or_else(|| e.to_string())))
 }
 
+/// F-03: a repository price override replaces the whole table and is unauthenticated, so any run
+/// that prices with it says so, on stderr only (stdout may be JSON).
+pub(crate) fn note_override(table: &PriceTable) {
+    if table.source() == PriceTableSource::Override {
+        crate::report::stderr(
+            "note: using the repository price override (.tally/prices.toml); prices are not the \
+             bundled or cached table",
+        );
+    }
+}
+
 fn one_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }

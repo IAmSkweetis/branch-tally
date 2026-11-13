@@ -865,3 +865,44 @@ fn timeline_ambiguous_unstamped_call_in_an_unselected_session_is_still_counted()
         (1, 15)
     );
 }
+
+/// Unstamped records whose token sum saturates must mark the report's totals unreliable (#96).
+#[test]
+fn saturated_unstamped_count_marks_totals_overflowed() {
+    let mut huge = rec("s-none", "huge", None);
+    huge.usage.input = u64::MAX;
+    let mut huge2 = rec("s-none2", "huge2", None);
+    huge2.usage.input = u64::MAX;
+    let records = vec![rec("s1", "a", Some("feat/x")), huge, huge2];
+    let report = build(
+        records,
+        &[],
+        stats(),
+        Path::new("/repo"),
+        &[],
+        "feat/x",
+        &Options::default(),
+        bundled(),
+    )
+    .unwrap();
+    assert_eq!(report.summary.unstamped.tokens, u64::MAX);
+    assert!(report.summary.footnote.totals_overflowed);
+}
+
+#[test]
+fn unsaturated_unstamped_count_does_not_flag_overflow() {
+    let records = vec![rec("s1", "a", Some("feat/x")), rec("s-none", "n", None)];
+    let report = build(
+        records,
+        &[],
+        stats(),
+        Path::new("/repo"),
+        &[],
+        "feat/x",
+        &Options::default(),
+        bundled(),
+    )
+    .unwrap();
+    assert_eq!(report.summary.unstamped.calls, 1);
+    assert!(!report.summary.footnote.totals_overflowed);
+}

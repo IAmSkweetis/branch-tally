@@ -50,6 +50,10 @@ pub(crate) enum Command {
     /// keeps that from blocking the session.
     Capture,
 
+    /// Check the committed `.tally/` files against a base ref.
+    #[command(subcommand)]
+    Ledger(LedgerCommand),
+
     /// Manage the model price table.
     #[command(subcommand)]
     Prices(PricesCommand),
@@ -66,6 +70,47 @@ pub(crate) enum Command {
     /// package manager should be updated with that package manager instead.
     #[command(alias = "upgrade")]
     Update(UpdateArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum LedgerCommand {
+    /// Fail if the head's `.tally/` files are not a well-formed append to the base's.
+    ///
+    /// Compares `.tally/ledger.jsonl` and `.tally/captures.jsonl` on the head (the working tree,
+    /// or the rev given by `--head`) with the same files on `--base`. Every base line must still
+    /// be there; every new line must parse, not be recorded for the base branch, carry a valid
+    /// non-future `recorded_at`, not repeat a base request, and stay under 10,000,000 tokens per
+    /// field. New lines recorded for a branch that is neither the head branch nor the base
+    /// branch are noted on stderr, not failed. A difference in `.tally/prices.toml` is a
+    /// warning. Violations are listed on stderr (file, line, rule; never line text) and the
+    /// exit status is 1.
+    Check(LedgerCheckArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct LedgerCheckArgs {
+    /// The ref to compare against (for example `origin/main`). Required.
+    #[arg(long, value_name = "REF")]
+    pub(crate) base: String,
+
+    /// The head branch: new lines recorded for any other non-base branch get a note (default: the
+    /// current branch; required on a detached checkout).
+    #[arg(long, value_name = "NAME")]
+    pub(crate) head_branch: Option<String>,
+
+    /// The ref whose `.tally/` files are the head (default: the working tree). Read from git, so
+    /// the working tree is not consulted.
+    #[arg(long, value_name = "REV")]
+    pub(crate) head: Option<String>,
+
+    /// The base branch's name, which new lines must not be recorded for (default: the
+    /// repository's default branch; there is no guess if that cannot be found).
+    #[arg(long, value_name = "NAME")]
+    pub(crate) base_branch: Option<String>,
+
+    /// Repository path (default: cwd).
+    #[arg(long, default_value = ".", value_name = "PATH")]
+    pub(crate) repo: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -259,6 +304,11 @@ pub(crate) struct ReportArgs {
     /// The ledger file (default: .tally/ledger.jsonl at the root of the current checkout).
     #[arg(long, value_name = "PATH")]
     pub(crate) ledger: Option<PathBuf>,
+
+    /// With --from-ledger, proceed even if the ledger has conflicting lines for one request (the latest line wins).
+    /// Without it such a ledger stops the run with exit 3, because a conflict can rewrite cost.
+    #[arg(long, requires = "from_ledger")]
+    pub(crate) allow_ledger_conflicts: bool,
 }
 
 /// `project`: the ledger-wide report.
@@ -271,6 +321,11 @@ pub(crate) struct ProjectArgs {
     /// The ledger file (default: .tally/ledger.jsonl at the root of the current checkout).
     #[arg(long, value_name = "PATH")]
     pub(crate) ledger: Option<PathBuf>,
+
+    /// Proceed even if the ledger has conflicting lines for one request (the latest line wins).
+    /// Without it such a ledger stops the run with exit 3, because a conflict can rewrite cost.
+    #[arg(long)]
+    pub(crate) allow_ledger_conflicts: bool,
 
     /// Output format: md (default) or json. `--md` and `--json` are shorthands; they cannot be
     /// combined with `--format`.

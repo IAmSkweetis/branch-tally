@@ -14,7 +14,7 @@ use std::collections::{BTreeSet, HashMap};
 use crate::model::{
     AttributedRecord, BranchBasis, Bucket, HeuristicCount, Mode, Origin, SelectedRecord, Selection,
     SessionId, SessionRow, SubagentRow, SubagentSummary, SubagentTags, Summary, Timestamp,
-    Unstamped,
+    Unstamped, Usage, saturating_add_flag,
 };
 
 /// Calls and tokens of every [`BranchBasis::TimelineAmbiguous`] or
@@ -36,6 +36,7 @@ pub fn count_ambiguous(
             BranchBasis::TimelineAmbiguous | BranchBasis::SubagentUnlinked
         ) && sessions.contains(&a.record.session_id)
         {
+            // Saturates; `summarize` treats a `u64::MAX` count as overflowed.
             count.add(a.record.usage.tokens());
         }
     }
@@ -64,8 +65,8 @@ pub fn count_unstamped(attributed: &[AttributedRecord], mode: Mode) -> Unstamped
                 && !claims.contains_key(&a.record.session_id)
         })
         .fold(Unstamped::default(), |acc, a| Unstamped {
-            calls: acc.calls + 1,
-            tokens: acc.tokens + a.record.usage.tokens(),
+            calls: acc.calls.saturating_add(1),
+            tokens: acc.tokens.saturating_add(a.record.usage.tokens()),
         })
 }
 
@@ -109,11 +110,14 @@ pub fn summarize(
     let mut is_worktree: Vec<bool> = Vec::new();
     let mut footnote = crate::model::Footnote::default();
     let (mut unlinked_calls, mut unlinked_tokens) = (0_u64, 0_u64);
+    // Set when any sum saturates: every total is then a floor (#96).
+    let mut over = false;
 
     for sel in selected {
         let attributed = &sel.attributed;
         let r = &attributed.record;
         let u = &r.usage;
+        let tokens = tokens_flag(u, &mut over);
 
         let model = r
             .model
@@ -122,8 +126,8 @@ pub fn summarize(
             .unwrap_or("unknown");
         let attr = attribution_key(r);
 
-        add(slot(&mut by_model, &mut model_ix, model), r);
-        add(slot(&mut by_attribution, &mut attr_ix, &attr), r);
+        over |= add(slot(&mut by_model, &mut model_ix, model), r);
+        over |= add(slot(&mut by_attribution, &mut attr_ix, &attr), r);
 
         let ts = r.ts.as_ref().map_or("", Timestamp::as_str);
         let ix = if let Some(&i) = session_ix.get(&r.session_id) {
@@ -145,8 +149,8 @@ pub fn summarize(
         if ts > row.last.as_str() {
             ts.clone_into(&mut row.last);
         }
-        row.tokens += u.tokens();
-        row.calls += 1;
+        over |= saturating_add_flag(&mut row.tokens, tokens);
+        over |= saturating_add_flag(&mut row.calls, 1);
         if let Some(agent) = attr.strip_prefix("agent:") {
             row.agents.insert(agent.to_owned());
         }
@@ -155,23 +159,23 @@ pub fn summarize(
         // the session claim but is reported separately as unverified.
         match (&attributed.subagent, attributed.basis) {
             (Some(tags), BranchBasis::DispatcherRolledUp) => {
-                add_subagent(&mut sub_rows, tags, r, model);
+                over |= add_subagent(&mut sub_rows, tags, r, model, tokens);
             }
             (_, BranchBasis::SubagentUnlinked) => {
-                unlinked_calls += 1;
-                unlinked_tokens += u.tokens();
+                over |= saturating_add_flag(&mut unlinked_calls, 1);
+                over |= saturating_add_flag(&mut unlinked_tokens, tokens);
             }
             _ => {}
         }
 
         if r.is_sidechain {
-            footnote.subagent_calls += 1;
+            over |= saturating_add_flag(&mut footnote.subagent_calls, 1);
         }
         // One field per record. The basis wins over the selection reason; a selected ambiguous or
         // unlinked record is counted by the `ambiguous` argument instead.
-        count_heuristic(&mut footnote.heuristics, sel);
+        over |= count_heuristic(&mut footnote.heuristics, sel, tokens);
         if attributed.branch != branch {
-            footnote.off_branch_tokens += u.tokens();
+            over |= saturating_add_flag(&mut footnote.off_branch_tokens, tokens);
         }
     }
     // Strict is the raw view: no heuristic ran, so there is nothing to break down.
@@ -182,7 +186,9 @@ pub fn summarize(
     }
     footnote.worktree_sessions = is_worktree.iter().filter(|w| **w).count() as u64;
 
-    let total = sum_buckets(&by_model);
+    let (total, total_over) = sum_buckets(&by_model, &by_attribution);
+    // A helper that already saturated hands over `u64::MAX`; that is a floor too.
+    over |= total_over || inputs_saturated(unattributed, ambiguous);
 
     // Strict mode is the raw view: no roll-up, so no breakdown and nothing to call unattributed.
     let subagents = if mode == Mode::Strict {
@@ -196,6 +202,8 @@ pub fn summarize(
             unlinked_in_total_tokens: unlinked_tokens,
         }
     };
+
+    footnote.totals_overflowed |= over;
 
     Summary {
         branch: branch.to_owned(),
@@ -214,35 +222,66 @@ pub fn summarize(
 }
 
 /// The Total row: every bucket of the by-model table added together.
-fn sum_buckets(by_model: &[(String, Bucket)]) -> Bucket {
+/// Saturates at `u64::MAX`; the flag says whether it, or any row's token count, did.
+fn sum_buckets(
+    by_model: &[(String, Bucket)],
+    by_attribution: &[(String, Bucket)],
+) -> (Bucket, bool) {
     let mut total = Bucket::default();
+    let mut over = false;
     for (_, b) in by_model {
-        total.input += b.input;
-        total.cache_write_5m += b.cache_write_5m;
-        total.cache_write_1h += b.cache_write_1h;
-        total.cache_read += b.cache_read;
-        total.output += b.output;
-        total.thinking += b.thinking;
-        total.calls += b.calls;
+        over |= total.saturating_add_assign(b);
     }
-    total
+    // A row's token count is a sum of five fields; each can fit while the sum does not.
+    over |= total.checked_tokens().is_none() || any_row_overflows(by_model, by_attribution);
+    (total, over)
+}
+
+/// Whether any table row's token count passes `u64::MAX`: each field can fit while the sum does
+/// not.
+fn any_row_overflows(by_model: &[(String, Bucket)], by_attribution: &[(String, Bucket)]) -> bool {
+    by_model
+        .iter()
+        .chain(by_attribution)
+        .any(|(_, b)| b.checked_tokens().is_none())
+}
+
+/// Whether a counting helper already saturated: a `u64::MAX` count is a floor.
+fn inputs_saturated(unattributed: (u64, u64), ambiguous: HeuristicCount) -> bool {
+    [
+        unattributed.0,
+        unattributed.1,
+        ambiguous.calls,
+        ambiguous.tokens,
+    ]
+    .contains(&u64::MAX)
+}
+
+/// `u.tokens()` (saturating), setting `over` when the five fields did not fit in a `u64`.
+fn tokens_flag(u: &Usage, over: &mut bool) -> u64 {
+    if u.checked_tokens().is_none() {
+        *over = true;
+    }
+    u.tokens()
 }
 
 /// Counts one selected record under the one heuristic that placed it, if any.
-fn count_heuristic(h: &mut crate::model::HeuristicBreakdown, sel: &SelectedRecord) {
-    let tokens = sel.attributed.record.usage.tokens();
+/// Returns whether a count saturated.
+fn count_heuristic(
+    h: &mut crate::model::HeuristicBreakdown,
+    sel: &SelectedRecord,
+    tokens: u64,
+) -> bool {
     match sel.attributed.basis {
-        BranchBasis::WorktreeRecovered => h.worktree_recovery.add(tokens),
-        BranchBasis::OriginRecovered => h.origin_recovery.add(tokens),
-        BranchBasis::DispatcherRolledUp => h.dispatcher_roll_up.add(tokens),
-        BranchBasis::TimelineForward => h.timeline_forward.add(tokens),
-        BranchBasis::TimelineCarried => h.timeline_carried.add(tokens),
-        BranchBasis::TimelineAmbiguous | BranchBasis::SubagentUnlinked => {}
-        BranchBasis::Captured => h.captured.add(tokens),
+        BranchBasis::WorktreeRecovered => h.worktree_recovery.add_checked(tokens),
+        BranchBasis::OriginRecovered => h.origin_recovery.add_checked(tokens),
+        BranchBasis::DispatcherRolledUp => h.dispatcher_roll_up.add_checked(tokens),
+        BranchBasis::TimelineForward => h.timeline_forward.add_checked(tokens),
+        BranchBasis::TimelineCarried => h.timeline_carried.add_checked(tokens),
+        BranchBasis::TimelineAmbiguous | BranchBasis::SubagentUnlinked => false,
+        BranchBasis::Captured => h.captured.add_checked(tokens),
         BranchBasis::Stamped => {
-            if sel.kept_by == Selection::SessionClaim {
-                h.session_claim.add(tokens);
-            }
+            sel.kept_by == Selection::SessionClaim && h.session_claim.add_checked(tokens)
         }
     }
 }
@@ -254,7 +293,8 @@ fn add_subagent(
     tags: &SubagentTags,
     r: &crate::model::Record,
     model: &str,
-) {
+    tokens: u64,
+) -> bool {
     // Linear scan: distinct (workspace, subagent, model) keys are few.
     let i = rows
         .iter()
@@ -273,8 +313,8 @@ fn add_subagent(
             });
             rows.len() - 1
         });
-    rows[i].calls += 1;
-    rows[i].tokens += r.usage.tokens();
+    let mut over = saturating_add_flag(&mut rows[i].calls, 1);
+    over |= saturating_add_flag(&mut rows[i].tokens, tokens);
     rows[i].agent_ids.insert(tags.agent_id.clone());
     // Same accumulation as the by-model table, per row, so the two cannot drift apart.
     let by_model = &mut rows[i].by_model;
@@ -285,7 +325,7 @@ fn add_subagent(
             by_model.push((model.to_owned(), Bucket::default()));
             by_model.len() - 1
         });
-    add(&mut by_model[m].1, r);
+    over | add(&mut by_model[m].1, r)
 }
 
 /// `agent:<name>` for a sidechain record (`agent:subagent` when unnamed), else `attributionSkill`,
@@ -323,15 +363,19 @@ fn slot<'a>(
     &mut table[i].1
 }
 
-fn add(b: &mut Bucket, r: &crate::model::Record) {
+/// Adds one call into `b`, saturating. Returns whether any field saturated.
+fn add(b: &mut Bucket, r: &crate::model::Record) -> bool {
     let u = &r.usage;
-    b.input += u.input;
-    b.cache_write_5m += u.cache_write_5m;
-    b.cache_write_1h += u.cache_write_1h;
-    b.cache_read += u.cache_read;
-    b.output += u.output;
-    b.thinking += u.thinking.unwrap_or(0);
-    b.calls += 1;
+    let one = Bucket {
+        input: u.input,
+        cache_write_5m: u.cache_write_5m,
+        cache_write_1h: u.cache_write_1h,
+        cache_read: u.cache_read,
+        output: u.output,
+        thinking: u.thinking.unwrap_or(0),
+        calls: 1,
+    };
+    b.saturating_add_assign(&one)
 }
 
 #[cfg(test)]

@@ -654,3 +654,86 @@ fn count_ambiguous_covers_selected_sessions_selected_or_not() {
     let selected = vec![selected_rec.0.clone(), amb_sel.0.clone()];
     assert_eq!(count_ambiguous(&all, &selected), hc(3, 70));
 }
+
+// Overflow (#96): fabricated ledger lines can carry any u64, so no total may wrap or panic.
+
+#[test]
+fn huge_usage_saturates_the_totals_and_marks_them_unreliable() {
+    let big = [u64::MAX, 0, 0, 0, 5];
+    let s = run(vec![
+        rec("s", "feat/x").usage(big, None),
+        rec("s", "feat/x").usage(big, Some(u64::MAX)),
+    ]);
+    assert!(s.footnote.totals_overflowed);
+    assert_eq!(s.total.input, u64::MAX);
+    assert_eq!(s.sessions[0].1.tokens, u64::MAX);
+    assert_eq!(s.total.calls, 2);
+}
+
+#[test]
+fn a_single_record_whose_own_tokens_overflow_marks_the_totals() {
+    let s = run(vec![rec("s", "feat/x").usage([u64::MAX, 1, 0, 0, 0], None)]);
+    assert!(s.footnote.totals_overflowed);
+}
+
+#[test]
+fn off_branch_and_subagent_tokens_saturate_and_flag() {
+    let big = [u64::MAX, 0, 0, 0, 0];
+    let a = sub(
+        rec("s", "other").usage(big, None),
+        Workspace::Main,
+        "w",
+        "a1",
+    );
+    let b = sub(
+        rec("s", "other").usage(big, None),
+        Workspace::Main,
+        "w",
+        "a1",
+    );
+    let s = run_with(vec![a, b], Mode::Claim, (0, 0));
+    assert!(s.footnote.totals_overflowed);
+    assert_eq!(s.footnote.off_branch_tokens, u64::MAX);
+    assert_eq!(s.subagents.rows[0].tokens, u64::MAX);
+}
+
+#[test]
+fn saturated_inputs_from_the_counting_helpers_are_flagged() {
+    let v: Vec<SelectedRecord> = vec![rec("s", "feat/x").0];
+    let s = summarize(
+        "feat/x",
+        Mode::Claim,
+        &v,
+        (0, u64::MAX),
+        HeuristicCount::default(),
+    );
+    assert!(s.footnote.totals_overflowed);
+    let amb = HeuristicCount {
+        calls: 1,
+        tokens: u64::MAX,
+    };
+    let s = summarize("feat/x", Mode::Claim, &v, (0, 0), amb);
+    assert!(s.footnote.totals_overflowed);
+}
+
+#[test]
+fn ordinary_totals_are_not_flagged() {
+    let s = run(vec![rec("s", "feat/x").usage([1, 2, 3, 4, 5], None)]);
+    assert!(!s.footnote.totals_overflowed);
+}
+
+#[test]
+fn a_token_total_that_saturates_across_fields_marks_the_totals() {
+    // Every field fits, every record and session fits, and each model's bucket fits; only the
+    // Total row's token sum (input + output) passes `u64::MAX`.
+    let s = run(vec![
+        rec("s1", "feat/x")
+            .model(Some("a"))
+            .usage([u64::MAX, 0, 0, 0, 0], None),
+        rec("s2", "feat/x")
+            .model(Some("b"))
+            .usage([0, 0, 0, 0, 1], None),
+    ]);
+    assert_eq!(s.total.tokens(), u64::MAX);
+    assert!(s.footnote.totals_overflowed);
+}

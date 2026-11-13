@@ -308,8 +308,13 @@ pub fn json(summary: &Summary, costs: &Costs) -> String {
     let _ = writeln!(
         o,
         "  \"totalCostIsFloor\": {},",
-        costs.is_floor() || heur.any_ambiguous()
+        costs.is_floor() || heur.any_ambiguous() || summary.footnote.totals_overflowed
     );
+    // Not in the reference (#96): present only when a total saturated, so plain reports keep its
+    // shape. The totals are then a floor and unreliable.
+    if summary.footnote.totals_overflowed {
+        o.push_str("  \"totalsOverflowed\": true,\n");
+    }
     let unpriced: Vec<_> = costs.by_model.iter().filter(|(_, c)| c.is_none()).collect();
     if unpriced.is_empty() {
         o.push_str("  \"unpricedModels\": [],\n");

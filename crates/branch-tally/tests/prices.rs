@@ -212,9 +212,14 @@ fn unpriced_models_are_named_in_a_stderr_warning_with_the_table_date() {
         )),
         "{err}"
     );
-    // A fully priced report is silent.
+    // A fully priced report has no warning; the override notice (F-03) is its only stderr line.
     world.write_override(OVERRIDE);
-    assert_eq!(stderr(&world.run(&["report", "main"])), "");
+    let err = stderr(&world.run(&["report", "main"]));
+    assert!(
+        err.starts_with("note: using the repository price override"),
+        "{err}"
+    );
+    assert_eq!(err.lines().count(), 1, "{err}");
 }
 
 #[test]

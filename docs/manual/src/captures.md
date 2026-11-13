@@ -91,6 +91,10 @@ conflict when merged.
 Reports read the file from disk, so captures help on the machine that wrote them whether or not
 you commit it. A capture only helps with calls in that machine's transcripts.
 
+A committed captures file can move calls between branches, so review changes to it like changes to
+the ledger. [`ledger check`](ledger.md#checking-ledger-changes) checks it too: a pull request may
+only append lines, and each new line must parse and have a timestamp that is not in the future.
+
 ### Duplicates and bad lines
 
 Two hooks racing on the same event can both write it, and a union merge can leave the same line

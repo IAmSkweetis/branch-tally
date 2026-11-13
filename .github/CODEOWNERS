@@ -1,1 +1,5 @@
 * @IAmSkweetis
+
+# Later entries win. The committed ledger and captures set the reported cost, so they get the
+# same reviewer as everything else, named explicitly so a broader rule above can never shadow it.
+.tally/** @IAmSkweetis

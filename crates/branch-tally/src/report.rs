@@ -74,8 +74,41 @@ pub(crate) fn ledger_target(flag: Option<&Path>) -> LedgerTarget<'_> {
     flag.map_or(LedgerTarget::Default, LedgerTarget::Explicit)
 }
 
-/// Runs the command. `Err` carries the one-line message for stderr.
-pub(crate) fn run(args: &ReportArgs) -> Result<(), String> {
+/// Exit code of a ledger-reading run stopped by conflicting ledger lines (1 is a generic failure,
+/// 2 is clap's usage error).
+pub(crate) const EXIT_LEDGER_CONFLICTS: u8 = 3;
+
+/// A failed run: the one line for stderr and the exit code.
+#[derive(Debug)]
+pub(crate) struct Failure {
+    pub(crate) message: String,
+    pub(crate) code: u8,
+}
+
+impl From<String> for Failure {
+    fn from(message: String) -> Self {
+        Self { message, code: 1 }
+    }
+}
+
+/// The ledger-trust gate (F-03): conflicting lines for one request change which usage is
+/// counted, so they stop the run unless the user opted in. Counts only, never ids or text.
+pub(crate) fn gate_ledger_conflicts(conflicts: u64, allow: bool) -> Result<(), Failure> {
+    if conflicts == 0 || allow {
+        return Ok(());
+    }
+    Err(Failure {
+        message: format!(
+            "error: {conflicts} ledger request(s) have conflicting lines, so the reported cost \
+             depends on which line wins. Inspect the ledger, or pass --allow-ledger-conflicts \
+             to proceed with the latest line for each"
+        ),
+        code: EXIT_LEDGER_CONFLICTS,
+    })
+}
+
+/// Runs the command. `Err` carries the one-line message for stderr and the exit code.
+pub(crate) fn run(args: &ReportArgs) -> Result<(), Failure> {
     let projects = projects_root()?;
     let Resolved {
         settings,
@@ -137,6 +170,10 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), String> {
         describe(&e, args.from_ledger)
     })?;
 
+    if let Some(ledger) = &report.ledger {
+        gate_ledger_conflicts(ledger.ledger_stats.conflicts, args.allow_ledger_conflicts)?;
+    }
+    prices::note_override(&table);
     if let Some(ledger) = &report.ledger {
         note_ledger(ledger);
     }

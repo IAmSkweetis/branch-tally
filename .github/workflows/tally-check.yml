@@ -1,0 +1,49 @@
+name: Tally check
+
+# Guards .tally/ledger.jsonl and .tally/captures.jsonl (and flags .tally/prices.toml) on every PR.
+#
+# This runs on `pull_request_target`, so the workflow file, scripts/ci-tally-check.sh and the
+# checker binary all come from the BASE branch: a PR cannot edit its own check, and its
+# .cargo/config.toml, build scripts and toolchain pin never run. The PR is only ever fetched as git
+# data (refs/pull/<N>/merge) and read by `branch-tally ledger check --head <rev>`; it is never
+# checked out, built or executed. No secrets, read-only token. Logic and tests:
+# scripts/ci-tally-check.sh, `just test-scripts`.
+#
+# It always runs and always reports (never path-filtered), so it can be a required check. The PR
+# that first adds this file does not run it, because the base branch lacks it yet; marking the
+# check required before that PR merges needs the admin bypass.
+
+on:
+  # zizmor: ignore[dangerous-triggers] -- deliberate: the check must come from the base branch so a PR cannot rewrite it. No PR code is checked out, built or run; the job has contents: read and no secrets.
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened]
+
+permissions: {}
+
+concurrency:
+  group: tally-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  tally-check:
+    name: tally-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      # The default ref for pull_request_target is the base branch: trusted code.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust (base toolchain pin)
+        run: sh scripts/ci-install-rust.sh
+      - name: Build branch-tally from the base branch
+        run: cargo build --release --locked -p branch-tally
+      - name: Check the ledger and captures against the base
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: sh scripts/ci-tally-check.sh target/release/branch-tally "$PR_NUMBER"

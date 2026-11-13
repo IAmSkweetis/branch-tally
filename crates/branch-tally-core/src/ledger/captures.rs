@@ -144,6 +144,11 @@ fn parse_line(bytes: &[u8]) -> Result<CaptureEvent, Bad> {
     serde_json::from_value(value).map_err(|_| Bad::Malformed)
 }
 
+/// Parses one line for [`super::check`]: the event, or `None` when the line is not a usable one.
+pub(super) fn parse_event(bytes: &[u8]) -> Option<CaptureEvent> {
+    parse_line(bytes).ok()
+}
+
 fn parse(bytes: &[u8]) -> Captures {
     let mut out = Captures::default();
     let mut seen: HashSet<String> = HashSet::new();

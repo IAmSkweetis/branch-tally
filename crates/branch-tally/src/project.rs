@@ -13,10 +13,12 @@ use branch_tally_core::{project, render};
 
 use crate::cli::ProjectArgs;
 use crate::prices;
-use crate::report::{Resolved, note_ledger_stats, resolve, stderr, stdout};
+use crate::report::{
+    Failure, Resolved, gate_ledger_conflicts, note_ledger_stats, resolve, stderr, stdout,
+};
 
 /// Runs the command. `Err` carries the one-line message for stderr.
-pub(crate) fn run(args: &ProjectArgs) -> Result<(), String> {
+pub(crate) fn run(args: &ProjectArgs) -> Result<(), Failure> {
     let Resolved { settings, cwd, .. } = resolve(
         &args.repo,
         args.config.as_deref(),
@@ -32,6 +34,8 @@ pub(crate) fn run(args: &ProjectArgs) -> Result<(), String> {
     )?;
     let table = prices::resolve_table(&prices::Locations::for_repo(&cwd))?;
     let read = read_ledger(args.ledger.as_deref(), &cwd)?;
+    gate_ledger_conflicts(read.stats().conflicts, args.allow_ledger_conflicts)?;
+    prices::note_override(&table);
     note_ledger_stats(read.stats());
     if read.modes().len() > 1 {
         let names: Vec<&str> = read.modes().iter().map(|m| m.as_str()).collect();
