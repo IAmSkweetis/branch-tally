@@ -58,12 +58,17 @@ irm https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install
 ```
 
 The binary goes to `~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows), after the archive is
-checked against the release's `SHA256SUMS`. The installers never edit your `PATH`; they print the
-line to add. Their options, verifying a download by hand and building from source are in the
-manual's [Installation](https://branch-tally.io/installation/) chapter.
+checked against the release's `SHA256SUMS`. That checksum is an integrity check, not proof of who
+built the archive. When the GitHub CLI (`gh`) or cosign is installed, the installers also verify
+the archive's build provenance attestation; without either they say provenance was not verified,
+and `--require-attestation` (`-RequireAttestation` on Windows) makes that an error. The installers
+never edit your `PATH`; they print the line to add. Their options, verifying a download by hand
+and building from source are in the manual's
+[Installation](https://branch-tally.io/installation/) chapter.
 
-To move to a newer release later, run `branch-tally update`. It checks the download against
-`SHA256SUMS` and asks before replacing the binary.
+To move to a newer release later, run `branch-tally update`. It verifies the release's minisign
+signature against the key built into the binary, then the checksum, and asks before replacing the
+binary. Releases from before signing can't be installed with `update`, only by hand.
 
 Then, inside a repository where you have worked with Claude Code:
 
