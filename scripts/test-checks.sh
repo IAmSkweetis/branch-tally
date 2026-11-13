@@ -272,7 +272,10 @@ tally_bin() {
 }
 tally_run() {
   # tally_run <binary> <pr>: the script's combined output; its exit status is the function's.
-  (cd "$tr/work" && HEAD_REF=feat/x BASE_REF=main sh "$tally_sh" "$@" 2>&1)
+  # PR_HEAD_SHA defaults to the merge ref's second parent (a fresh ref); a test overrides it.
+  sha=${PR_HEAD_SHA-$(git -C "$tr/remote" rev-parse --verify --quiet "refs/pull/${2:-0}/merge^2" 2>/dev/null || echo)}
+  (cd "$tr/work" && HEAD_REF=feat/x BASE_REF=main PR_HEAD_SHA=$sha \
+    TALLY_CHECK_RETRY_DELAY=${TALLY_CHECK_RETRY_DELAY-0} sh "$tally_sh" "$@" 2>&1)
 }
 tally_bin tb-ok 0 "note: 2 new ledger line(s) recorded for branch other" \
   "warning: .tally/prices.toml differs from base"
@@ -320,12 +323,98 @@ esac
 
 # a missing merge ref (conflicted PR) fails, never passes
 total=$((total + 1))
-out=$(tally_run "$scratch/tb-ok" 99)
+out=$(PR_HEAD_SHA=$(git -C "$tr/remote" rev-parse refs/pull/1/merge^2) tally_run "$scratch/tb-ok" 99)
 rc=$?
 [ "$rc" -ne 0 ] || { wrong=$((wrong + 1)); echo "WRONG: tally-check passed a missing merge ref" >&2; }
 case $out in
   *"::error"*"merge"*) ;;
   *) wrong=$((wrong + 1)); echo "WRONG: missing merge ref gave no clear error: $out" >&2 ;;
+esac
+
+# head-SHA check: the merge ref must be built from the head the event named. The test delay is 0
+# (or 2s where a background update must land between attempts).
+sha1=$(git -C "$tr/remote" rev-parse refs/pull/1/merge^2)
+merge1=$(git -C "$tr/remote" rev-parse refs/pull/1/merge)
+merge2=$(git -C "$tr/remote" rev-parse refs/pull/2/merge)
+git -C "$tr/remote" update-ref refs/pull/3/merge "$merge2"
+git -C "$tr/remote" update-ref refs/pull/5/merge "$merge2"
+
+# stale merge ref that never catches up: fails after the retries, says so, never runs the binary
+rm -f "$scratch/tb-ok.args"
+total=$((total + 1))
+out=$(PR_HEAD_SHA=$sha1 tally_run "$scratch/tb-ok" 3)
+rc=$?
+[ "$rc" -ne 0 ] || { wrong=$((wrong + 1)); echo "WRONG: tally-check passed a stale merge ref" >&2; }
+[ ! -e "$scratch/tb-ok.args" ] || { wrong=$((wrong + 1)); echo "WRONG: tally-check ran the binary on a stale merge ref" >&2; }
+case $out in
+  *"::error"*"stale"*"Re-run"*) ;;
+  *) wrong=$((wrong + 1)); echo "WRONG: stale merge ref gave no clear error: $out" >&2 ;;
+esac
+
+# a stale ref that catches up on a retry passes, and reads the caught-up merge commit
+rm -f "$scratch/tb-ok.args"
+total=$((total + 1))
+(sleep 1; git -C "$tr/remote" update-ref refs/pull/5/merge "$merge1") &
+updater=$!
+out=$(PR_HEAD_SHA=$sha1 TALLY_CHECK_RETRY_DELAY=2 tally_run "$scratch/tb-ok" 5)
+rc=$?
+wait "$updater"
+[ "$rc" -eq 0 ] || { wrong=$((wrong + 1)); echo "WRONG: tally-check did not pass a ref that caught up (exit $rc): $out" >&2; }
+case $(cat "$scratch/tb-ok.args" 2>/dev/null) in
+  *"--head $merge1 "*) ;;
+  *) wrong=$((wrong + 1)); echo "WRONG: tally-check did not read the caught-up merge commit" >&2 ;;
+esac
+
+# a missing, empty or malformed PR_HEAD_SHA fails
+nothex=$(printf '%040d' 0 | tr 0 g)
+for bad in "" abc "${sha1}0" "$nothex"; do
+  total=$((total + 1))
+  out=$(PR_HEAD_SHA=$bad tally_run "$scratch/tb-ok" 1)
+  rc=$?
+  [ "$rc" -ne 0 ] || { wrong=$((wrong + 1)); echo "WRONG: tally-check accepted PR_HEAD_SHA='$bad'" >&2; }
+  case $out in
+    *"::error"*PR_HEAD_SHA*) ;;
+    *) wrong=$((wrong + 1)); echo "WRONG: bad PR_HEAD_SHA='$bad' gave no clear error: $out" >&2 ;;
+  esac
+done
+total=$((total + 1))
+(cd "$tr/work" && env -u PR_HEAD_SHA HEAD_REF=feat/x BASE_REF=main sh "$tally_sh" "$scratch/tb-ok" 1 >/dev/null 2>&1) &&
+  { wrong=$((wrong + 1)); echo "WRONG: tally-check ran with PR_HEAD_SHA unset" >&2; }
+
+# a fetch failure (unreachable remote) and a missing ref give distinct messages, both fail
+total=$((total + 1))
+out=$(cd "$tr/work" && REMOTE="$scratch/no-such-remote" HEAD_REF=feat/x BASE_REF=main PR_HEAD_SHA=$sha1 \
+  sh "$tally_sh" "$scratch/tb-ok" 1 2>&1)
+rc=$?
+[ "$rc" -ne 0 ] || { wrong=$((wrong + 1)); echo "WRONG: tally-check passed an unreachable remote" >&2; }
+case $out in
+  *"::error"*"could not fetch"*) ;;
+  *) wrong=$((wrong + 1)); echo "WRONG: fetch failure gave no fetch-failure error: $out" >&2 ;;
+esac
+case $out in
+  *"does not exist"*) wrong=$((wrong + 1)); echo "WRONG: fetch failure was reported as a missing ref: $out" >&2 ;;
+esac
+total=$((total + 1))
+out=$(PR_HEAD_SHA=$sha1 tally_run "$scratch/tb-ok" 99)
+case $out in
+  *"::error"*"does not exist"*"conflict"*) ;;
+  *) wrong=$((wrong + 1)); echo "WRONG: missing ref did not say it does not exist: $out" >&2 ;;
+esac
+case $out in
+  *"could not fetch"*) wrong=$((wrong + 1)); echo "WRONG: missing ref was reported as a fetch failure: $out" >&2 ;;
+esac
+
+# an empty stop-commands token fails closed (a stub od stands in for a broken generator)
+mkdir -p "$scratch/noop-od"
+printf '#!/bin/sh\nexit 0\n' >"$scratch/noop-od/od"
+chmod +x "$scratch/noop-od/od"
+total=$((total + 1))
+out=$(PATH="$scratch/noop-od:$PATH" tally_run "$scratch/tb-ok" 1)
+rc=$?
+[ "$rc" -ne 0 ] || { wrong=$((wrong + 1)); echo "WRONG: tally-check passed with an empty stop-commands token" >&2; }
+case $out in
+  *"::error"*token*) ;;
+  *) wrong=$((wrong + 1)); echo "WRONG: empty token gave no clear error: $out" >&2 ;;
 esac
 
 # a missing binary, missing refs and a non-numeric PR number all fail
