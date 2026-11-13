@@ -814,10 +814,16 @@ In order, it:
    already on the latest release or newer. `--force` carries on and reinstalls.
 5. Asks `Update branch-tally vA -> vB? [y/N]` on stderr, unless `--yes` is given. Only `y` or `yes`
    proceeds. When stdin is not a terminal it cannot ask, so it declines and says to pass `--yes`.
-6. Downloads the release's `SHA256SUMS` and the archive for this platform, and checks the archive
-   against it. A checksum mismatch, or an archive that `SHA256SUMS` does not list, is an error and
-   nothing is installed.
-7. Takes only the binary out of the archive and moves it over the running executable in one step.
+6. Downloads the release's `SHA256SUMS` and `SHA256SUMS.minisig`, and verifies the signature
+   against the release public key compiled into the binary. The signature's trusted comment must
+   be exactly `branch-tally <tag> SHA256SUMS` for the tag being installed, so a signature from
+   another release is refused. This is the proof of origin, and it comes before any checksum is
+   trusted. A missing or bad signature is an error and nothing is installed (see
+   [Errors](#errors)).
+7. Downloads the archive for this platform and checks it against its line in the signed
+   `SHA256SUMS`. That is an integrity check against a corrupted download. A checksum mismatch, or
+   an archive that `SHA256SUMS` does not list, is an error and nothing is installed.
+8. Takes only the binary out of the archive and moves it over the running executable in one step.
    A symlink is followed, so the file it points at is replaced. On Windows the running `.exe` is
    renamed to `branch-tally.exe.old` first, because a running program cannot be overwritten. The
    `.old` file is deleted the next time `update` runs.
@@ -840,6 +846,8 @@ One line on stdout when it succeeds, or on stderr when it fails:
 
 `--check` with `--version` compares the version you named with the running one. It does not check
 that a release with that tag exists, so it reports `update available` for any version that differs.
+`--check` downloads no signature either, so it can report a release that `update` then refuses
+because it is not signed.
 
 ### Refusals
 
@@ -859,7 +867,14 @@ that a release with that tag exists, so it reports `update available` for any ve
 | `release not found` | No release has that tag, or the mirror has no latest release. |
 | `no release is built for target` | This binary was built for a platform with no prebuilt release. |
 | `download failed` | A network or read error. URLs are left out of the message. |
-| `<archive> is not listed in SHA256SUMS`, `malformed checksum`, `checksum mismatch` | The download could not be verified. Nothing was installed. |
+| `<tag> is not signed, so its origin can't be verified` | The release has no `SHA256SUMS.minisig`. Releases published before signing began are refused this way, including through `--version`. Nothing was installed. Install it [by hand](installation/manual-download.md) or with an installer instead. |
+| `SHA256SUMS.minisig is malformed` | The signature file could not be read as a minisign signature. Nothing was installed. |
+| `the signature does not match SHA256SUMS` | `SHA256SUMS` is not the file that was signed. Nothing was installed. |
+| `the signature was made by a different key than the release key` | The signature is valid but not the maintainer's. Nothing was installed. |
+| `the signature uses the legacy format, which is refused` | An old-style minisign signature. Releases are never signed that way. Nothing was installed. |
+| `the signature is for release <tag>, not <tag>` | A signature from another release. Nothing was installed. |
+| `the signature is not for this release's SHA256SUMS` | The signed trusted comment does not name this release's `SHA256SUMS`. Nothing was installed. |
+| `<archive> is not listed in SHA256SUMS`, `malformed checksum`, `checksum mismatch` | The download did not match the signed `SHA256SUMS`. Nothing was installed. |
 | `install failed` | The new binary could not be extracted or moved into place. The old one is kept. |
 
 ### Release mirror
@@ -869,5 +884,13 @@ the same layout as the releases page (`<base>/latest/download/…` and `<base>/d
 The default is `https://github.com/IAmSkweetis/branch-tally/releases`. A `file://` URL naming a
 local directory also works. Any other scheme, including plain `http://`, is refused before any
 network call.
+
+A mirror is trusted only as far as the signature: whatever it serves must still verify against the
+release key compiled into the binary. There is no flag, variable or config key that replaces that
+key at run time. A new key means a new branch-tally release.
+
+Binaries released before signing began don't check the signature when they update; they check
+only `SHA256SUMS`. To be sure of a release such a binary installed, check it
+[by hand](installation/manual-download.md), or reinstall with an installer.
 
 `update` sends no account or identifying data, only a `branch-tally/<version>` User-Agent.
