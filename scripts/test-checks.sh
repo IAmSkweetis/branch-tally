@@ -255,6 +255,10 @@ mkdir -p "$tr/remote" "$tr/work"
     git commit -q -m "chore: no tally"
   git checkout -q main && git checkout -q -b merge2 && git merge -q --no-ff -m merge pr2
   git update-ref refs/pull/2/merge HEAD
+  # PR 4's merge ref is stale on the base side: its second parent is the PR head, but its first
+  # parent is main before it moved, so it no longer matches the base branch tip.
+  git checkout -q -b merge4 main~1 && git merge -q --no-ff -m merge pr1
+  git update-ref refs/pull/4/merge HEAD
   git checkout -q main
   cd ../work && git init -q -b main . && git remote add origin "$tr/remote" &&
     git fetch -q origin main && git reset -q --hard FETCH_HEAD
@@ -265,7 +269,7 @@ tally_bin() {
   shift 2
   {
     printf '#!/bin/sh\nprintf "%%s\\n" "$*" >"%s.args"\n' "$scratch/$name"
-    for line in "$@"; do printf 'echo %s >&2\n' "'$line'"; done
+    for line in "$@"; do printf 'printf "%%s\\n" %s >&2\n' "'$line'"; done
     printf 'exit %s\n' "$code"
   } >"$scratch/$name"
   chmod +x "$scratch/$name"
@@ -281,6 +285,7 @@ tally_bin tb-ok 0 "note: 2 new ledger line(s) recorded for branch other" \
   "warning: .tally/prices.toml differs from base"
 tally_bin tb-viol 1 "error: bad line"
 tally_bin tb-inject 0 "::error::pwned" "warning: ::error::nested" "::add-mask::secret"
+tally_bin tb-bslash 0 'note: 1 new ledger line(s) recorded for branch x\n::error::forged'
 
 # a passing check, with notice and warning translation, and the exact interface
 total=$((total + 1))
@@ -443,6 +448,28 @@ verdict=$(printf '%s\n' "$out" | awk '
 case $out in
   *"::warning::::error::nested"*) ;;
   *) wrong=$((wrong + 1)); echo "WRONG: injected warning was not re-emitted as plain warning text: $out" >&2 ;;
+esac
+
+# a merge ref whose first parent is not the current base tip is stale too: it fails after the
+# retries and never runs the binary, so an outdated base can't hide the PR's .tally/ changes
+total=$((total + 1))
+rm -f "$scratch/tb-ok.args"
+out=$(tally_run "$scratch/tb-ok" 4)
+rc=$?
+[ "$rc" -ne 0 ] || { wrong=$((wrong + 1)); echo "WRONG: tally-check passed a merge ref built on an old base" >&2; }
+[ ! -e "$scratch/tb-ok.args" ] || { wrong=$((wrong + 1)); echo "WRONG: tally-check ran the binary on a merge ref built on an old base" >&2; }
+case $out in
+  *"::error"*"stale"*"base"*) ;;
+  *) wrong=$((wrong + 1)); echo "WRONG: an old-base merge ref gave no clear error: $out" >&2 ;;
+esac
+
+# a ledger branch name holding a literal backslash-n stays one annotation line: dash's echo would
+# expand it into a second line that starts a workflow command outside the stop-commands block
+total=$((total + 1))
+out=$(tally_run "$scratch/tb-bslash" 1)
+case $(printf '%s\n' "$out" | grep -c '^::error::forged') in
+  0) ;;
+  *) wrong=$((wrong + 1)); echo "WRONG: a backslash-n in a note escaped as a workflow command: $out" >&2 ;;
 esac
 
 echo "check scripts: $total cases, $wrong wrong"

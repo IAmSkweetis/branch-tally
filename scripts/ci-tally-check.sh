@@ -12,7 +12,8 @@
 #      fail with distinct messages, told apart by `git ls-remote`.
 #   2. head = the merge commit, base = its first parent, so a stale pull_request.base.sha cannot
 #      cause false failures. The merge commit's second parent must equal PR_HEAD_SHA (from the
-#      event, validated as 40 or 64 hex). GitHub can fire the event before it recomputes the merge
+#      event, validated as 40 or 64 hex), and its first parent the current tip of BASE_REF
+#      (fetched each attempt). GitHub can fire the event before it recomputes the merge
 #      ref; a mismatch is re-fetched, 5 attempts in all, TALLY_CHECK_RETRY_DELAY (default 5)
 #      seconds apart, then fails with a "stale, re-run" error. It never passes on a mismatch.
 #   3. No change under .tally/ between base and head: report success and stop.
@@ -46,6 +47,10 @@ case ${#head_sha} in
   *) echo "::error::PR_HEAD_SHA must be 40 or 64 hex characters; refusing to validate an unknown head" >&2; exit 1 ;;
 esac
 head_sha=$(printf '%s' "$head_sha" | tr 'A-F' 'a-f')
+# BASE_REF goes into a refspec, so it must be a plain branch name (no leading '-', no ':').
+case $base_ref in -*) echo "::error::BASE_REF is not a valid branch name" >&2; exit 1 ;; esac
+git check-ref-format --branch "$base_ref" >/dev/null 2>&1 ||
+  { echo "::error::BASE_REF is not a valid branch name" >&2; exit 1; }
 attempts=5
 delay=${TALLY_CHECK_RETRY_DELAY:-5}
 case $delay in '' | *[!0-9]*) delay=5 ;; esac
@@ -69,15 +74,26 @@ while :; do
     { echo "::error::refs/pull/$pr/merge is not a commit" >&2; exit 1; }
   merged_head=$(git rev-parse --verify --quiet "$head^2^{commit}") ||
     { echo "::error::refs/pull/$pr/merge is not a merge commit; refusing to guess a base" >&2; exit 1; }
-  [ "$merged_head" = "$head_sha" ] && break
+  # The base side must be current too: a merge ref built on an old base tip would compare the PR
+  # against the wrong base, and could hide its .tally/ changes.
+  git fetch --quiet --no-tags "$remote" "+refs/heads/$base_ref:refs/tally-check/base" 2>/dev/null ||
+    { echo "::error title=tally-check::could not fetch the base branch tip. Re-run the job." >&2; exit 1; }
+  base_tip=$(git rev-parse --verify --quiet "refs/tally-check/base^{commit}") ||
+    { echo "::error::the fetched base branch tip is not a commit" >&2; exit 1; }
+  merged_base=$(git rev-parse --verify --quiet "$head^1^{commit}") ||
+    { echo "::error::the merge commit has no first parent" >&2; exit 1; }
+  [ "$merged_head" = "$head_sha" ] && [ "$merged_base" = "$base_tip" ] && break
   if [ "$n" -ge "$attempts" ]; then
-    echo "::error title=tally-check::refs/pull/$pr/merge is stale: it merges $merged_head but the pull request head is $head_sha, after $attempts fetches. The check will not pass for a head it did not read. Re-run the job." >&2
+    if [ "$merged_head" != "$head_sha" ]; then
+      echo "::error title=tally-check::refs/pull/$pr/merge is stale: it merges $merged_head but the pull request head is $head_sha, after $attempts fetches. The check will not pass for a head it did not read. Re-run the job." >&2
+    else
+      echo "::error title=tally-check::refs/pull/$pr/merge is stale on the base side: it is built on $merged_base but the base branch tip is $base_tip, after $attempts fetches. The check will not pass against a base it did not read. Re-run the job." >&2
+    fi
     exit 1
   fi
   sleep "$delay"
 done
-base=$(git rev-parse --verify --quiet "$head^1^{commit}") ||
-  { echo "::error::the merge commit has no first parent" >&2; exit 1; }
+base=$merged_base
 
 changed=$(git diff --name-only "$base" "$head" -- .tally/)
 if [ -z "$changed" ]; then
@@ -97,12 +113,13 @@ cat "$out"
 echo "::$token::"
 
 # Re-emit as annotations. The text after the prefix is data: it stays on one line, so it cannot
-# start a second command.
+# start a second command. printf '%s', never echo: dash's echo expands a backslash-n in a ledger
+# branch name into a real line break, which would start a command outside the stop-commands block.
 while IFS= read -r line || [ -n "$line" ]; do
   line=$(printf '%s' "$line" | tr -d '\r')
   case $line in
-    "warning: "*) echo "::warning::${line#warning: }" ;;
-    "note: "*) echo "::notice::${line#note: }" ;;
+    "warning: "*) printf '::warning::%s\n' "${line#warning: }" ;;
+    "note: "*) printf '::notice::%s\n' "${line#note: }" ;;
   esac
 done <"$out"
 

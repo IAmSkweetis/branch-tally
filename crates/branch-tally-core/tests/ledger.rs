@@ -677,6 +677,28 @@ mod check {
     }
 
     #[test]
+    fn two_new_lines_with_one_key_and_different_data_conflict() {
+        // An empty base, so no base-key reuse: the pair would still make every ledger reader on
+        // the base branch stop with exit 3 once merged.
+        let first = line(&entry("a", BRANCH, 5, Some(BEFORE)));
+        let second = line(&entry("a", BRANCH, 6, Some("2026-05-02T00:00:00Z")));
+        let out = run(None, Some(&lines(&[&first, &second])), None, None);
+        assert_eq!(
+            out,
+            vec![v(CheckedFile::Ledger, Some(2), Rule::ConflictingNewKey)]
+        );
+    }
+
+    #[test]
+    fn two_new_lines_with_one_key_and_the_same_data_do_not_conflict() {
+        // The reader collapses these as duplicates without calling them a conflict.
+        let first = line(&entry("a", BRANCH, 5, Some(BEFORE)));
+        let again = line(&entry("a", BRANCH, 5, Some("2026-05-02T00:00:00Z")));
+        let out = run(None, Some(&lines(&[&first, &again])), None, None);
+        assert_eq!(out, vec![]);
+    }
+
+    #[test]
     fn token_fields_over_the_ceiling_are_flagged_and_the_ceiling_itself_passes() {
         let at_limit = line(&entry("a", BRANCH, MAX_TOKENS_PER_FIELD, Some(BEFORE)));
         let mut big = entry("b", BRANCH, 1, Some(BEFORE));

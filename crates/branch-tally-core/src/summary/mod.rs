@@ -186,7 +186,7 @@ pub fn summarize(
     }
     footnote.worktree_sessions = is_worktree.iter().filter(|w| **w).count() as u64;
 
-    let (total, total_over) = sum_buckets(&by_model);
+    let (total, total_over) = sum_buckets(&by_model, &by_attribution);
     // A helper that already saturated hands over `u64::MAX`; that is a floor too.
     over |= total_over || inputs_saturated(unattributed, ambiguous);
 
@@ -222,14 +222,28 @@ pub fn summarize(
 }
 
 /// The Total row: every bucket of the by-model table added together.
-/// Saturates at `u64::MAX`; the flag says whether it did.
-fn sum_buckets(by_model: &[(String, Bucket)]) -> (Bucket, bool) {
+/// Saturates at `u64::MAX`; the flag says whether it, or any row's token count, did.
+fn sum_buckets(
+    by_model: &[(String, Bucket)],
+    by_attribution: &[(String, Bucket)],
+) -> (Bucket, bool) {
     let mut total = Bucket::default();
     let mut over = false;
     for (_, b) in by_model {
         over |= total.saturating_add_assign(b);
     }
+    // A row's token count is a sum of five fields; each can fit while the sum does not.
+    over |= total.checked_tokens().is_none() || any_row_overflows(by_model, by_attribution);
     (total, over)
+}
+
+/// Whether any table row's token count passes `u64::MAX`: each field can fit while the sum does
+/// not.
+fn any_row_overflows(by_model: &[(String, Bucket)], by_attribution: &[(String, Bucket)]) -> bool {
+    by_model
+        .iter()
+        .chain(by_attribution)
+        .any(|(_, b)| b.checked_tokens().is_none())
 }
 
 /// Whether a counting helper already saturated: a `u64::MAX` count is a floor.

@@ -221,6 +221,33 @@ fn file_at_missing_path_is_none() {
 }
 
 #[test]
+fn file_at_a_directory_is_an_error_not_none() {
+    // A tree at the path is not "absent": reading it as absent would let a committed directory
+    // hide a ledger from the check.
+    let f = fixture();
+    commit_file(&f.main, ".tally/ledger.jsonl/inner", b"x");
+    let err = SystemGit
+        .file_at(&f.main, "HEAD", Path::new(".tally/ledger.jsonl"))
+        .expect_err("a directory is not a file");
+    assert!(matches!(err, GitError::NotAFile), "got {err:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn file_at_a_symlink_is_an_error_not_its_target_text() {
+    let f = fixture();
+    commit_file(&f.main, "other.txt", b"x");
+    std::fs::create_dir_all(f.main.join(".tally")).expect("mkdir");
+    std::os::unix::fs::symlink("../other.txt", f.main.join(".tally/ledger.jsonl")).expect("link");
+    git(&f.main, &["add", ".tally/ledger.jsonl"]);
+    git(&f.main, &["commit", "-q", "-m", "link"]);
+    let err = SystemGit
+        .file_at(&f.main, "HEAD", Path::new(".tally/ledger.jsonl"))
+        .expect_err("a symlink is not a regular file");
+    assert!(matches!(err, GitError::NotAFile), "got {err:?}");
+}
+
+#[test]
 fn file_at_unknown_ref_is_a_typed_error_not_none() {
     let f = fixture();
     let err = SystemGit

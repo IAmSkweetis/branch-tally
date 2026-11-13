@@ -573,6 +573,10 @@ ignored.
   - have a `recorded_at` that is present, strict RFC 3339 (see [Timestamps](#timestamps)) and
     not later than the time of the check;
   - not reuse a `request_id` and `recorded_for` pair that a base line already has;
+  - not share its `request_id` and `recorded_for` pair with an earlier new line while holding
+    different data (`conflicts with an earlier new line for the same request`). Once merged, such
+    a pair would make `report --from-ledger` and `project` stop with exit 3. An exact repeat that
+    differs only in `recorded_at` is allowed;
   - have no token field (`input`, `cache_write_5m`, `cache_write_1h`, `cache_read`, `output`,
     `thinking`) above 10,000,000.
 

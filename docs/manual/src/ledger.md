@@ -191,6 +191,14 @@ came from, and remove the wrong one. To report anyway, pass `--allow-ledger-conf
 with the latest `recorded_at` is then used for each key, and the count is still printed on stderr
 as `note: N ledger request(s) had conflicting lines; kept the latest`.
 
+If both conflicting lines are already on your base branch, a pull request that removes one fails
+[`ledger check`](#checking-ledger-changes), because base lines may only be appended to. That repair
+is the one change that has to bypass the check: open a pull request that removes the wrong line,
+say why in its description, and merge it with whatever bypass your repository's rules allow, so the
+exception is recorded on the pull request. A pull request can't add a new conflict past the check,
+which fails a new line that repeats a key the base holds or that conflicts with an earlier new
+line.
+
 Exit 3 is separate from the general failure status, 1. A script that runs `report --from-ledger`
 or `project` and tests only for exit 1 should test for any non-zero status instead.
 
@@ -262,7 +270,8 @@ same goes for `.tally/captures.jsonl`, which can move calls between branches, an
 each pull request. It passes only when the pull request appends to `.tally/ledger.jsonl` and
 `.tally/captures.jsonl` and changes nothing already there, and when each new ledger line is not
 recorded for the base branch, has a `recorded_at` that is not in the future, does not repeat a key
-the base already holds, and has no token count above 10,000,000. The full rules and messages are in
+the base already holds or conflict with another new line for the same key, and has no token
+count above 10,000,000. The full rules and messages are in
 the [CLI reference](cli.md#branch-tally-ledger-check).
 
 A pull request may add lines for its own branch, and also for other branches, such as usage
@@ -299,19 +308,29 @@ copy of the workflow:
    `.tally/` files from git, so the working tree, which holds the base branch, is not used:
 
 ```sh
-git fetch --no-tags origin "+refs/pull/$PR_NUMBER/merge:refs/tally-check/merge"
+git fetch --no-tags origin "+refs/pull/$PR_NUMBER/merge:refs/tally-check/merge" \
+  "+refs/heads/$BASE_REF:refs/tally-check/base"
 head=$(git rev-parse --verify "refs/tally-check/merge^{commit}")
 base=$(git rev-parse --verify "$head^1")
+# GitHub can start the job before it recomputes the merge commit: refuse a stale one.
+[ "$(git rev-parse --verify "$head^2")" = "$HEAD_SHA" ] ||
+  { echo "stale merge commit (head side); re-run the job" >&2; exit 1; }
+[ "$base" = "$(git rev-parse --verify refs/tally-check/base)" ] ||
+  { echo "stale merge commit (base side); re-run the job" >&2; exit 1; }
 branch-tally ledger check --base "$base" --head "$head" \
   --head-branch "$HEAD_REF" --base-branch "$BASE_REF"
 ```
 
-Here `PR_NUMBER`, `HEAD_REF` and `BASE_REF` come from the event
-(`github.event.pull_request.number`, `.head.ref` and `.base.ref`). Pass them as environment
-variables, not by pasting `${{ … }}` into the script. Using the merge commit's first parent as the
-base, rather than the base branch's tip, keeps the comparison to exactly what the pull request
-adds. GitHub doesn't create a merge commit for a pull request with conflicts, so the fetch fails
-until they are resolved.
+Here `PR_NUMBER`, `HEAD_REF`, `HEAD_SHA` and `BASE_REF` come from the event
+(`github.event.pull_request.number`, `.head.ref`, `.head.sha` and `.base.ref`). Pass them as
+environment variables, not by pasting `${{ … }}` into the script. Using the merge commit's first
+parent as the base keeps the comparison to exactly what the pull request adds. The two stale checks
+make sure that merge commit is the current one: it must merge the head the event names, onto the
+base branch's current tip, or the check would read files the pull request no longer has. A job that
+starts just after a push can hit either; retrying the fetch a few times before failing avoids
+needless re-runs, as [this repository's workflow](workflows/this-repository.md) does. GitHub
+doesn't create a merge commit for a pull request with conflicts, so the fetch fails until they are
+resolved.
 
 Pass `--head-branch` and `--base-branch` in CI. The current branch there is not the pull
 request's: without `--head-branch`, a detached checkout exits 1, and a checkout of the base branch

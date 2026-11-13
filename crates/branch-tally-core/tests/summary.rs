@@ -721,3 +721,19 @@ fn ordinary_totals_are_not_flagged() {
     let s = run(vec![rec("s", "feat/x").usage([1, 2, 3, 4, 5], None)]);
     assert!(!s.footnote.totals_overflowed);
 }
+
+#[test]
+fn a_token_total_that_saturates_across_fields_marks_the_totals() {
+    // Every field fits, every record and session fits, and each model's bucket fits; only the
+    // Total row's token sum (input + output) passes `u64::MAX`.
+    let s = run(vec![
+        rec("s1", "feat/x")
+            .model(Some("a"))
+            .usage([u64::MAX, 0, 0, 0, 0], None),
+        rec("s2", "feat/x")
+            .model(Some("b"))
+            .usage([0, 0, 0, 0, 1], None),
+    ]);
+    assert_eq!(s.total.tokens(), u64::MAX);
+    assert!(s.footnote.totals_overflowed);
+}

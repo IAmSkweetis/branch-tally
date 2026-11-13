@@ -184,6 +184,9 @@ fn describe(v: &Violation) -> String {
         Rule::InvalidTimestamp => "invalid timestamp".to_owned(),
         Rule::FutureTimestamp => "future timestamp".to_owned(),
         Rule::DuplicateKey => "duplicate of a base request".to_owned(),
+        Rule::ConflictingNewKey => {
+            "conflicts with an earlier new line for the same request".to_owned()
+        }
         Rule::TokenOverCeiling { field } => {
             format!("token field {field} over the {MAX_TOKENS_PER_FIELD} ceiling")
         }

@@ -52,6 +52,10 @@ pub enum GitError {
         /// Which argument: `rev` or `path`.
         what: &'static str,
     },
+    /// The path exists at the rev but is not a regular file: a directory, a symlink or a
+    /// submodule. Reported as an error, never as "absent", so it can't hide a file's contents.
+    #[error("the path at that rev is not a regular file")]
+    NotAFile,
 }
 
 fn display_code(code: Option<i32>) -> String {
@@ -121,15 +125,17 @@ pub trait Git {
 
     /// The bytes of the repository-relative `path` as of `rev`.
     ///
-    /// `Ok(None)` means `rev` resolves but holds no file at `path`. A `rev` that does not
-    /// resolve to a commit is an `Err`, never `None`, so a typo cannot read as "file deleted".
+    /// `Ok(None)` means `rev` resolves but holds nothing at `path`. A `rev` that does not
+    /// resolve to a commit is an `Err`, never `None`, so a typo cannot read as "file deleted";
+    /// so is a path that holds something other than a regular file, and a failed read.
     /// Errors never carry file contents.
     ///
     /// # Errors
     ///
     /// [`GitError::InvalidArgument`] for a `rev` starting with `-` or a `path` that is empty,
-    /// absolute or contains `..`; [`GitError::Failed`] when `rev` is unknown or `repo` is not a
-    /// repository; [`GitError::Spawn`] when git cannot run.
+    /// absolute or contains `..`; [`GitError::NotAFile`] when `path` is a directory, symlink or
+    /// submodule at `rev`; [`GitError::Failed`] when `rev` is unknown, `repo` is not a
+    /// repository or the object cannot be read; [`GitError::Spawn`] when git cannot run.
     fn file_at(&self, repo: &Path, rev: &str, path: &Path) -> Result<Option<Vec<u8>>, GitError>;
 }
 
@@ -285,7 +291,8 @@ impl Git for SystemGit {
 
     fn file_at(&self, repo: &Path, rev: &str, path: &Path) -> Result<Option<Vec<u8>>, GitError> {
         const RESOLVE: &str = "rev-parse --verify <rev>";
-        const SHOW: &str = "cat-file blob <rev>:<path>";
+        const LIST: &str = "ls-tree <rev> -- <path>";
+        const SHOW: &str = "cat-file blob <object>";
         check_rev(rev)?;
         let rel = repo_relative_spec(path)?;
         // Resolve the rev on its own first: `cat-file` exits the same way for a missing path and
@@ -302,17 +309,45 @@ impl Git for SystemGit {
                 &commit,
             ],
         )?;
-        let spec = format!("{rev}:{rel}");
+        // Look the path up in the rev's tree, so "absent" is established on its own and a read
+        // failure can never pass for it. `-z` keeps the path raw; only an exact match counts.
+        let listing = Self::run(
+            repo,
+            LIST,
+            &["ls-tree", "-z", "--end-of-options", rev, "--", &rel],
+        )?;
+        let Some(meta) = listing.split('\0').find_map(|entry| {
+            let (meta, name) = entry.split_once('\t')?;
+            (name == rel).then_some(meta)
+        }) else {
+            return Ok(None);
+        };
+        // `<mode> <type> <object>`: only a regular file (not a tree, symlink or submodule).
+        let mut fields = meta.split_whitespace();
+        let (Some(mode), Some(kind), Some(object)) = (fields.next(), fields.next(), fields.next())
+        else {
+            return Err(GitError::UnexpectedOutput { subcommand: LIST });
+        };
+        if kind != "blob" || !matches!(mode, "100644" | "100755") {
+            return Err(GitError::NotAFile);
+        }
         let output = Command::new("git")
-            .args(["cat-file", "blob", &spec])
+            .args(["cat-file", "blob", object])
             .current_dir(repo)
             .output()
             .map_err(|source| GitError::Spawn {
                 subcommand: SHOW,
                 source,
             })?;
-        // stderr is discarded unread: it can echo the spec, and the rev is already known good.
-        Ok(output.status.success().then_some(output.stdout))
+        // stderr is discarded unread. The object is known to exist, so a failure here is an
+        // error, never "absent".
+        if !output.status.success() {
+            return Err(GitError::Failed {
+                subcommand: SHOW,
+                code: output.status.code(),
+            });
+        }
+        Ok(Some(output.stdout))
     }
 }
 

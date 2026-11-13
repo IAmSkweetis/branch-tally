@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::captures::parse_event;
-use super::{EntryKey, parse_line};
+use super::{EntryKey, LedgerEntry, parse_line};
 use crate::model::Timestamp;
 
 /// A single token field above this on one ledger line is a violation.
@@ -38,6 +38,9 @@ pub enum Rule {
     FutureTimestamp,
     /// A new ledger line's `(request_id, recorded_for)` already exists on base.
     DuplicateKey,
+    /// A new ledger line shares its `(request_id, recorded_for)` with an earlier new line but holds
+    /// different data: the reader would see a conflict, and ledger readers would stop (exit 3).
+    ConflictingNewKey,
     /// A new ledger line has a token field above [`MAX_TOKENS_PER_FIELD`].
     TokenOverCeiling {
         /// The usage field's name.
@@ -110,12 +113,15 @@ pub fn check(input: &CheckInput<'_>) -> CheckReport {
         .filter_map(|l| parse_line(l).ok())
         .map(|(e, _)| e.key())
         .collect();
+    // The first new line seen for each key, to catch a later new line that conflicts with it.
+    let mut new_entries: HashMap<EntryKey, LedgerEntry> = HashMap::new();
     for (number, raw) in &ledger.new_lines {
         check_ledger_line(
             raw,
             *number,
             input,
             &base_keys,
+            &mut new_entries,
             &mut violations,
             &mut others,
         );
@@ -198,6 +204,7 @@ fn check_ledger_line(
     line: u64,
     input: &CheckInput<'_>,
     base_keys: &HashSet<EntryKey>,
+    new_entries: &mut HashMap<EntryKey, LedgerEntry>,
     out: &mut Vec<Violation>,
     others: &mut BTreeMap<String, u64>,
 ) {
@@ -228,6 +235,15 @@ fn check_ledger_line(
     }
     if base_keys.contains(&entry.key()) {
         flag(Rule::DuplicateKey);
+    }
+    // Same test as the reader's: a repeat with the same data is a duplicate, anything else a
+    // conflict that would make ledger readers on the base branch stop.
+    match new_entries.get(&entry.key()) {
+        Some(first) if !first.same_data(&entry) => flag(Rule::ConflictingNewKey),
+        Some(_) => {}
+        None => {
+            new_entries.insert(entry.key(), entry.clone());
+        }
     }
     let u = &entry.usage;
     let fields = [
