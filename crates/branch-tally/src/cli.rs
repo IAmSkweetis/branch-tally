@@ -259,6 +259,11 @@ pub(crate) struct ReportArgs {
     /// The ledger file (default: .tally/ledger.jsonl at the root of the current checkout).
     #[arg(long, value_name = "PATH")]
     pub(crate) ledger: Option<PathBuf>,
+
+    /// With --from-ledger, proceed even if the ledger has conflicting lines for one request (the latest line wins).
+    /// Without it such a ledger stops the run with exit 3, because a conflict can rewrite cost.
+    #[arg(long)]
+    pub(crate) allow_ledger_conflicts: bool,
 }
 
 /// `project`: the ledger-wide report.
@@ -271,6 +276,11 @@ pub(crate) struct ProjectArgs {
     /// The ledger file (default: .tally/ledger.jsonl at the root of the current checkout).
     #[arg(long, value_name = "PATH")]
     pub(crate) ledger: Option<PathBuf>,
+
+    /// Proceed even if the ledger has conflicting lines for one request (the latest line wins).
+    /// Without it such a ledger stops the run with exit 3, because a conflict can rewrite cost.
+    #[arg(long)]
+    pub(crate) allow_ledger_conflicts: bool,
 
     /// Output format: md (default) or json. `--md` and `--json` are shorthands; they cannot be
     /// combined with `--format`.
