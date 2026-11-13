@@ -180,7 +180,7 @@ function Install-BranchTally {
     # and 7 alike. file:// is a plain copy (the test and local-mirror seam). The scheme test is
     # case-insensitive and ordinal, the same as the mirror check above. Headers (a token) are
     # dropped when a redirect leaves the original host.
-    param([string]$Url, [string]$OutFile, [hashtable]$Headers = @{})
+    param([string]$Url, [string]$OutFile, [hashtable]$Headers = @{}, [int]$TimeoutSec = 0)
     if ($Url.StartsWith('file://', [System.StringComparison]::OrdinalIgnoreCase)) {
       # Invoke-WebRequest has no file:// support.
       Copy-Item -LiteralPath ([Uri]$Url).LocalPath -Destination $OutFile
@@ -198,7 +198,11 @@ function Install-BranchTally {
       $status = 0
       $location = $null
       try {
-        Invoke-WebRequest -Uri $current -OutFile $OutFile -UseBasicParsing -MaximumRedirection 0 -Headers $sendHeaders
+        # Windows PowerShell 5.1 has no timeout by default. $TimeoutSec applies to each hop, and a
+        # timeout throws without a response, so it reaches the caller as a failure.
+        $request = @{ Uri = $current; OutFile = $OutFile; UseBasicParsing = $true; MaximumRedirection = 0; Headers = $sendHeaders }
+        if ($TimeoutSec -gt 0) { $request['TimeoutSec'] = $TimeoutSec }
+        Invoke-WebRequest @request
         return
       } catch {
         # 5.1 throws a WebException (HttpWebResponse, WebHeaderCollection). 7 throws an
@@ -238,7 +242,8 @@ function Install-BranchTally {
         }
       }
       $json = Join-Path $Dir 'latest.json'
-      Get-Remote "$api/repos/$repo/releases/latest" $json $headers
+      # 30 seconds per hop, like install.sh. A timeout lands in the catch below and so in the fallback.
+      Get-Remote "$api/repos/$repo/releases/latest" $json $headers 30
       $doc = [System.IO.File]::ReadAllText($json) | ConvertFrom-Json
       $found = $doc.tag_name
       if (($found -is [string]) -and ($found -cmatch '^v[0-9]+\.[0-9]+\.[0-9]+\z')) { return $found }

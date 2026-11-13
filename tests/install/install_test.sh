@@ -148,7 +148,13 @@ break_sums() {
 }
 
 # fresh <name>: a new sandbox with HOME, TMPDIR and a release root; sets $S, $R, $D (install dir).
+# leak_free: no per-command assignment from an earlier case is still set. bash 3.2 (macOS's /bin/sh)
+# keeps `VAR=x function_call` after the call, so a variable meant for one case would change every
+# later one (a stale TOOLS once removed curl from the PATH of the rest of the suite).
+leak_free() { [ -z "${TOOLS:-}" ] && [ -z "${GH_TOKEN:-}" ] && [ -z "${GITHUB_TOKEN:-}" ]; }
+
 fresh() {
+  check "no variable leaked into case '$1'" leak_free
   S=$T/$1
   R=$S/release
   D=$S/dest
@@ -157,6 +163,7 @@ fresh() {
   : > "$S/cosign.log"
   : > "$S/curl.log"
   : > "$S/wget.log"
+  : > "$S/wget.cfg"
   : > "$S/curl.hdr"
   : > "$S/curl.urls"
 }
@@ -278,21 +285,31 @@ CURL
   chmod +x "$S/stubs/curl"
 }
 
-# mk_wget: like mk_curl, for wget. Advertises --https-only.
+# mk_wget [config]: like mk_curl, for wget. Advertises --https-only, and --config=FILE when given
+# "config" (GNU wget 1.17+; BusyBox's wget has neither). Logs argv to $S/wget.log and the contents
+# of any --config file to $S/wget.cfg. Serves the API hosts from $S/api.
 mk_wget() {
+  cfg_help=
+  [ "${1:-}" = config ] && cfg_help='echo "      --config=FILE  specify config file to use"; '
   cat > "$S/stubs/wget" <<WGET
 #!/bin/sh
-if [ "\${1:-}" = --help ]; then echo "  --https-only  only follow secure HTTPS links"; exit 0; fi
+if [ "\${1:-}" = --help ]; then echo "  --https-only  only follow secure HTTPS links"; $cfg_help exit 0; fi
 out= url=
 while [ \$# -gt 0 ]; do
   printf '%s\n' "\$1" >> "$S/wget.log"
   case \$1 in
     -O) out=\$2; shift ;;
+    --config=*) cat "\${1#--config=}" >> "$S/wget.cfg" ;;
     http*) url=\$1 ;;
   esac
   shift
 done
-cp "$R/\${url#https://mirror.example.test/}" "\$out"
+case \$url in
+  https://api.github.com/* | https://api.example.test/*)
+    p=\${url#https://*/}
+    cp "$S/api/\$p" "\$out" ;;
+  *) cp "$R/\${url#https://mirror.example.test/}" "\$out" ;;
+esac
 WGET
   chmod +x "$S/stubs/wget"
 }
@@ -699,7 +716,10 @@ fresh wgetflags
 mk_release "$R" v2.0.0 $X 2.0.0
 mk_latest "$R" v2.0.0
 mk_wget
-TOOLS=$TOOLBIN_NOCURL run_install BRANCH_TALLY_INSTALL_BASE_URL=https://mirror.example.test "$shell_under_test" "$installer" --to "$D"
+# Not `TOOLS=... run_install`: bash 3.2 would keep TOOLS set for every later case.
+TOOLS=$TOOLBIN_NOCURL
+run_install BRANCH_TALLY_INSTALL_BASE_URL=https://mirror.example.test "$shell_under_test" "$installer" --to "$D"
+unset TOOLS
 check "wget https mirror install exits 0" test "$rc" -eq 0
 check "wget gets --https-only" contains "$S/wget.log" "--https-only"
 
@@ -844,14 +864,52 @@ check "token: GITHUB_TOKEN is used when GH_TOKEN is unset" contains "$S/curl.hdr
 check "token: GITHUB_TOKEN never on stderr" lacks "$err" "ghtok-"
 check "token: no token is sent to the mirror" test "$(grep -c Authorization "$S/curl.hdr")" -eq 1
 
-# 17g. A failing API call with a token still never prints it.
+# 17g. A failing API call with a token still never prints it, and the token did reach the installer.
 fresh api_token_fail
 mk_release "$R" v1.0.0 $X 1.0.0
 mk_latest "$R" v1.0.0
 rm -rf "$S/api"
-GH_TOKEN=ghtok-CCC sh_run --to "$D"
+mk_curl
+run_install BRANCH_TALLY_INSTALL_BASE_URL=https://mirror.example.test BRANCH_TALLY_INSTALL_API_URL=https://api.example.test \
+  GH_TOKEN=ghtok-CCC "$shell_under_test" "$installer" --to "$D"
+check "token on failure: the API was asked with the token" contains "$S/curl.hdr" "Authorization: Bearer ghtok-CCC"
 check "token on failure: fallback warns" contains "$err" "not confirmed by GitHub"
-check "token on failure: never printed" lacks "$err" "ghtok-CCC"
+check "token on failure: falls back and installs" contains "$out" "branch-tally 1.0.0"
+check "token on failure: never printed on stderr" lacks "$err" "ghtok-CCC"
+check "token on failure: never printed on stdout" lacks "$out" "ghtok-CCC"
+
+# 17j. wget and the token (CWE-214): argv is readable by other local users, so the token never goes
+# on wget's command line. A wget with --config reads it from a private file. Any other wget gets no
+# token, with a one-line notice, and the lookup carries on unauthenticated.
+fresh wget_token
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_wget config
+TOOLS=$TOOLBIN_NOCURL
+run_install BRANCH_TALLY_INSTALL_BASE_URL=https://mirror.example.test BRANCH_TALLY_INSTALL_API_URL=https://api.example.test \
+  GH_TOKEN=ghtok-WWW "$shell_under_test" "$installer" --to "$D"
+unset TOOLS
+check "wget --config: exits 0" test "$rc" -eq 0
+check "wget --config: the API was fetched" contains "$out" "branch-tally 2.0.0"
+check "wget --config: the token is in the private config file" contains "$S/wget.cfg" "Authorization: Bearer ghtok-WWW"
+check "wget --config: the token is never in argv" lacks "$S/wget.log" "ghtok-"
+check "wget --config: no --header on the command line" lacks "$S/wget.log" "--header"
+check "wget --config: never printed" lacks "$err" "ghtok-"
+
+fresh wget_token_old
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_wget
+TOOLS=$TOOLBIN_NOCURL
+run_install BRANCH_TALLY_INSTALL_BASE_URL=https://mirror.example.test BRANCH_TALLY_INSTALL_API_URL=https://api.example.test \
+  GH_TOKEN=ghtok-WWW "$shell_under_test" "$installer" --to "$D"
+unset TOOLS
+check "wget without --config: exits 0" test "$rc" -eq 0
+check "wget without --config: still resolves latest from the API" contains "$out" "branch-tally 2.0.0"
+check "wget without --config: the token is never in argv" lacks "$S/wget.log" "ghtok-"
+check "wget without --config: no config file was written for it" test ! -s "$S/wget.cfg"
+check "wget without --config: says the token was not sent" contains "$err" "not sent"
+check "wget without --config: never printed" lacks "$err" "ghtok-"
 
 # 17h. A trailing newline is not a valid version (case patterns reject it, unlike a regexp's $).
 fresh nl_version
