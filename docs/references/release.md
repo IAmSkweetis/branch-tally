@@ -352,7 +352,9 @@ test with `--require-attestation` (on Windows `BRANCH_TALLY_INSTALL_REQUIRE_ATTE
 - **cosign**: installed by `sigstore/cosign-installer` pinned by SHA, with `gh` made unusable
   (no token, an empty `GH_CONFIG_DIR`, and a check that `gh auth status` fails), so the installer's
   "gh, logged in" test fails and it takes the cosign route. The output must say
-  `Provenance verified with cosign`. `gh` stays on `PATH` because on a runner it lives in a
+  `Provenance verified with cosign`. cosign publishes no Windows ARM64 build (and the installer
+  action refuses that architecture), so `windows-11-arm` skips this leg with a `::notice::` and
+  checks provenance with gh only. `gh` stays on `PATH` because on a runner it lives in a
   directory shared with system tools; what the installer tests is a logged-in `gh`.
 
 One more job, `signature`, downloads `SHA256SUMS` and `SHA256SUMS.minisig` from the release,
