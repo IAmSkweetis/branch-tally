@@ -18,14 +18,12 @@ clap.workspace = true
 flate2.workspace = true
 regex-lite.workspace = true
 tar.workspace = true
-# `update` reads the latest tag from the GitHub API response (#76): serde_json, not a hand-written
-# scanner, on untrusted remote data. Already a normal dependency of core, same workspace features.
-serde_json.workspace = true
 ureq.workspace = true
 zip.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
+serde_json.workspace = true
 tempfile.workspace = true
 
 [lints]
