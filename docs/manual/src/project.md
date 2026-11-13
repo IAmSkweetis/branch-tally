@@ -42,7 +42,7 @@ each call was decided when it was recorded, so the mode doesn't move calls betwe
 change any number. In `strict` mode the report doesn't list the attribution heuristics.
 
 The ledger notes that `report --from-ledger` prints on stderr (skipped lines, conflicting lines,
-mixed modes) are printed by `project` too. They are described in
+unreadable timestamps, mixed modes) are printed by `project` too. They are described in
 [Report from the ledger](ledger.md#report-from-the-ledger).
 
 ## The per-branch table
@@ -64,8 +64,9 @@ call are ordered by name, and undated branches come last.
 
 ### Calls with no usable timestamp
 
-A call whose timestamp is missing, or can't be read as a date and time, is still counted in its
-branch's calls, tokens and cost. It just can't date the branch:
+A call whose timestamp is missing, or isn't strict RFC 3339 (see
+[Timestamps](cli.md#timestamps)), is still counted in its branch's calls, tokens and cost. It just
+can't date the branch:
 
 - A branch where **no** call has a usable timestamp is **undated**. Its row says `undated`, and it
   is left off the chart (see [below](#the-cost-over-time-chart)).
