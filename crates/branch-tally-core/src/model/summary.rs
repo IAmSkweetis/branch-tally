@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use super::{SessionId, SubagentSummary};
+use super::{SessionId, SubagentSummary, saturating_add_flag};
 
 /// Summed token counts (`Bucket` in `reference/token_report.py`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,7 +41,39 @@ impl Bucket {
     /// attribution table. Thinking is excluded: it is already inside output.
     #[must_use]
     pub fn tokens(&self) -> u64 {
-        self.input + self.cache_write_5m + self.cache_write_1h + self.cache_read + self.output
+        self.checked_tokens().unwrap_or(u64::MAX)
+    }
+
+    /// [`Bucket::tokens`], or `None` when the sum overflows `u64`.
+    #[must_use]
+    pub fn checked_tokens(&self) -> Option<u64> {
+        [
+            self.input,
+            self.cache_write_5m,
+            self.cache_write_1h,
+            self.cache_read,
+            self.output,
+        ]
+        .into_iter()
+        .try_fold(0u64, u64::checked_add)
+    }
+
+    /// Adds `other` into `self` field by field, saturating at `u64::MAX`. Returns `true` when any
+    /// field saturated, so the caller can mark its total unreliable ([`Footnote::totals_overflowed`]).
+    pub fn saturating_add_assign(&mut self, other: &Bucket) -> bool {
+        let mut over = false;
+        for (a, b) in [
+            (&mut self.input, other.input),
+            (&mut self.cache_write_5m, other.cache_write_5m),
+            (&mut self.cache_write_1h, other.cache_write_1h),
+            (&mut self.cache_read, other.cache_read),
+            (&mut self.output, other.output),
+            (&mut self.thinking, other.thinking),
+            (&mut self.calls, other.calls),
+        ] {
+            over |= saturating_add_flag(a, b);
+        }
+        over
     }
 }
 
@@ -131,8 +163,15 @@ pub struct HeuristicCount {
 impl HeuristicCount {
     /// Counts one call of `tokens` tokens.
     pub fn add(&mut self, tokens: u64) {
-        self.calls += 1;
-        self.tokens += tokens;
+        self.add_checked(tokens);
+    }
+
+    /// [`HeuristicCount::add`] that saturates at `u64::MAX` and returns `true` when either
+    /// field saturated.
+    pub fn add_checked(&mut self, tokens: u64) -> bool {
+        let calls = saturating_add_flag(&mut self.calls, 1);
+        let toks = saturating_add_flag(&mut self.tokens, tokens);
+        calls | toks
     }
 }
 
@@ -226,6 +265,12 @@ pub struct Footnote {
     pub off_branch_tokens: u64,
     /// Sessions whose origin is not `"main"` (`worktree_sessions`).
     pub worktree_sessions: u64,
+    /// `true` when a token or call total saturated at `u64::MAX`: the totals are then a floor
+    /// and unreliable (a fabricated or corrupt ledger line can carry absurd counts). Set by the
+    /// summary stage from the `bool` the saturating helpers return. Omitted from JSON when
+    /// `false`; absent in older serialized data.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub totals_overflowed: bool,
 }
 
 /// Calls that no branch's report places (#60): a record whose branch is `(none)` after
@@ -303,6 +348,92 @@ mod tests {
             calls: 100,
         };
         assert_eq!(b.tokens(), 15);
+    }
+
+    fn max_bucket() -> Bucket {
+        Bucket {
+            input: u64::MAX,
+            cache_write_5m: u64::MAX,
+            cache_write_1h: u64::MAX,
+            cache_read: u64::MAX,
+            output: u64::MAX,
+            thinking: u64::MAX,
+            calls: u64::MAX,
+        }
+    }
+
+    #[test]
+    fn bucket_tokens_saturate_instead_of_wrapping() {
+        assert_eq!(max_bucket().tokens(), u64::MAX);
+        assert_eq!(max_bucket().checked_tokens(), None);
+        let small = Bucket {
+            input: 1,
+            output: 2,
+            ..Bucket::default()
+        };
+        assert_eq!(small.checked_tokens(), Some(3));
+    }
+
+    #[test]
+    fn adding_buckets_near_max_saturates_and_reports_overflow() {
+        let mut a = Bucket {
+            input: u64::MAX - 1,
+            calls: 1,
+            ..Bucket::default()
+        };
+        let b = Bucket {
+            input: 5,
+            output: 7,
+            calls: 2,
+            ..Bucket::default()
+        };
+        assert!(a.saturating_add_assign(&b));
+        assert_eq!((a.input, a.output, a.calls), (u64::MAX, 7, 3));
+    }
+
+    #[test]
+    fn adding_small_buckets_is_exact_and_reports_no_overflow() {
+        let mut a = Bucket {
+            input: 1,
+            calls: 1,
+            thinking: 4,
+            ..Bucket::default()
+        };
+        let b = Bucket {
+            input: 2,
+            calls: 1,
+            thinking: 5,
+            ..Bucket::default()
+        };
+        assert!(!a.saturating_add_assign(&b));
+        assert_eq!((a.input, a.calls, a.thinking), (3, 2, 9));
+    }
+
+    #[test]
+    fn heuristic_count_saturates_and_reports_overflow() {
+        let mut c = HeuristicCount {
+            calls: u64::MAX,
+            tokens: 1,
+        };
+        assert!(c.add_checked(2));
+        assert_eq!((c.calls, c.tokens), (u64::MAX, 3));
+        let mut d = HeuristicCount {
+            calls: 0,
+            tokens: u64::MAX,
+        };
+        assert!(d.add_checked(1));
+        assert_eq!(d.tokens, u64::MAX);
+    }
+
+    #[test]
+    fn overflowed_is_omitted_from_json_unless_set_and_defaults_false() {
+        let mut s = Summary::default();
+        assert!(!serde_json::to_string(&s).unwrap().contains("overflowed"));
+        s.footnote.totals_overflowed = true;
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains("\"totals_overflowed\":true"));
+        let back: Summary = serde_json::from_str(&json).unwrap();
+        assert!(back.footnote.totals_overflowed);
     }
 
     #[test]
