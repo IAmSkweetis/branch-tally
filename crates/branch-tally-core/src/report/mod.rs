@@ -363,6 +363,11 @@ fn finish(
     );
     summary.work_branch = sel.work_rule;
     summary.unstamped = sel.unstamped;
+    // A saturated count is a floor, so the totals are unreliable (#96). `summarize` already
+    // covers the unattributed count it was handed.
+    if sel.unstamped.calls == u64::MAX || sel.unstamped.tokens == u64::MAX {
+        summary.footnote.totals_overflowed = true;
+    }
     if let Some(redaction) = options.redaction {
         summary = crate::redact::redact(summary, redaction);
     }

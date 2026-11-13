@@ -129,6 +129,7 @@ pub fn build(
                 unpriced_models: priced.unpriced_names(),
                 uncertain: priced.uncertain(),
                 undated_calls: undated_calls(&entries),
+                totals_overflowed: priced.summary.footnote.totals_overflowed,
             };
             (row, entries)
         })
@@ -157,6 +158,10 @@ pub fn build(
     let total = Priced::of("project", &deduped, main, mode, table);
     let overlap = Priced::of("shared", &shared, main, mode, table);
 
+    // Any saturated row, the deduplicated sum or the overlap sum makes the project total a floor.
+    let totals_overflowed = total.summary.footnote.totals_overflowed
+        || overlap.summary.footnote.totals_overflowed
+        || rows.iter().any(|(r, _)| r.totals_overflowed);
     let totals = ProjectTotals {
         usage: total.summary.total,
         cost: total.row_cost(),
@@ -168,6 +173,7 @@ pub fn build(
             cost: overlap.row_cost(),
         },
         undated_calls: undated_calls(&deduped),
+        totals_overflowed,
     };
 
     let mut series = Vec::new();

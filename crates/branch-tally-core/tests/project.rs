@@ -508,3 +508,52 @@ fn a_request_shared_by_two_branches_with_no_ts_is_counted_once_project_wide() {
     assert_eq!(report.rows[1].undated_calls, 1);
     assert_eq!(report.totals.undated_calls, 1);
 }
+
+/// A record with `input` tokens on the priced model.
+fn big(id: &str, input: u64) -> SelectedRecord {
+    let mut r = plain(id, "priced", Some("2026-01-02T00:00:00Z"));
+    r.attributed.record.usage.input = input;
+    r.attributed.record.usage.output = 0;
+    r
+}
+
+#[test]
+fn a_branch_whose_totals_saturate_is_flagged_and_so_are_the_project_totals() {
+    let f = Fixture::new();
+    f.record("feat/a", &[big("a1", u64::MAX), big("a2", u64::MAX)]);
+    f.record(
+        "feat/b",
+        &[plain("b1", "priced", Some("2026-01-03T00:00:00Z"))],
+    );
+    let report = build(&f);
+    let a = report.rows.iter().find(|r| r.branch == "feat/a").unwrap();
+    let b = report.rows.iter().find(|r| r.branch == "feat/b").unwrap();
+    assert!(a.totals_overflowed);
+    assert!(a.is_floor());
+    assert!(!b.totals_overflowed);
+    assert!(report.totals.totals_overflowed);
+    assert!(report.is_overflowed());
+}
+
+#[test]
+fn project_totals_saturating_across_branches_are_flagged_though_no_row_is() {
+    let f = Fixture::new();
+    f.record("feat/a", &[big("a1", u64::MAX - 5)]);
+    f.record("feat/b", &[big("b1", 10)]);
+    let report = build(&f);
+    assert!(report.rows.iter().all(|r| !r.totals_overflowed));
+    assert!(report.totals.totals_overflowed);
+    assert_eq!(report.totals.usage.input, u64::MAX);
+}
+
+#[test]
+fn ordinary_totals_are_not_flagged() {
+    let f = Fixture::new();
+    f.record(
+        "feat/a",
+        &[plain("a1", "priced", Some("2026-01-02T00:00:00Z"))],
+    );
+    let report = build(&f);
+    assert!(!report.is_overflowed());
+    assert!(!report.totals.totals_overflowed);
+}
