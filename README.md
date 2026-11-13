@@ -1,5 +1,7 @@
 # branch-tally
 
+![branch-tally logo](docs/manual/src/images/branch-tally-logo.svg)
+
 **What did this pull request cost in AI-agent tokens?**
 
 branch-tally reads an agent harness's local transcripts, assigns each recorded API call to the git
