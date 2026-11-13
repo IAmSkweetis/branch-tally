@@ -230,5 +230,58 @@ case $(cd "$scratch/detect" && CODE_CHANGED=false GITHUB_OUTPUT=/dev/stdout sh "
   *) wrong=$((wrong + 1)); echo "WRONG: ci-detect skipped without a notice" >&2 ;;
 esac
 
+# ci-tally-check.sh: `changed` reports whether a PR touched .tally/, and `run` calls the base-built
+# binary, passing when the base predates `ledger check` (with a warning) and failing when the
+# binary is missing or the check itself fails.
+tally_sh="$(cd "$dir" && pwd)/ci-tally-check.sh"
+tr="$scratch/tally"
+mkdir -p "$tr"
+(
+  cd "$tr" || exit 1
+  git init -q -b main . && git config user.email t@example.com && git config user.name t
+  git config commit.gpgsign false
+  echo a >a.txt && git add a.txt && git commit -q -m "chore: base"
+  git rev-parse HEAD >"$scratch/tally-base"
+  git checkout -q -b topic
+  echo b >b.txt && git add b.txt && git commit -q -m "chore: no tally"
+  git rev-parse HEAD >"$scratch/tally-notally"
+  mkdir .tally && echo '{}' >.tally/ledger.jsonl && git add .tally && git commit -q -m "chore: tally"
+) >/dev/null 2>&1
+tally_base=$(cat "$scratch/tally-base")
+tally_changed() {
+  # tally_changed <expected true|false> <rev to check out>
+  total=$((total + 1))
+  got=$(cd "$tr" && git checkout -q "$2" 2>/dev/null && GITHUB_OUTPUT=/dev/stdout sh "$tally_sh" changed "$tally_base" 2>&1)
+  case $got in
+    *"changed=$1"*) ;;
+    *) wrong=$((wrong + 1)); echo "WRONG: ci-tally-check changed at $2: expected $1: $got" >&2 ;;
+  esac
+}
+tally_changed false "$(cat "$scratch/tally-notally")"
+tally_changed true topic
+total=$((total + 1))
+if (cd "$tr" && GITHUB_OUTPUT=/dev/stdout sh "$tally_sh" changed no-such-ref >/dev/null 2>&1); then
+  wrong=$((wrong + 1))
+  echo "WRONG: ci-tally-check changed accepted a bad base ref" >&2
+fi
+tally_bin() {
+  # tally_bin <name> <help exit> <check exit>: a stand-in binary.
+  printf '#!/bin/sh\nif [ "$3" = "--help" ]; then exit %s; fi\nexit %s\n' "$2" "$3" >"$scratch/$1"
+  chmod +x "$scratch/$1"
+}
+tally_bin tb-ok 0 0
+tally_bin tb-viol 0 1
+tally_bin tb-old 2 0
+expect accept "$tally_sh" run "$scratch/tb-ok" "$tally_base" topic
+expect reject "$tally_sh" run "$scratch/tb-viol" "$tally_base" topic
+expect accept "$tally_sh" run "$scratch/tb-old" "$tally_base" topic
+expect reject "$tally_sh" run "$scratch/tb-missing" "$tally_base" topic
+expect reject "$tally_sh" run "$scratch/tb-ok" "$tally_base"
+total=$((total + 1))
+case $(sh "$tally_sh" run "$scratch/tb-old" "$tally_base" topic 2>&1) in
+  *"::warning"*"predates"*) ;;
+  *) wrong=$((wrong + 1)); echo "WRONG: ci-tally-check skipped a predating base without a warning" >&2 ;;
+esac
+
 echo "check scripts: $total cases, $wrong wrong"
 [ "$wrong" -eq 0 ]
