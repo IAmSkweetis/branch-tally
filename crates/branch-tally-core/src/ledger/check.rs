@@ -3,7 +3,7 @@
 //! the file, the 1-based line number in the head and the rule, never the line text (Governance
 //! III).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::captures::parse_event;
 use super::{EntryKey, parse_line};
@@ -28,8 +28,8 @@ pub enum Rule {
     BaseLineRemoved,
     /// A head-only line does not parse.
     Unparseable,
-    /// A new ledger line's `recorded_for` is not the head branch.
-    WrongBranch,
+    /// A new ledger line is recorded for the base branch.
+    RecordedForBaseBranch,
     /// A new ledger line has no `recorded_at`.
     MissingRecordedAt,
     /// A timestamp on a new line is not valid RFC 3339.
@@ -69,6 +69,8 @@ pub struct CheckInput<'a> {
     pub head_captures: Option<&'a [u8]>,
     /// The branch the head is.
     pub head_branch: &'a str,
+    /// The branch the head merges into. New ledger lines recorded for it are violations.
+    pub base_branch: &'a str,
     /// The current time, from the caller's clock.
     pub now: &'a Timestamp,
 }
@@ -78,6 +80,9 @@ pub struct CheckInput<'a> {
 pub struct CheckReport {
     /// Violations, ledger first, in head line order.
     pub violations: Vec<Violation>,
+    /// New ledger lines recorded for a branch that is neither the head nor the base, per
+    /// branch, sorted by branch name. Allowed, but reported so a caller can warn.
+    pub other_branches: Vec<(String, u64)>,
 }
 
 impl CheckReport {
@@ -96,6 +101,7 @@ impl CheckReport {
 #[must_use]
 pub fn check(input: &CheckInput<'_>) -> CheckReport {
     let mut violations = Vec::new();
+    let mut others: BTreeMap<String, u64> = BTreeMap::new();
 
     let ledger = split(input.base_ledger, input.head_ledger);
     let base_keys: HashSet<EntryKey> = ledger
@@ -105,7 +111,14 @@ pub fn check(input: &CheckInput<'_>) -> CheckReport {
         .map(|(e, _)| e.key())
         .collect();
     for (number, raw) in &ledger.new_lines {
-        check_ledger_line(raw, *number, input, &base_keys, &mut violations);
+        check_ledger_line(
+            raw,
+            *number,
+            input,
+            &base_keys,
+            &mut violations,
+            &mut others,
+        );
     }
     removed(CheckedFile::Ledger, ledger.removed, &mut violations);
 
@@ -115,7 +128,10 @@ pub fn check(input: &CheckInput<'_>) -> CheckReport {
     }
     removed(CheckedFile::Captures, captures.removed, &mut violations);
 
-    CheckReport { violations }
+    CheckReport {
+        violations,
+        other_branches: others.into_iter().collect(),
+    }
 }
 
 /// One file's lines, split into base-only and head-only by multiset difference.
@@ -183,6 +199,7 @@ fn check_ledger_line(
     input: &CheckInput<'_>,
     base_keys: &HashSet<EntryKey>,
     out: &mut Vec<Violation>,
+    others: &mut BTreeMap<String, u64>,
 ) {
     let mut flag = |rule| {
         out.push(Violation {
@@ -196,8 +213,10 @@ fn check_ledger_line(
         flag(Rule::Unparseable);
         return;
     };
-    if entry.recorded_for != input.head_branch {
-        flag(Rule::WrongBranch);
+    if entry.recorded_for == input.base_branch {
+        flag(Rule::RecordedForBaseBranch);
+    } else if entry.recorded_for != input.head_branch {
+        *others.entry(entry.recorded_for.clone()).or_default() += 1;
     }
     match &entry.recorded_at {
         None => flag(Rule::MissingRecordedAt),

@@ -402,7 +402,8 @@ fn a_line_without_origin_still_reads_with_origin_none() {
 
 mod check {
     use branch_tally_core::ledger::{
-        CheckInput, CheckedFile, LedgerEntry, MAX_TOKENS_PER_FIELD, Rule, Violation, check,
+        CheckInput, CheckReport, CheckedFile, LedgerEntry, MAX_TOKENS_PER_FIELD, Rule, Violation,
+        check,
     };
     use branch_tally_core::model::{CAPTURE_SCHEMA_VERSION, CaptureEvent, CaptureKind, Timestamp};
 
@@ -411,6 +412,7 @@ mod check {
     const NOW: &str = "2026-06-01T00:00:00Z";
     const BEFORE: &str = "2026-05-01T00:00:00Z";
     const BRANCH: &str = "feat/x";
+    const BASE_BRANCH: &str = "main";
 
     #[expect(clippy::expect_used, reason = "test constant")]
     fn now() -> Timestamp {
@@ -460,16 +462,27 @@ mod check {
         base_c: Option<&[u8]>,
         head_c: Option<&[u8]>,
     ) -> Vec<Violation> {
+        report(base, head, base_c, head_c, BRANCH, BASE_BRANCH).violations
+    }
+
+    fn report(
+        base: Option<&[u8]>,
+        head: Option<&[u8]>,
+        base_c: Option<&[u8]>,
+        head_c: Option<&[u8]>,
+        head_branch: &str,
+        base_branch: &str,
+    ) -> CheckReport {
         let now = now();
         check(&CheckInput {
             base_ledger: base,
             head_ledger: head,
             base_captures: base_c,
             head_captures: head_c,
-            head_branch: BRANCH,
+            head_branch,
+            base_branch,
             now: &now,
         })
-        .violations
     }
 
     fn v(file: CheckedFile, line: Option<u64>, rule: Rule) -> Violation {
@@ -571,13 +584,58 @@ mod check {
     }
 
     #[test]
-    fn new_ledger_line_for_another_branch_is_flagged() {
-        let l = line(&entry("a", "other", 5, Some(BEFORE)));
-        let out = run(None, Some(&lines(&[&l])), None, None);
+    fn new_ledger_line_for_the_base_branch_is_flagged() {
+        let l = line(&entry("a", BASE_BRANCH, 5, Some(BEFORE)));
+        let r = report(None, Some(&lines(&[&l])), None, None, BRANCH, BASE_BRANCH);
         assert_eq!(
-            out,
-            vec![v(CheckedFile::Ledger, Some(1), Rule::WrongBranch)]
+            r.violations,
+            vec![v(CheckedFile::Ledger, Some(1), Rule::RecordedForBaseBranch)]
         );
+        assert_eq!(r.other_branches, vec![]);
+    }
+
+    #[test]
+    fn new_lines_for_other_branches_are_allowed_and_counted_sorted() {
+        let ls = [
+            line(&entry("a", "zeta", 5, Some(BEFORE))),
+            line(&entry("b", "alpha", 5, Some(BEFORE))),
+            line(&entry("c", "zeta", 5, Some(BEFORE))),
+            good("d"),
+        ];
+        let refs: Vec<&str> = ls.iter().map(String::as_str).collect();
+        let r = report(None, Some(&lines(&refs)), None, None, BRANCH, BASE_BRANCH);
+        assert_eq!(r.violations, vec![]);
+        assert!(r.is_clean());
+        assert_eq!(
+            r.other_branches,
+            vec![("alpha".to_owned(), 1), ("zeta".to_owned(), 2)]
+        );
+    }
+
+    #[test]
+    fn base_lines_and_unparseable_lines_are_not_counted_as_other_branches() {
+        let old = line(&entry("a", "other", 5, Some(BEFORE)));
+        let head = lines(&[&old, "not json"]);
+        let r = report(
+            Some(&lines(&[&old])),
+            Some(&head),
+            None,
+            None,
+            BRANCH,
+            BASE_BRANCH,
+        );
+        assert_eq!(r.other_branches, vec![]);
+    }
+
+    #[test]
+    fn head_equal_to_base_makes_every_new_line_a_violation() {
+        let l = line(&entry("a", "main", 5, Some(BEFORE)));
+        let r = report(None, Some(&lines(&[&l])), None, None, "main", "main");
+        assert_eq!(
+            r.violations,
+            vec![v(CheckedFile::Ledger, Some(1), Rule::RecordedForBaseBranch)]
+        );
+        assert_eq!(r.other_branches, vec![]);
     }
 
     #[test]

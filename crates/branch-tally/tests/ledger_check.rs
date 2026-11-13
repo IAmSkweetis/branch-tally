@@ -197,13 +197,16 @@ fn unparseable_line_names_its_line_number() {
 }
 
 #[test]
-fn wrong_branch() {
+fn recorded_for_base_branch() {
     let r = repo();
     r.append(
         "ledger.jsonl",
-        &ledger_line(SECRET, "other", Some("2026-01-02T00:00:00Z"), 5),
+        &ledger_line(SECRET, "main", Some("2026-01-02T00:00:00Z"), 5),
     );
-    assert_violation(&r.check(), &["ledger", "line 2", "wrong branch"]);
+    assert_violation(
+        &r.check(),
+        &["ledger", "line 2", "recorded for the base branch"],
+    );
 }
 
 #[test]
@@ -310,6 +313,16 @@ fn base_without_tally_checks_every_head_line() {
     git(&r.root, &["rm", "-q", "-r", ".tally"]);
     git(&r.root, &["commit", "-q", "-m", "drop"]);
     git(&r.root, &["checkout", "-q", BRANCH]);
+    // The base branch is the repository's default branch, so give it an `origin/HEAD`.
+    git(&r.root, &["update-ref", "refs/remotes/origin/main", "main"]);
+    git(
+        &r.root,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+        ],
+    );
     let o = r.run(&[
         "ledger",
         "check",
@@ -318,8 +331,8 @@ fn base_without_tally_checks_every_head_line() {
         "--head-branch",
         BRANCH,
     ]);
-    // The base holds nothing, so the head's older "main" line is new and on the wrong branch.
-    assert_violation(&o, &["ledger", "line 1", "wrong branch"]);
+    // The base holds nothing, so the head's older "main" line is new and recorded for the base branch.
+    assert_violation(&o, &["ledger", "line 1", "recorded for the base branch"]);
 }
 
 #[test]
