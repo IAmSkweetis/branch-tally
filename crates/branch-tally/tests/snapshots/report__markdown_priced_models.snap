@@ -21,7 +21,7 @@ expression: text
 
 | Attribution | Calls | Tokens |
 |---|--:|--:|
-| main | 7 | 117,337,218 |
+| `main` | 7 | 117,337,218 |
 
 </details>
 <!-- token-report:end -->

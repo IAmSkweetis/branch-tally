@@ -18,7 +18,7 @@ expression: stdout(&strict)
 
 | Attribution | Calls | Tokens |
 |---|--:|--:|
-| main | 3 | 3,336 |
+| `main` | 3 | 3,336 |
 
 </details>
 <!-- token-report:end -->
