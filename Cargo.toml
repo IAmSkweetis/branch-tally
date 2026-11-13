@@ -58,6 +58,18 @@ zip = { version = "9.5.1", default-features = false, features = ["deflate-flate2
 # published from bytecodealliance/rustix. Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT, all
 # on the deny.toml allow list.
 rustix = { version = "1.1.6", default-features = false, features = ["fs", "std"] }
+# issue #76 (F-04, docs/decisions/0004-release-provenance.md): `branch-tally update` verifies
+# `SHA256SUMS.minisig` against a public key compiled into the binary. Review: need (a checksum from
+# the same origin authenticates nothing; std has no Ed25519). 0.3.0, MIT, published from
+# jedisct1/rust-minisign-verify by Frank Denis, the minisign author (sole owner, regular releases,
+# about 22M downloads). ZERO dependencies and no features, so nothing is added but this crate
+# (about 700 lines, own Ed25519 and BLAKE2b, no unsafe). Handles both the legacy `Ed` and the
+# prehashed `ED` (BLAKE2b) algorithms; we call `verify` with `allow_legacy = false`, so only the
+# prehashed form is accepted. `PublicKey::verify` also checks the trusted-comment global signature,
+# so `Signature::trusted_comment` can be trusted after it succeeds. ring (already in the graph) has
+# Ed25519 but no BLAKE2b, so the prehashed form would need a second crate plus hand-written
+# minisign framing; that is more code and more surface than this one crate.
+minisign-verify = "0.3.0"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
