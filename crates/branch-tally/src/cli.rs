@@ -74,13 +74,16 @@ pub(crate) enum Command {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum LedgerCommand {
-    /// Fail if the working tree's `.tally/` files are not a well-formed append to the base's.
+    /// Fail if the head's `.tally/` files are not a well-formed append to the base's.
     ///
-    /// Compares `.tally/ledger.jsonl` and `.tally/captures.jsonl` on the working tree with the
-    /// same files on `--base`. Every base line must still be there; every new line must parse,
-    /// be recorded for the head branch, carry a valid non-future `recorded_at`, not repeat a
-    /// base request, and stay under 10,000,000 tokens per field. Violations are listed on
-    /// stderr (file, line, rule; never line text) and the exit status is 1.
+    /// Compares `.tally/ledger.jsonl` and `.tally/captures.jsonl` on the head (the working tree,
+    /// or the rev given by `--head`) with the same files on `--base`. Every base line must still
+    /// be there; every new line must parse, not be recorded for the base branch, carry a valid
+    /// non-future `recorded_at`, not repeat a base request, and stay under 10,000,000 tokens per
+    /// field. New lines recorded for a branch that is neither the head branch nor the base
+    /// branch are noted on stderr, not failed. A difference in `.tally/prices.toml` is a
+    /// warning. Violations are listed on stderr (file, line, rule; never line text) and the
+    /// exit status is 1.
     Check(LedgerCheckArgs),
 }
 
@@ -90,8 +93,8 @@ pub(crate) struct LedgerCheckArgs {
     #[arg(long, value_name = "REF")]
     pub(crate) base: String,
 
-    /// The branch the new lines must be recorded for (default: the current branch; pass it on a
-    /// detached checkout).
+    /// The head branch: new lines recorded for any other non-base branch get a note (default: the
+    /// current branch; required on a detached checkout).
     #[arg(long, value_name = "NAME")]
     pub(crate) head_branch: Option<String>,
 

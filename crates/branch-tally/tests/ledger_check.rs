@@ -641,3 +641,20 @@ fn allow_ledger_conflicts_without_from_ledger_is_a_usage_error() {
     assert_eq!(o.status.code(), Some(2), "{}", err(&o));
     assert!(err(&o).contains("--from-ledger"), "{}", err(&o));
 }
+
+#[test]
+fn help_describes_the_base_branch_rule_not_a_head_branch_requirement() {
+    let r = bare_repo();
+    let o = r.run(&["ledger", "check", "--help"]);
+    assert_eq!(o.status.code(), Some(0));
+    let help = String::from_utf8(o.stdout).unwrap();
+    let flat = help.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(!flat.contains("recorded for the head branch"), "{help}");
+    assert!(
+        !flat.contains("branch the new lines must be recorded for"),
+        "{help}"
+    );
+    assert!(!flat.contains("working tree's `.tally/` files"), "{help}");
+    assert!(flat.contains("recorded for the base branch"), "{help}");
+    assert!(flat.contains("--head"), "{help}");
+}
