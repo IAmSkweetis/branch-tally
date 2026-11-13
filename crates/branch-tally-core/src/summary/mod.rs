@@ -13,7 +13,8 @@ use std::collections::{BTreeSet, HashMap};
 
 use crate::model::{
     AttributedRecord, BranchBasis, Bucket, HeuristicCount, Mode, Origin, SelectedRecord, Selection,
-    SessionId, SessionRow, SubagentRow, SubagentSummary, SubagentTags, Summary, Unstamped,
+    SessionId, SessionRow, SubagentRow, SubagentSummary, SubagentTags, Summary, Timestamp,
+    Unstamped,
 };
 
 /// Calls and tokens of every [`BranchBasis::TimelineAmbiguous`] or
@@ -124,7 +125,7 @@ pub fn summarize(
         add(slot(&mut by_model, &mut model_ix, model), r);
         add(slot(&mut by_attribution, &mut attr_ix, &attr), r);
 
-        let ts = r.ts.as_deref().unwrap_or("");
+        let ts = r.ts.as_ref().map_or("", Timestamp::as_str);
         let ix = if let Some(&i) = session_ix.get(&r.session_id) {
             i
         } else {

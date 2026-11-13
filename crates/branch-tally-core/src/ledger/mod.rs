@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{
     AgentId, AttributedRecord, Attribution, BranchBasis, Harness, Mode, Origin, Record, RequestId,
-    SelectedRecord, Selection, SessionId, SubagentTags, Usage,
+    SelectedRecord, Selection, SessionId, SubagentTags, Timestamp, Usage,
 };
 
 /// Where the ledger lives, relative to the repository root.
@@ -62,7 +62,7 @@ pub struct LedgerEntry {
     pub agent_id: Option<AgentId>,
     /// The timestamp, raw.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ts: Option<String>,
+    pub ts: Option<Timestamp>,
     /// The model id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
@@ -319,6 +319,9 @@ pub struct ReadStats {
     pub malformed: u64,
     /// Lines with a schema version this build does not understand.
     pub unsupported_version: u64,
+    /// Lines kept with no timestamp because their `ts` was not strict RFC 3339. The line is
+    /// otherwise valid and counts in `entries`, so this is not part of `malformed`.
+    pub malformed_timestamps: u64,
     /// 1-based numbers of the malformed and unsupported lines, for locating them.
     pub bad_line_numbers: Vec<u64>,
 }
@@ -433,18 +436,27 @@ fn line_text(entry: &LedgerEntry) -> String {
     serde_json::to_string(entry).unwrap_or_default()
 }
 
-/// Parses one line: `Ok(entry)`, or `Err(true)` for an unsupported version, `Err(false)` for
-/// malformed.
-fn parse_line(bytes: &[u8]) -> Result<LedgerEntry, bool> {
+/// Parses one line: `Ok((entry, ts_cleared))`, or `Err(true)` for an unsupported version,
+/// `Err(false)` for malformed. `ts_cleared` is set when the line's `ts` was text that is not
+/// strict RFC 3339: the entry is kept with no `ts` and the caller counts it.
+fn parse_line(bytes: &[u8]) -> Result<(LedgerEntry, bool), bool> {
     let text = std::str::from_utf8(bytes).map_err(|_| false)?;
-    let value: serde_json::Value = serde_json::from_str(text).map_err(|_| false)?;
+    let mut value: serde_json::Value = serde_json::from_str(text).map_err(|_| false)?;
     let version = value.get("v").and_then(serde_json::Value::as_u64);
     match version {
         Some(v) if v == u64::from(SCHEMA_VERSION) => {}
         Some(_) => return Err(true),
         None => return Err(false),
     }
-    serde_json::from_value(value).map_err(|_| false)
+    let mut ts_cleared = false;
+    if let Some(ts) = value.get_mut("ts")
+        && ts.as_str().is_some_and(|t| t.parse::<Timestamp>().is_err())
+    {
+        ts.take();
+        ts_cleared = true;
+    }
+    let entry = serde_json::from_value(value).map_err(|_| false)?;
+    Ok((entry, ts_cleared))
 }
 
 /// Reads the ledger at `path`. A missing file is an empty ledger.
@@ -492,7 +504,10 @@ fn parse_ledger(bytes: &[u8]) -> Ledger {
         let number = i as u64 + 1;
         ledger.stats.lines += 1;
         let entry = match parse_line(raw) {
-            Ok(e) => e,
+            Ok((e, ts_cleared)) => {
+                ledger.stats.malformed_timestamps += u64::from(ts_cleared);
+                e
+            }
             Err(unsupported) => {
                 if unsupported {
                     ledger.stats.unsupported_version += 1;

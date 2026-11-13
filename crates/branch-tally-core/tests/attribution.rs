@@ -576,7 +576,7 @@ fn trec(session: &str, n: usize, ts: Option<&str>, stamp: Option<&str>) -> Recor
         Usage::default(),
     );
     r.git_branch = stamp.map(str::to_owned);
-    r.ts = ts.map(str::to_owned);
+    r.ts = ts.and_then(|t| t.parse().ok());
     r
 }
 
@@ -973,7 +973,7 @@ fn cap(session: &str, kind: CaptureKind, branch: &str, ts: &str) -> CaptureEvent
 }
 
 fn at(mut r: Record, ts: Option<&str>) -> Record {
-    r.ts = ts.map(str::to_owned);
+    r.ts = ts.and_then(|t| t.parse().ok());
     r
 }
 

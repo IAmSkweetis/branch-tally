@@ -11,7 +11,7 @@ use std::path::Path;
 use crate::model::instant::parse_ts;
 use crate::model::{
     AgentId, AttributedRecord, BranchBasis, CaptureEvent, Dispatch, Origin, Record, SelectedRecord,
-    Selection, SessionId, SubagentTags, Workspace,
+    Selection, SessionId, SubagentTags, Timestamp, Workspace,
 };
 use crate::paths;
 
@@ -134,7 +134,7 @@ pub fn attribute_with_captures(
             } else if (stamp == NONE || stamp.starts_with(WORKTREE_AGENT))
                 && let Some(branch) = by_session
                     .get(&record.session_id)
-                    .and_then(|c| captured_branch(c, record.ts.as_deref().and_then(parse_ts)))
+                    .and_then(|c| captured_branch(c, record.ts.as_ref().map(Timestamp::instant)))
             {
                 (branch.to_owned(), BranchBasis::Captured, None)
             } else {
@@ -483,7 +483,7 @@ pub fn attribute_timeline(
             .filter(|b| !b.is_empty() && !b.starts_with(WORKTREE_AGENT) && is_work(b))
             .map(str::to_owned)
     };
-    let ts_of = |record: &Record| record.ts.as_deref().and_then(parse_ts);
+    let ts_of = |record: &Record| record.ts.as_ref().map(Timestamp::instant);
 
     let mut timelines: HashMap<&SessionId, Timeline> = HashMap::new();
     for record in records.iter().filter(|r| r.parent_session.is_none()) {

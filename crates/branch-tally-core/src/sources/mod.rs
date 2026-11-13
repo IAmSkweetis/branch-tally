@@ -108,6 +108,11 @@ pub struct ReadStats {
     /// emitted, not skipped, so it is not part of [`ReadStats::skipped_total`].
     #[serde(default)]
     pub fallback_key_used: u64,
+    /// Records emitted with no timestamp because the transcript's was not strict RFC 3339 (a
+    /// missing one is not counted). Informational, like `fallback_key_used`: the record is kept,
+    /// but it cannot be ordered in time.
+    #[serde(default)]
+    pub malformed_timestamps: u64,
 }
 
 impl ReadStats {
@@ -277,6 +282,7 @@ mod tests {
             synthetic: 3,
             duplicates_removed: 4,
             fallback_key_used: 0,
+            malformed_timestamps: 0,
         };
         assert_eq!(stats.skipped_total(), 10);
     }

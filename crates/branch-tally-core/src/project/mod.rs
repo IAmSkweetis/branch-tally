@@ -14,10 +14,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::ledger::{Ledger, LedgerEntry};
-use crate::model::instant::parse_ts;
 use crate::model::{
     BranchRow, Costs, HeuristicBreakdown, Mode, ProjectReport, ProjectTotals, RowCost, SeriesPoint,
-    SharedOverlap, Summary,
+    SharedOverlap, Summary, Timestamp,
 };
 use crate::pricing::{PriceTable, price, sum_costs};
 
@@ -74,10 +73,7 @@ impl Priced {
 
 /// Entries whose `ts` is missing or does not parse: they count in the row but cannot date it.
 fn undated_calls(entries: &[&LedgerEntry]) -> u64 {
-    entries
-        .iter()
-        .filter(|e| e.ts.as_deref().and_then(parse_ts).is_none())
-        .count() as u64
+    entries.iter().filter(|e| e.ts.is_none()).count() as u64
 }
 
 /// Builds the project report from a read ledger. Pure: nothing here touches git, the clock or
@@ -118,15 +114,13 @@ pub fn build(
             let priced = Priced::of(branch, &entries, main, mode, table);
             // Latest by parsed instant. A ts that does not parse never wins; the first of
             // several equal instants is kept, and the original string is what is reported.
-            let mut latest: Option<(i128, &str)> = None;
-            for ts in entries.iter().filter_map(|e| e.ts.as_deref()) {
-                if let Some(at) = parse_ts(ts)
-                    && latest.is_none_or(|(best, _)| at > best)
-                {
-                    latest = Some((at, ts));
+            let mut latest: Option<&Timestamp> = None;
+            for ts in entries.iter().filter_map(|e| e.ts.as_ref()) {
+                if latest.is_none_or(|best| ts.instant() > best.instant()) {
+                    latest = Some(ts);
                 }
             }
-            let last_call = latest.map(|(_, ts)| ts.to_owned());
+            let last_call = latest.cloned();
             let row = BranchRow {
                 branch: branch.to_owned(),
                 last_call,
@@ -139,7 +133,7 @@ pub fn build(
             (row, entries)
         })
         .collect();
-    let at = |row: &BranchRow| row.last_call.as_deref().and_then(parse_ts);
+    let at = |row: &BranchRow| row.last_call.as_ref().map(Timestamp::instant);
     rows.sort_by(|(a, _), (b, _)| {
         (at(a).is_none(), at(a), &a.branch).cmp(&(at(b).is_none(), at(b), &b.branch))
     });
@@ -190,7 +184,7 @@ pub fn build(
         cumulative = sum_costs([cumulative, added.costs.total]);
         floor = floor || row.is_floor();
         series.push(SeriesPoint {
-            date: date.clone(),
+            date: date.as_str().to_owned(),
             branch: row.branch.clone(),
             cumulative_cost: cumulative,
             is_floor: floor,

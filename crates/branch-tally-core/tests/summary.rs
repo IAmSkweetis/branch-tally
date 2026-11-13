@@ -17,7 +17,7 @@ fn rec(session: &str, branch: &str) -> Rec {
         Usage::default(),
     );
     r.model = Some("m".to_owned());
-    r.ts = Some("2026-01-01T00:00:00Z".to_owned());
+    r.ts = "2026-01-01T00:00:00Z".parse().ok();
     r.origin = Some(Origin::Main);
     Rec(SelectedRecord {
         attributed: AttributedRecord {
@@ -36,7 +36,7 @@ impl Rec {
         self
     }
     fn ts(mut self, t: Option<&str>) -> Self {
-        self.0.attributed.record.ts = t.map(str::to_owned);
+        self.0.attributed.record.ts = t.and_then(|t| t.parse().ok());
         self
     }
     fn origin(mut self, o: Option<Origin>) -> Self {

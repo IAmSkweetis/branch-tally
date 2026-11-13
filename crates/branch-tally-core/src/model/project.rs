@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{Bucket, HeuristicBreakdown, RowCost};
+use super::{Bucket, HeuristicBreakdown, RowCost, Timestamp};
 
 /// One recording (`recorded_for`) in the project: its own totals, uncorrected for overlap.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -21,7 +21,7 @@ pub struct BranchRow {
     /// The latest `ts` among the branch's ledger lines, ISO-8601 as recorded. `None` when no line
     /// carried a timestamp; such a branch has no place on the time axis and is counted in
     /// [`ProjectReport::undated_branches`].
-    pub last_call: Option<String>,
+    pub last_call: Option<Timestamp>,
     /// Calls and tokens for this row, shared calls included.
     pub usage: Bucket,
     /// Estimated cost; [`RowCost::is_floor`] when some model had no price.
@@ -84,7 +84,7 @@ impl ProjectTotals {
 /// One point of the cumulative cost-over-time series: one per dated branch.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SeriesPoint {
-    /// The branch's last-call timestamp, ISO-8601 as recorded.
+    /// The branch's last-call timestamp text, taken from a validated [`Timestamp`].
     pub date: String,
     /// The branch (`recorded_for`) this point adds.
     pub branch: String,
@@ -201,7 +201,7 @@ mod tests {
         let report = ProjectReport {
             rows: vec![BranchRow {
                 branch: "feat/x".to_owned(),
-                last_call: Some("2026-01-02T03:04:05Z".to_owned()),
+                last_call: "2026-01-02T03:04:05Z".parse().ok(),
                 cost: floor(),
                 ..BranchRow::default()
             }],

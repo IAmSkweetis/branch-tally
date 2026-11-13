@@ -99,7 +99,7 @@ fn bundled() -> &'static PriceTable {
 fn redaction_input() -> (Vec<Record>, Vec<Dispatch>) {
     let mut main = rec("sess-main-secret", "a", Some("feat/x"));
     main.attribution.skill = Some("skill-secret".to_owned());
-    main.ts = Some("2026-01-02T03:04:05Z".to_owned());
+    main.ts = "2026-01-02T03:04:05Z".parse().ok();
     let mut sub = rec("sess-sub-secret", "b", None);
     sub.agent_id = Some(AgentId::new("agentid-secret"));
     sub.is_sidechain = true;
@@ -107,7 +107,7 @@ fn redaction_input() -> (Vec<Record>, Vec<Dispatch>) {
     sub.attribution.agent = Some("agent-secret".to_owned());
     sub.cwd = Some("/repo/.claude/worktrees/wt-secret".to_owned());
     sub.origin = Some(Origin::Worktree("wt-secret".to_owned()));
-    sub.ts = Some("2026-01-02T03:05:05Z".to_owned());
+    sub.ts = "2026-01-02T03:05:05Z".parse().ok();
     let dispatch = Dispatch {
         session_id: SessionId::new("sess-main-secret"),
         agent_id: AgentId::new("agentid-secret"),
@@ -654,7 +654,7 @@ use branch_tally_core::report::{DefaultBranch, WorkBranch};
 
 fn rec_at(session: &str, request: &str, branch: &str, ts: &str) -> Record {
     let mut r = rec(session, request, Some(branch));
-    r.ts = Some(ts.to_owned());
+    r.ts = ts.parse().ok();
     r
 }
 
