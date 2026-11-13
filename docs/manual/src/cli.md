@@ -285,11 +285,11 @@ branch-tally report --pr 42          # write it to PR #42
 ```
 
 Without a number, it looks up the open PR whose head is the branch. If the PR body holds a
-`<!-- token-report:start -->` marker with a `<!-- token-report:end -->` marker after it,
-everything from the first start marker to the **last** end marker is replaced, markers included.
-Using the last end marker means a name in the previous report that happens to spell the end
-marker can't cut the region short and leave old text behind. Keep one pair of markers in the
-body: if an end marker appears again further down, everything up to it is replaced. Otherwise a
+`<!-- token-report:start -->` line with a `<!-- token-report:end -->` line after it, everything
+from the first start line to the first end line after it is replaced, markers included. A marker
+counts only on a line of its own, as branch-tally writes it. A name in the previous report that
+happens to spell a marker sits inside a table row, so it can't cut the region short and leave old
+text behind. Prose elsewhere in the body that quotes a marker is left alone. Otherwise a
 `## Token usage` section holding the report is appended to the body.
 
 It tells you on stderr what happened: `Token usage table written to PR #N.`,

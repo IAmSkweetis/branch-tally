@@ -1473,8 +1473,34 @@ fn json_has_a_top_level_unstamped_key_only_when_there_are_some() {
 }
 
 #[test]
-fn splice_uses_the_last_end_after_the_first_start() {
-    let body = format!("a\n{START}\nold {END} tail {END}\nz");
+fn splice_only_honours_markers_on_their_own_line() {
+    // Marker text inside a line (a name in the old report) neither ends the region early nor
+    // extends it.
+    let body = format!("a\n{START}\nold {END} tail\n{END}\nz {END}");
+    assert_eq!(splice(&body, "n"), format!("a\n{START}\nn\n{END}\nz {END}"));
+}
+
+#[test]
+fn splice_keeps_prose_quoting_the_end_marker_after_the_report() {
+    let body = format!("a\n{START}\nold\n{END}\nKeep this: {END}\nmore prose\n");
+    assert_eq!(
+        splice(&body, "n"),
+        format!("a\n{START}\nn\n{END}\nKeep this: {END}\nmore prose\n")
+    );
+}
+
+#[test]
+fn splice_ignores_a_start_marker_quoted_in_prose_before_the_report() {
+    let body = format!("See {START} here.\n{START}\nold\n{END}\nz");
+    assert_eq!(
+        splice(&body, "n"),
+        format!("See {START} here.\n{START}\nn\n{END}\nz")
+    );
+}
+
+#[test]
+fn splice_tolerates_trailing_whitespace_on_a_marker_line() {
+    let body = format!("a\n{START}  \nold\n{END}\t\nz");
     assert_eq!(splice(&body, "n"), format!("a\n{START}\nn\n{END}\nz"));
 }
 
@@ -1491,7 +1517,7 @@ fn splice_ignores_an_end_before_the_start() {
 fn splicing_a_hostile_report_repeatedly_is_idempotent() {
     let (mut s, c) = hostile_sample();
     s.by_model[0].0 = format!("m{END}tail{START}x");
-    s.branch = format!("b{END}");
+    s.branch = format!("b\n{END}\n{START}\n");
     let report = markdown(&s, &c, true);
     let once = splice("pr body", &report);
     let twice = splice(&once, &report);

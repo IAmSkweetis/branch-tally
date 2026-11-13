@@ -252,9 +252,9 @@ expected behaviour directly, next to the same issue number. `malformed-and-keyle
   span, so links, images, bare URLs, `@user`, `#123`, emphasis and HTML in a name stay literal.
   Line breaks become spaces everywhere, and every other control character (C0, C1, DEL, bidi
   overrides) becomes U+FFFD in the Markdown and project renderers. The JSON report is unaffected
-  (serde_json escapes controls). `splice` ends the region at the last END after the first START,
-  so a name spelling a marker cannot leave a stale tail. Session spans keep only the characters
-  of a timestamp. The manual byte-parity runs use names that need none of this.
+  (serde_json escapes controls). `splice` honours a marker only on a line of its own, so a name
+  spelling a marker cannot leave a stale tail and prose quoting one is kept. Session spans keep
+  only the characters of a timestamp. The manual byte-parity runs use names that need none of this.
   `render__markdown_hostile_names_*.snap` pins every character, and
   `every_table_row_keeps_its_column_count_whatever_the_names_contain` checks each table row
   splits like its header, the way cmark-gfm splits it.

@@ -536,18 +536,32 @@ pub fn wrap(report: &str) -> String {
 }
 
 /// Replaces the marked region of a PR body, or appends the section under [`HEADING`] (`splice`).
-/// CRLF in the body becomes LF. Markers out of order count as absent.
+/// CRLF in the body becomes LF. A marker counts only on a line of its own (trailing whitespace
+/// allowed), as [`wrap`] writes it: rendered values are flattened to one line, so a name that
+/// spells a marker can't end the region, and prose quoting a marker is left alone. The region is
+/// the first START line through the first END line after it. Markers out of order count as absent.
 #[must_use]
 pub fn splice(body: &str, report: &str) -> String {
     let body = body.replace("\r\n", "\n");
     let marked = wrap(report);
-    // The last END after the first START: a name inside the report that spells a marker cannot
-    // end the region early and leave a stale tail that grows on every run.
-    if let Some(i) = body.find(START)
-        && let Some(j) = body.rfind(END)
-        && j >= i + START.len()
+    if let Some((i, _)) = marker_line(&body, 0, START)
+        && let Some((_, j)) = marker_line(&body, i, END)
     {
-        return format!("{}{marked}{}", &body[..i], &body[j + END.len()..]);
+        return format!("{}{marked}{}", &body[..i], &body[j..]);
     }
     format!("{}\n\n{HEADING}\n\n{marked}\n", body.trim_end())
+}
+
+/// The first line at or after byte `from` that is exactly `marker` once trailing whitespace is
+/// trimmed, as the byte range of the line without its newline.
+fn marker_line(body: &str, from: usize, marker: &str) -> Option<(usize, usize)> {
+    let mut start = from;
+    for line in body[from..].split('\n') {
+        let end = start + line.len();
+        if line.trim_end() == marker {
+            return Some((start, end));
+        }
+        start = end + 1;
+    }
+    None
 }
