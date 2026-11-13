@@ -3,10 +3,13 @@
 use std::fmt::Write as _;
 
 use super::version::Version;
-use super::{UpdateError, scrub};
+use super::{FetchError, UpdateError, scrub};
 
 /// Name of the checksum file attached to every release.
 pub const SUMS_NAME: &str = "SHA256SUMS";
+
+/// The release asset holding the minisign signature of [`SUMS_NAME`].
+pub const SIGNATURE_NAME: &str = "SHA256SUMS.minisig";
 
 /// The target triples releases are built for.
 const TARGETS: [&str; 6] = [
@@ -174,9 +177,77 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
         })
 }
 
+/// The tag of the latest release from the body of GitHub's `releases/latest` response.
+///
+/// Reads only the top-level `tag_name` (a `tag_name` inside `assets` or `author` is ignored) and
+/// requires exactly `vMAJOR.MINOR.PATCH`. Every failure is a fixed phrase: serde's own message can
+/// quote the response, so it is never used.
+///
+/// # Errors
+/// [`FetchError::Failed`] when the body is not JSON, has no string `tag_name`, or the tag is not
+/// `vMAJOR.MINOR.PATCH`.
+pub fn latest_tag_from_release_json(body: &[u8]) -> Result<String, FetchError> {
+    let json: serde_json::Value = serde_json::from_slice(body).map_err(|_| {
+        FetchError::Failed("GitHub API: the response was not valid JSON".to_owned())
+    })?;
+    let tag = json
+        .get("tag_name")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            FetchError::Failed("GitHub API: the response had no tag_name string".to_owned())
+        })?;
+    match Version::parse(tag) {
+        Ok(version) if tag.starts_with('v') && version.tag() == tag => Ok(tag.to_owned()),
+        _ => Err(FetchError::Failed(
+            "GitHub API: tag_name was not vMAJOR.MINOR.PATCH".to_owned(),
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_latest_tag_is_the_top_level_tag_name_of_a_real_shaped_response() {
+        let body = br#" {"url":"https://x/y","assets":[{"tag_name":"v9.9.9","n":[1,2.5,null,true]}],
+            "author":{"tag_name":"v8.8.8"},"tag_name":"v1.2.3","body":"a \"q\" b\n","e":{},"l":[]} "#;
+        assert_eq!(latest_tag_from_release_json(body), Ok("v1.2.3".to_owned()));
+    }
+
+    #[test]
+    fn a_bad_release_response_is_a_fixed_phrase_that_never_quotes_the_body() {
+        // serde's error text can quote the input; ours never does.
+        let Err(FetchError::Failed(reason)) =
+            latest_tag_from_release_json(b"{\"tag_name\": QUOTED-BODY-TEXT")
+        else {
+            unreachable!("not JSON must be Failed");
+        };
+        assert!(reason.contains("not valid JSON"), "{reason}");
+        assert!(!reason.contains("QUOTED"), "{reason}");
+        let escaped = format!(r#"{{"tag_name":"v1.0.0-rc{}u0031"}}"#, '\\');
+        for bad in [
+            escaped.as_str(),
+            "{}",
+            r#"{"tag_name":7}"#,
+            r#"{"tag_name":"1.2.3"}"#,
+            r#"{"tag_name":"v1.2"}"#,
+            r#"{"tag_name":"v1.2.3-rc1"}"#,
+            r#"{"tag_name":"v1.2.3/../x"}"#,
+            r#"{"tag_name":""}"#,
+            r#"{"assets":[{"tag_name":"v1.0.0"}]}"#,
+            r#"{"tag_name":"v1.0.0"} trailing"#,
+            r#"{"tag_name":"v1.0.0""#,
+            r#"[{"tag_name":"v1.0.0"}]"#,
+            "not json",
+        ] {
+            let got = latest_tag_from_release_json(bad.as_bytes());
+            assert!(
+                matches!(got, Err(FetchError::Failed(ref r)) if r.starts_with("GitHub API: ")),
+                "{bad}: {got:?}"
+            );
+        }
+    }
 
     fn v(s: &str) -> Version {
         Version::parse(s).unwrap()

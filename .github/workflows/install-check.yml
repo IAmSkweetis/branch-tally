@@ -3,8 +3,10 @@ name: Install check
 # Proof that the one-line installers work on a clean machine. After a release is published, every
 # supported runner runs the real one-liner from releases/latest/download, then a pinned install into
 # a custom directory, and asserts the installed binary is the release just made. No checkout: a
-# checkout would put the repository's own copy of the installer on the machine. See
-# docs/references/release.md#installing.
+# checkout would put the repository's own copy of the installer on the machine. It also proves
+# provenance for real: the installers run with --require-attestation once through gh and once
+# through cosign, and a separate job verifies SHA256SUMS.minisig with minisign against the public key
+# committed at the tag. See docs/references/release.md#installing.
 
 on:
   # zizmor: ignore[dangerous-triggers] -- workflow_run is the only way to start after the release
@@ -40,6 +42,9 @@ jobs:
       contents: read
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
+      # "true" when the release carries the signature and the attestation bundle, so the provenance
+      # steps can run. Releases from before signing have neither.
+      signed: ${{ steps.tag.outputs.signed }}
     env:
       GH_TOKEN: ${{ github.token }}
       EVENT: ${{ github.event_name }}
@@ -57,10 +62,13 @@ jobs:
             tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
           fi
           assets=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          # fresh: this tag is the commit the Release run just published, so nothing may be missing.
+          fresh=false
           if [ "$EVENT" = "workflow_run" ]; then
             # The Release run succeeds without publishing when a newer run already released past its
             # commit. Then "latest" is not from this run: say so, and still check it if it can be.
             tag_sha=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${tag}" --jq .sha)
+            if [ "$tag_sha" = "$RUN_SHA" ]; then fresh=true; fi
             if [ "$tag_sha" != "$RUN_SHA" ]; then
               echo "::notice title=Nothing new published::The Release run did not publish ${RUN_SHA}; latest is ${tag}, so that is what is checked."
             fi
@@ -68,6 +76,7 @@ jobs:
               if [ "$tag_sha" != "$RUN_SHA" ]; then
                 echo "::notice title=Nothing to check::${tag} predates the installers; skipping."
                 echo "tag=" >> "$GITHUB_OUTPUT"
+                echo "signed=false" >> "$GITHUB_OUTPUT"
                 exit 0
               fi
               echo "::error::${tag} was just published without install.sh."
@@ -77,8 +86,77 @@ jobs:
             echo "::error::${tag} has no install.sh asset."
             exit 1
           fi
-          echo "Checking ${tag}"
+          # Signing assets. A release from before signing has none of them: on a manual check of such
+          # a tag the provenance steps skip with a notice. A release just published by the Release
+          # run must have all of them, or the pipeline shipped something unsigned.
+          signed=true
+          missing=""
+          for asset in SHA256SUMS SHA256SUMS.minisig provenance.sigstore.json; do
+            if ! printf '%s\n' "$assets" | grep -qx "$asset"; then missing="${missing} ${asset}"; fi
+          done
+          if [ -n "$missing" ]; then
+            if [ "$fresh" = true ]; then
+              echo "::error::${tag} was just published without:${missing}."
+              exit 1
+            fi
+            echo "::notice title=Provenance not checked::${tag} predates signing (missing:${missing}); the provenance steps skip."
+            signed=false
+          fi
+          echo "Checking ${tag} (signed: ${signed})"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "signed=${signed}" >> "$GITHUB_OUTPUT"
+
+  signature:
+    name: SHA256SUMS signature
+    needs: resolve
+    if: needs.resolve.outputs.signed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.resolve.outputs.tag }}
+    steps:
+      # The public key and the minisign installer come from the tagged commit through the API, like
+      # release.yml fetches the installers: this workflow checks nothing out. The release assets
+      # land in their own directory and are only ever passed to minisign as paths.
+      - name: Fetch the signature and the key
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release" "$RUNNER_TEMP/trusted"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/release" \
+            --pattern SHA256SUMS --pattern SHA256SUMS.minisig
+          for f in .github/minisign.pub scripts/ci-install-minisign.sh; do
+            dest="$RUNNER_TEMP/trusted/$(basename "$f")"
+            gh api -H "Accept: application/vnd.github.raw" \
+              "repos/${GITHUB_REPOSITORY}/contents/${f}?ref=${TAG}" > "$dest"
+            if [ ! -s "$dest" ]; then
+              echo "::error::${f} is missing or empty at ${TAG}."
+              exit 1
+            fi
+          done
+
+      - name: Install minisign
+        run: sh "$RUNNER_TEMP/trusted/ci-install-minisign.sh"
+
+      - name: Verify SHA256SUMS.minisig
+        run: |
+          set -euo pipefail
+          if ! sed -n 2p "$RUNNER_TEMP/trusted/minisign.pub" | grep -Eq '^RW[A-Za-z0-9+/=]+$'; then
+            echo "::error::.github/minisign.pub at ${TAG} is not a minisign public key."
+            exit 1
+          fi
+          out=$(minisign -V -p "$RUNNER_TEMP/trusted/minisign.pub" \
+            -m "$RUNNER_TEMP/release/SHA256SUMS" -x "$RUNNER_TEMP/release/SHA256SUMS.minisig")
+          printf '%s\n' "$out"
+          want="Trusted comment: branch-tally ${TAG} SHA256SUMS"
+          if [ "$(printf '%s\n' "$out" | grep -c '^Trusted comment: ')" != 1 ] ||
+            ! printf '%s\n' "$out" | grep -Fxq "$want"; then
+            echo "::error::trusted comment is not exactly 'branch-tally ${TAG} SHA256SUMS'."
+            exit 1
+          fi
+          echo "ok: SHA256SUMS is signed for ${TAG}"
 
   check:
     name: install (${{ matrix.os }})
@@ -98,6 +176,7 @@ jobs:
           - windows-11-arm
     permissions:
       contents: read
+      attestations: read # gh attestation verify
     env:
       TAG: ${{ needs.resolve.outputs.tag }}
       BASE: https://github.com/${{ github.repository }}/releases
@@ -125,6 +204,68 @@ jobs:
           got=$("$dir/branch-tally" --version)
           want="branch-tally ${TAG#v}"
           [ "$got" = "$want" ] || { echo "got '$got', want '$want'" >&2; exit 1; }
+          echo "ok: $got"
+
+      # ---- Provenance, for real: --require-attestation fails the install unless a tool verified it.
+      # The route is picked by what is available, so each step makes sure the other route is not.
+      - name: One-liner verified with gh
+        if: runner.os != 'Windows' && needs.resolve.outputs.signed == 'true'
+        shell: sh -e {0}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          command -v gh >/dev/null || { echo "gh is not installed on this runner" >&2; exit 1; }
+          dir="$RUNNER_TEMP/gh route"
+          if ! out=$(curl --proto '=https' --tlsv1.2 -LsSf "${BASE}/download/${TAG}/install.sh" |
+            sh -s -- --version "$TAG" --to "$dir" --require-attestation 2>&1); then
+            printf '%s\n' "$out" >&2
+            exit 1
+          fi
+          printf '%s\n' "$out"
+          printf '%s\n' "$out" | grep -q "Provenance verified with gh:" ||
+            { echo "output does not say provenance was verified with gh" >&2; exit 1; }
+          got=$("$dir/branch-tally" --version)
+          [ "$got" = "branch-tally ${TAG#v}" ] || { echo "got '$got'" >&2; exit 1; }
+          echo "ok: $got"
+
+      # cosign-installer (and cosign itself, as of v3.1.4) has no Windows ARM64 build: the action
+      # exits "unsupported architecture" there. That runner checks provenance with gh only, and says
+      # so here instead of failing before it verifies anything or skipping without a word.
+      - name: cosign has no Windows ARM64 build
+        if: needs.resolve.outputs.signed == 'true' && runner.os == 'Windows' && runner.arch == 'ARM64'
+        shell: sh -e {0}
+        run: |
+          echo "::notice title=cosign leg skipped::cosign publishes no Windows ARM64 build, so this runner checks provenance with gh only."
+
+      - name: Install cosign
+        if: needs.resolve.outputs.signed == 'true' && !(runner.os == 'Windows' && runner.arch == 'ARM64')
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      # gh stays installed but has no credentials here (no token, an empty config directory), so
+      # the installer's "gh, logged in" test fails and it takes the cosign route.
+      - name: One-liner verified with cosign
+        if: runner.os != 'Windows' && needs.resolve.outputs.signed == 'true'
+        shell: sh -e {0}
+        run: |
+          unset GH_TOKEN GITHUB_TOKEN
+          export GH_CONFIG_DIR="$RUNNER_TEMP/no-gh-config"
+          mkdir -p "$GH_CONFIG_DIR"
+          command -v cosign >/dev/null || { echo "cosign is not on PATH" >&2; exit 1; }
+          if command -v gh >/dev/null && gh auth status >/dev/null 2>&1; then
+            echo "gh is still logged in; this step would not exercise the cosign route" >&2
+            exit 1
+          fi
+          dir="$RUNNER_TEMP/cosign route"
+          if ! out=$(curl --proto '=https' --tlsv1.2 -LsSf "${BASE}/download/${TAG}/install.sh" |
+            sh -s -- --version "$TAG" --to "$dir" --require-attestation 2>&1); then
+            printf '%s\n' "$out" >&2
+            exit 1
+          fi
+          printf '%s\n' "$out"
+          printf '%s\n' "$out" | grep -q "Provenance verified with cosign:" ||
+            { echo "output does not say provenance was verified with cosign" >&2; exit 1; }
+          got=$("$dir/branch-tally" --version)
+          [ "$got" = "branch-tally ${TAG#v}" ] || { echo "got '$got'" >&2; exit 1; }
           echo "ok: $got"
 
       # ---- Windows: the one-liner under Windows PowerShell 5.1, then under PowerShell 7 --------
@@ -171,6 +312,56 @@ jobs:
           $env:BRANCH_TALLY_INSTALL_DIR = $dir
           powershell -NoProfile -ExecutionPolicy Bypass -c "irm $env:BASE/download/$env:TAG/install.ps1 | iex"
           if ($LASTEXITCODE -ne 0) { throw "installer exited $LASTEXITCODE" }
+          $got = (& (Join-Path $dir 'branch-tally.exe') --version) -join ''
+          $want = "branch-tally $($env:TAG.TrimStart('v'))"
+          if ($got -ne $want) { throw "got '$got', want '$want'" }
+          Write-Output "ok: $got"
+
+      # irm | iex takes no parameters, so --require-attestation is the environment variable.
+      - name: One-liner verified with gh (PowerShell)
+        if: runner.os == 'Windows' && needs.resolve.outputs.signed == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw 'gh is not installed on this runner' }
+          $dir = Join-Path $env:RUNNER_TEMP 'gh route'
+          $env:BRANCH_TALLY_INSTALL_VERSION = $env:TAG
+          $env:BRANCH_TALLY_INSTALL_DIR = $dir
+          $env:BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION = '1'
+          $out = pwsh -NoProfile -ExecutionPolicy Bypass -c "irm $env:BASE/download/$env:TAG/install.ps1 | iex" 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Output $out
+          if ($code -ne 0) { throw "installer exited $code" }
+          if ($out -notmatch 'Provenance verified with gh:') { throw 'output does not say provenance was verified with gh' }
+          $got = (& (Join-Path $dir 'branch-tally.exe') --version) -join ''
+          $want = "branch-tally $($env:TAG.TrimStart('v'))"
+          if ($got -ne $want) { throw "got '$got', want '$want'" }
+          Write-Output "ok: $got"
+
+      - name: One-liner verified with cosign (PowerShell)
+        if: runner.os == 'Windows' && runner.arch != 'ARM64' && needs.resolve.outputs.signed == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Remove-Item Env:GH_TOKEN, Env:GITHUB_TOKEN -ErrorAction SilentlyContinue
+          $env:GH_CONFIG_DIR = Join-Path $env:RUNNER_TEMP 'no-gh-config'
+          New-Item -ItemType Directory -Force $env:GH_CONFIG_DIR | Out-Null
+          if (-not (Get-Command cosign -ErrorAction SilentlyContinue)) { throw 'cosign is not on PATH' }
+          if (Get-Command gh -ErrorAction SilentlyContinue) {
+            gh auth status 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) { throw 'gh is still logged in; this step would not exercise the cosign route' }
+          }
+          $dir = Join-Path $env:RUNNER_TEMP 'cosign route'
+          $env:BRANCH_TALLY_INSTALL_VERSION = $env:TAG
+          $env:BRANCH_TALLY_INSTALL_DIR = $dir
+          $env:BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION = '1'
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -c "irm $env:BASE/download/$env:TAG/install.ps1 | iex" 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Output $out
+          if ($code -ne 0) { throw "installer exited $code" }
+          if ($out -notmatch 'Provenance verified with cosign:') { throw 'output does not say provenance was verified with cosign' }
           $got = (& (Join-Path $dir 'branch-tally.exe') --version) -join ''
           $want = "branch-tally $($env:TAG.TrimStart('v'))"
           if ($got -ne $want) { throw "got '$got', want '$want'" }

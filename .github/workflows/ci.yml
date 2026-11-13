@@ -123,6 +123,9 @@ jobs:
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: just@1.59.0
+      # test-scripts proves the release signing script against the real minisign, with throwaway
+      # keys; without it the run fails in CI rather than skipping those cases.
+      - run: sh scripts/ci-install-minisign.sh
       - run: just test-scripts
       # The scrubber and goldens generator tests, including one end-to-end run of the reference.
       - run: just test-py

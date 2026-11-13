@@ -72,3 +72,54 @@ fn a_file_mirror_is_accepted_and_reaches_the_dev_build_refusal() {
     assert_eq!(out.status.code(), Some(1));
     assert!(text(&out.stderr).contains("development build"));
 }
+
+#[test]
+fn long_help_says_what_is_verified_and_how_to_verify_an_old_release() {
+    let out = run(&["update", "--help"]);
+    let help = text(&out.stdout)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    for needle in [
+        "SHA256SUMS.minisig",
+        "maintainer's key",
+        "integrity check",
+        "before signing are refused",
+        "gh attestation verify",
+        "SECURITY.md",
+    ] {
+        assert!(help.contains(needle), "missing {needle:?} in:\n{help}");
+    }
+}
+
+#[test]
+fn long_help_says_latest_comes_from_the_github_api_and_how_the_token_is_read() {
+    let out = run(&["update", "--help"]);
+    let help = text(&out.stdout)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    for needle in [
+        "latest release is read from the GitHub API",
+        "even when a mirror is set",
+        "needs --version if the API cannot be reached",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+    ] {
+        assert!(help.contains(needle), "missing {needle:?} in:\n{help}");
+    }
+}
+
+#[test]
+fn there_is_no_flag_or_variable_to_change_the_api() {
+    for flag in ["--api-url", "--api", "--latest-url"] {
+        assert_eq!(run(&["update", flag, "x"]).status.code(), Some(2), "{flag}");
+    }
+}
+
+#[test]
+fn there_is_no_flag_to_replace_the_release_key() {
+    for flag in ["--key", "--public-key", "--release-key"] {
+        assert_eq!(run(&["update", flag, "x"]).status.code(), Some(2), "{flag}");
+    }
+}

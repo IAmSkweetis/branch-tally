@@ -2,11 +2,11 @@
 
 How a version of branch-tally gets from `main` to users.
 
-> **Status:** GitHub Releases ship six prebuilt binaries with release notes, `SHA256SUMS` and build
-> provenance attestations (#10), plus one-line shell and PowerShell installers (#46), proven on
-> clean Linux, macOS and Windows runners after every release. Not built yet, each a follow-up
-> issue: publishing to crates.io and `cargo binstall`, Homebrew, npm, and the GitHub Action's
-> floating major tag (`v1`).
+> **Status:** GitHub Releases ship six prebuilt binaries with release notes, a minisign-signed
+> `SHA256SUMS` and build provenance attestations (#10, #76), plus one-line shell and PowerShell
+> installers (#46), proven on clean Linux, macOS and Windows runners after every release. Not built
+> yet, each a follow-up issue: publishing to crates.io and `cargo binstall`, Homebrew, npm, and the
+> GitHub Action's floating major tag (`v1`).
 
 ## Principles (decided)
 
@@ -73,8 +73,8 @@ Every release builds. There is no label or input to turn that off.
 | release | `version` | Checks the commit is releasable, works out the version, writes the release notes (also to the run summary) | A dispatch is off `main` or the commit has no green CI push run, no commits since the last tag (dispatch), a malformed version, or the tag exists |
 | release | `release` | Creates the tag on the exact commit through the API, then a **draft** GitHub release with the notes | The tag exists on a different commit |
 | build | `build` (x6) | Installs the pinned toolchain and the target, builds with `--locked`, smoke-tests the binary, packages it | Compilation fails, `--version` is not `branch-tally X.Y.Z`, `report` fails on the fixtures, or packaging fails |
-| release | `publish` | Downloads the six archives, fetches `install.sh` and `install.ps1` from the tagged commit, writes `SHA256SUMS`, attests the archives and installers, uploads them to the draft, then publishes it as **latest** | Fewer than six archives, an installer missing at the tagged commit, or an upload or attestation error |
-| install-check | `resolve`, `check` (x6) | After a successful `Release` run, resolves the released tag and runs the real one-liners from `releases/latest/download` on a clean runner of each target ([Installing](#installing)) | The installed binary's `--version` is not the released tag, the default directory was not used, or the latest release has no installer |
+| release | `publish` | Downloads the six archives, fetches `install.sh` and `install.ps1` from the tagged commit, writes `SHA256SUMS`, signs it with minisign (`SHA256SUMS.minisig`) and verifies the signature against the committed public key, attests the archives, installers, `SHA256SUMS` and `SHA256SUMS.minisig` (bundle shipped as `provenance.sigstore.json`), uploads everything to the draft, then publishes it as **latest** | Fewer than six archives, an installer missing at the tagged commit, a missing signing secret, the placeholder public key, a signature that does not verify, or an upload or attestation error |
+| install-check | `resolve`, `check` (x6), `signature` | After a successful `Release` run, resolves the released tag and runs the real one-liners on a clean runner of each target, including with `--require-attestation` through `gh` and through `cosign`; `signature` verifies `SHA256SUMS.minisig` with minisign ([Installing](#installing)) | The installed binary's `--version` is not the released tag, the default directory was not used, the latest release has no installer, a just-published release lacks `SHA256SUMS`, `SHA256SUMS.minisig` or `provenance.sigstore.json`, provenance does not verify by either route, or the signature does not verify against `.github/minisign.pub` at the tag with trusted comment `branch-tally <tag> SHA256SUMS` |
 
 The order is deliberate. The tag exists before the build, so a failed build leaves a draft release
 and a tag, and the next release still bumps from that tag. A draft is invisible and never "latest",
@@ -85,7 +85,10 @@ same trigger and guards as `release.yml`: this repository only, successful runs 
 no artifacts read). It also takes a `workflow_dispatch` with an optional `version`, to re-check a
 release by hand. If the `Release` run succeeded without publishing (a newer run released past its
 commit), it says so in a notice and checks whatever is latest; a latest release that predates the
-installers is skipped with a notice, never failed.
+installers is skipped with a notice, never failed. The same holds for the provenance steps: a manual
+check of a tag from before signing (no `SHA256SUMS.minisig` or `provenance.sigstore.json`) skips
+them with a notice, while a release the `Release` run just published without those assets is an
+error.
 
 ### Superseded runs
 
@@ -172,10 +175,14 @@ home directory, so it never reads the runner's transcripts.
 
 `release.yml` runs only from `main`, so it cannot be tried on a branch. `build.yml` therefore also
 runs on a **pull request** that changes `build.yml`, `release.yml`, `scripts/package.sh`,
-`scripts/smoke-test.sh`, `cliff.toml`, `Cargo.lock` or `rust-toolchain.toml`. It builds the full
-matrix with the dummy version `v0.0.0` and uploads nothing to any release. The lockfile is on the
-list because a dependency can break one target only: `ring` (rustls's crypto, added in #53)
-compiles C, and nothing outside the release build compiles for musl.
+`scripts/smoke-test.sh`, `scripts/sign-checksums.sh`, `scripts/ci-install-minisign.sh`,
+`.github/minisign.pub`, `cliff.toml`, `Cargo.lock` or `rust-toolchain.toml`. It builds the full
+matrix with the dummy version `v0.0.0` and uploads nothing to any release. A `signing proof` job
+runs only on pull requests: it installs minisign, signs a dummy `SHA256SUMS` with a throwaway key
+generated in the job and verifies it, and checks the script refuses a placeholder public key. It
+needs no secret and cannot touch the real key. The lockfile is on the list because a dependency can
+break one target only: `ring` (rustls's crypto, added in #53) compiles C, and nothing outside the
+release build compiles for musl.
 
 ## Installing
 
@@ -194,7 +201,10 @@ powershell -ExecutionPolicy Bypass -c "irm https://github.com/IAmSkweetis/branch
 | ------------------- | ------------------------- | -------------------- | ------- |
 | `--version <vX.Y.Z>` | `-Version` | `BRANCH_TALLY_INSTALL_VERSION` | Install that release instead of the latest |
 | `--to <dir>` | `-To` | `BRANCH_TALLY_INSTALL_DIR` | Install directory |
-| none | none | `BRANCH_TALLY_INSTALL_BASE_URL` | Releases URL, default `https://github.com/IAmSkweetis/branch-tally/releases`. The tests point it at a `file://` fake release |
+| `--require-attestation` | `-RequireAttestation` | `BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION` | Fail unless provenance was verified (`1`, `true` or `yes` for the variable) |
+| none | none | `BRANCH_TALLY_INSTALL_BASE_URL` | Releases URL, `https://` or `file://` only, default `https://github.com/IAmSkweetis/branch-tally/releases`. The effective source is printed when it is set. The tests point it at a `file://` fake release |
+| none | none | `BRANCH_TALLY_INSTALL_API_URL` | Where "latest" is looked up, `https://` or `file://` only, default `https://api.github.com`. Printed as `Using release API: <url>` when set. The same trust as the mirror variable. The tests point it at a `file://` fake API |
+| none | none | `GH_TOKEN`, else `GITHUB_TOKEN` | Sent as a bearer token to the "latest" lookup only, to avoid rate limits. Never printed and never on a command line: curl reads it from a private header file, GNU wget 1.17+ from a private `--config` file, and any other wget (BusyBox) goes unauthenticated with a notice |
 
 With nothing set, the binary goes to `~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows). The
 installer **never edits PATH**: when the directory is not on it, it prints a hint. On success it
@@ -202,23 +212,104 @@ prints the installed path and the binary's `--version`. With options, use the fl
 (`curl ... | sh -s -- --version v0.1.0 --to ~/bin`). `irm | iex` cannot pass parameters, so on
 Windows use the environment variables.
 
+**Which release is "latest".** With no version pinned, both installers read `tag_name` from
+`<api>/repos/IAmSkweetis/branch-tally/releases/latest` (validated as `vMAJOR.MINOR.PATCH`), **even
+when a mirror is set**: a signature proves a release is genuine, not that it is the newest, so a
+mirror serving an older signed release as "latest" would otherwise roll users back. The JSON is
+read without `jq` (POSIX `sh`: a line-oriented `sed` on `"tag_name"`; PowerShell:
+`ConvertFrom-Json`), then validated strictly. When the API is unreachable, rate limited or
+answers with anything unusable, the installers fall back to the mirror's
+`latest/download/SHA256SUMS` and print a loud stderr warning that "latest" came from the mirror and
+was **not confirmed by GitHub**, so an older release could be served, with the `--version` route.
+The fallback is allowed under `--require-attestation` too, because the archive is still verified.
+Rollback protection is therefore partial: it does not hold against an attacker who can intercept
+`api.github.com`, nor in the fallback ([decision 0004](../decisions/0004-release-provenance.md)).
+
 **Verification.** The installer downloads the archive for the platform and checks it against the
-release's `SHA256SUMS`, and stops on a mismatch. That is the whole of it: no dependency beyond
-`curl` or `wget`, `sha256sum` or `shasum`, and `tar` on Linux and macOS, and none beyond built-in
-PowerShell on Windows (Windows PowerShell 5.1 and PowerShell 7 both work). In particular it does
-not use the `gh` CLI. A checksum from the same release only catches a corrupt or truncated
-download; for provenance, run `gh attestation verify` by hand
-([Verifying a download](#verifying-a-download)).
+release's `SHA256SUMS`, and stops on a mismatch. That is an **integrity check**: it catches a
+corrupt or truncated download, and proves nothing about origin, because the checksum comes from the
+same place as the archive. Only the build-provenance attestation proves origin
+([decision 0004](../decisions/0004-release-provenance.md)). After the checksum check the installer
+verifies it with the first tool that is available:
+
+1. `gh`, when on PATH and logged in (`gh auth status` succeeds): `gh attestation verify <archive>
+   --repo IAmSkweetis/branch-tally --signer-workflow
+   IAmSkweetis/branch-tally/.github/workflows/release.yml --source-ref refs/heads/main
+   --cert-oidc-issuer https://token.actions.githubusercontent.com`.
+2. Otherwise `cosign`, when on PATH: `cosign verify-blob-attestation` of the archive against the
+   release asset `provenance.sigstore.json`, with an exact `--certificate-identity
+   https://github.com/IAmSkweetis/branch-tally/.github/workflows/release.yml@refs/heads/main`
+   (no regexp) and `--certificate-oidc-issuer https://token.actions.githubusercontent.com`. A
+   release with no bundle counts as "could not verify", not as a pass.
+3. Otherwise it warns on stderr that provenance was **not** verified, prints the full `gh
+   attestation verify` command above (with the same pinned flags) to run, and installs.
+
+The signer is pinned to `release.yml` on `main`, not merely to the repository: `--repo` alone
+accepts an attestation from any workflow in the repository that can write one, and
+`release.yml` also starts from `workflow_dispatch`, which can run on any branch. A release is
+the `workflow_run` on `main`, so any other ref is rejected.
+
+A verification that runs and fails is a hard failure: nothing is installed, and `cosign` is not
+tried after a failing `gh`. `--require-attestation` (`-RequireAttestation`, or
+`BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION`) turns case 3, and a missing bundle, into a failure too.
+The dependency floor without `gh` or `cosign` is unchanged: `curl` or `wget`, `sha256sum` or
+`shasum`, and `tar` on Linux and macOS, and built-in PowerShell on Windows (Windows PowerShell 5.1
+and PowerShell 7 both work). A `curl | sh` install stays dependency-free and says so when it could
+not verify.
+
+**Transport hardening (F-06).**
+
+- `install.sh` runs curl with `--proto '=https' --proto-redir '=https' --tlsv1.2`, and wget with
+  `--https-only` when that wget has it (BusyBox's does not; the URL scheme check still applies).
+  `file://` mirrors are plain copies, the seam the tests use. `install.ps1` pins TLS 1.2+ and
+  follows redirects by hand (`-MaximumRedirection 0`, at most 5 hops), refusing any hop that is not
+  `https://`. The documented one-liner runs Windows PowerShell 5.1, whose `Invoke-WebRequest` would
+  otherwise follow an HTTPS-to-HTTP redirect (#98). The scheme checks (`file://`, `https://`) are
+  case-insensitive in both installers. The PowerShell version check uses `\z`, not `$`, which in
+  .NET also matches before a trailing newline; the `sh` check is a `case` pattern and already
+  rejects one.
+- `BRANCH_TALLY_INSTALL_BASE_URL` and `BRANCH_TALLY_INSTALL_API_URL` must be `https://` or
+  `file://`, the same rule as `branch-tally update`. Plain `http://` is refused. When either is set,
+  the installer prints `Using release mirror: <url>` or `Using release API: <url>`.
+- `install.sh` is a set of functions plus `main "$@"` on its last line, so a download cut off
+  partway is a syntax error and runs nothing.
+- The tag read from the remote `SHA256SUMS` under `latest` must be `vMAJOR.MINOR.PATCH`, the check
+  `--version` already had.
+
+Still open for the installers: a mirror set by the environment is honoured without a prompt (the
+`update --yes` half of F-06 is separate).
 
 ### Updating in place
 
 `branch-tally update` (alias `upgrade`) is the in-place counterpart of the installers. The decision
 logic lives in core's `update` module; the CLI supplies the network, archive and replacement. It
-fetches the same archives, resolves the tag from the latest release or `--version`, and verifies the
-archive against that tag's `SHA256SUMS`. A mismatch, or an archive missing from `SHA256SUMS`, is a
-hard failure with nothing replaced. A dev build (`0.0.0-dev`) and an unwritable binary directory are
-refused, with the installer one-liner in the message. `--check` downloads nothing; `--version` may
-downgrade; `--force` reinstalls the current version; `--yes` skips the prompt.
+fetches the same archives and resolves the tag from the latest release or `--version`. It is strict
+about origin ([0004](../decisions/0004-release-provenance.md)). Before trusting any checksum it
+downloads `SHA256SUMS` and `SHA256SUMS.minisig` for that tag and verifies the signature (proof of
+origin) over the exact `SHA256SUMS` bytes against the release public key, refusing legacy
+(non-prehashed) signatures. The signed trusted comment must be exactly
+`branch-tally <tag> SHA256SUMS` for the tag being installed. Only then does it fetch the archive and
+check it against `SHA256SUMS` (an integrity check) and install. Each failure is its own typed
+`UpdateError` and installs nothing: a missing signature (a release from before signing, also through
+`--version`; the message says the release is not signed and points at `gh attestation verify`), a
+malformed or invalid signature, a signature by another key, a legacy signature, and a trusted
+comment for another tag or file. A mismatch or an archive missing from `SHA256SUMS` is likewise a
+hard failure. The key is an argument to `update::run_verified` (`ReleaseKey`); core reads no
+environment variable or file for it, so the binary's compiled-in key is the only one. A mirror is
+fine, since trust comes from the signature. A dev build (`0.0.0-dev`) and an unwritable binary
+directory are refused, with the installer one-liner in the message. `--check` downloads nothing;
+`--version` may downgrade; `--force` reinstalls the current version; `--yes` skips the prompt.
+
+Without `--version`, `update` never installs a release older than the running binary, `--force`
+included. Core returns `Outcome::LatestOlder` and the message says the latest release (vX) is older
+than the running version (vY), nothing was installed, and `--version` is the way back. It is not
+"up to date" (that would hide the mismatch) and not an error (exit 0, nothing went wrong), and
+`--check` reports it the same way instead of offering an update. If "latest" can't be resolved
+(`ReleaseClient::latest_tag` fails), the error is `UpdateError::LatestUnresolved`: it says the
+latest release could not be resolved and to pin one with `--version vX.Y.Z`, with URLs scrubbed.
+`latest_tag` must resolve from the GitHub API, independent of the mirror, and never fall back to it.
+Core's tests use throwaway keys and signatures in
+`crates/branch-tally-core/tests/data/update_signing/`.
 
 `BRANCH_TALLY_INSTALL_BASE_URL` (the installers' mirror variable) is honoured, but only for
 `https://` and `file://`; any other scheme, plain `http://` included, is a one-line error before a
@@ -249,20 +340,82 @@ Then `install-check.yml` proves the published thing, on six runners (`ubuntu-24.
 which checks out the repository. Each asserts the default directory is empty, runs the real
 one-liner, checks the binary landed in the default directory and that `--version` equals the tag
 just released, then repeats with `--version` and a custom directory. Windows does the default
-install twice, under Windows PowerShell 5.1 and under PowerShell 7. A failure here comes after the
-release is public: fix forward with a new release.
+install twice, under Windows PowerShell 5.1 and under PowerShell 7.
+
+The same runners then check provenance for real, because without a token or `cosign` the installers
+only warn that it was not verified and pass. Each runs the pinned one-liner from the release under
+test with `--require-attestation` (on Windows `BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION=1`, since
+`irm | iex` takes no parameters) twice, and asserts the output names the route taken:
+
+- **gh**: with the job's token (`GH_TOKEN`, and `attestations: read` on the job). The output must
+  say `Provenance verified with gh`.
+- **cosign**: installed by `sigstore/cosign-installer` pinned by SHA, with `gh` made unusable
+  (no token, an empty `GH_CONFIG_DIR`, and a check that `gh auth status` fails), so the installer's
+  "gh, logged in" test fails and it takes the cosign route. The output must say
+  `Provenance verified with cosign`. cosign publishes no Windows ARM64 build (and the installer
+  action refuses that architecture), so `windows-11-arm` skips this leg with a `::notice::` and
+  checks provenance with gh only. `gh` stays on `PATH` because on a runner it lives in a
+  directory shared with system tools; what the installer tests is a logged-in `gh`.
+
+One more job, `signature`, downloads `SHA256SUMS` and `SHA256SUMS.minisig` from the release,
+installs minisign with `scripts/ci-install-minisign.sh`, and verifies them against
+`.github/minisign.pub`, requiring the trusted comment to be exactly `branch-tally <tag> SHA256SUMS`.
+The key and the installer script are fetched from the **tagged commit** through the API, since the
+workflow checks nothing out. A failure here comes after the release is public: fix forward with a
+new release.
 
 ## Verifying a download
 
-Every archive has a line in `SHA256SUMS` and a GitHub build-provenance attestation.
+What a release contains and what proves what
+([decision 0004](../decisions/0004-release-provenance.md)):
+
+| Asset | What it is | Proves |
+| ----- | ---------- | ------ |
+| archives, `install.sh`, `install.ps1` | The artifacts | Nothing alone |
+| `SHA256SUMS` | sha256 of every archive and installer | **Integrity only**: the download is not corrupt. Whoever can replace an archive can replace this file beside it |
+| `SHA256SUMS.minisig` | minisign (Ed25519) signature of `SHA256SUMS`, trusted comment exactly `branch-tally <tag> SHA256SUMS` | Origin: the maintainer's key signed this checksum file for this tag. A signature for one tag can't be replayed as another |
+| `provenance.sigstore.json` | Sigstore attestation bundle whose subjects are the archives, installers, `SHA256SUMS` and `SHA256SUMS.minisig` | Origin: this repository's `release.yml` built them from the tagged commit |
+
+The `publish` job signs through `scripts/sign-checksums.sh`. Setup the maintainer owns:
+
+- **Secrets** (repository Actions secrets, read only by the `Sign SHA256SUMS` step):
+  `MINISIGN_SECRET_KEY` (the whole contents of the minisign secret key file) and
+  `MINISIGN_PASSWORD` (its password; set it to an empty value for a key made with
+  `minisign -G -W`). If either is absent the job fails and nothing is published.
+- **Public key**: `.github/minisign.pub`, the maintainer's (the `.pub` file `minisign -G` writes).
+  The job fails on a placeholder, and `just test-scripts` fails if the committed file stops being a
+  real key. The same key is compiled into the binary for `branch-tally update`.
+- **minisign** is installed by `scripts/ci-install-minisign.sh` from the upstream release archive,
+  pinned by version and sha256 like gitleaks. Bump both together, checking the new archive against
+  upstream's `.minisig` and key.
+- The job verifies its own signature against the committed public key and checks the trusted
+  comment before it uploads anything. A secret key that doesn't match the committed public key
+  fails there.
+- Losing or leaking the key means a new key pair and a new binary that embeds it: rotation is a
+  release.
+
+To verify a download by hand:
 
 ```bash
-sha256sum --check --ignore-missing SHA256SUMS          # shasum -a 256 -c on macOS
-gh attestation verify branch-tally-v0.1.0-<target>.tar.gz --repo IAmSkweetis/branch-tally
+minisign -Vm SHA256SUMS -p minisign.pub      # the key from .github/minisign.pub; checks SHA256SUMS.minisig
+sha256sum --check --ignore-missing SHA256SUMS   # shasum -a 256 -c on macOS
+# Pin the signer workflow and ref: --repo alone accepts any workflow in the repository.
+# The same command works for any asset: an archive, an installer, SHA256SUMS or SHA256SUMS.minisig.
+gh attestation verify branch-tally-v0.1.0-<target>.tar.gz \
+  --repo IAmSkweetis/branch-tally \
+  --signer-workflow IAmSkweetis/branch-tally/.github/workflows/release.yml \
+  --source-ref refs/heads/main
+gh attestation verify SHA256SUMS \
+  --repo IAmSkweetis/branch-tally \
+  --signer-workflow IAmSkweetis/branch-tally/.github/workflows/release.yml \
+  --source-ref refs/heads/main
 ```
 
-The attestation proves the archive was built by this repository's `release.yml` from the tagged
-commit.
+The first command's output includes `Trusted comment: branch-tally <tag> SHA256SUMS`: check the tag
+is the one you downloaded. The checksum then ties each archive to the signed file. The attestation
+independently proves the archive was built by this repository's `release.yml` from the tagged
+commit. F-05 (#97, no approval gate and mutable tags) is separate: a signature made by a
+compromised pipeline still verifies.
 
 ## Related pages
 

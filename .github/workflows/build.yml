@@ -18,6 +18,9 @@ on:
       - ".github/workflows/release.yml"
       - "scripts/package.sh"
       - "scripts/smoke-test.sh"
+      - "scripts/sign-checksums.sh"
+      - "scripts/ci-install-minisign.sh"
+      - ".github/minisign.pub"
       - "cliff.toml"
       # A dependency or toolchain change can break one target only: ring needs a C compiler for
       # musl, which PR #53 found out after merge.
@@ -109,3 +112,52 @@ jobs:
           path: dist/branch-tally-*
           if-no-files-found: error
           retention-days: 14
+
+  # The release's signing step, proven on a pull request with no secret: a throwaway key made in
+  # this job signs a dummy SHA256SUMS and the script verifies it, so a broken script or a
+  # minisign that cannot be installed shows up before merge. The real key is never involved, and
+  # release.yml does not call this job (the pull_request guard keeps it out of releases).
+  signing-proof:
+    name: signing proof
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install minisign
+        run: sh scripts/ci-install-minisign.sh
+
+      - name: Sign and verify with a throwaway key
+        run: |
+          set -euo pipefail
+          proof=$(mktemp -d)
+          minisign -G -W -f -p "$proof/proof.pub" -s "$proof/proof.key" > /dev/null
+          mkdir "$proof/dist"
+          echo "0000  branch-tally-v0.0.0-proof.tar.gz" > "$proof/dist/SHA256SUMS"
+          MINISIGN_SECRET_KEY="$(cat "$proof/proof.key")" MINISIGN_PASSWORD="" \
+            sh scripts/sign-checksums.sh v0.0.0 "$proof/dist" "$proof/proof.pub"
+          test -s "$proof/dist/SHA256SUMS.minisig"
+
+      # The other direction: the script must refuse a placeholder public key, whatever is committed
+      # (scripts/test-checks.sh also asserts the committed key is a real one). A temporary
+      # placeholder file keeps this exercised now that the real key is committed.
+      - name: The placeholder public key is refused
+        run: |
+          set -euo pipefail
+          proof=$(mktemp -d)
+          minisign -G -W -f -p "$proof/proof.pub" -s "$proof/proof.key" > /dev/null
+          echo "0000  x" > "$proof/SHA256SUMS"
+          printf 'untrusted comment: PLACEHOLDER\nREPLACE_WITH_MINISIGN_PUBLIC_KEY\n' > "$proof/placeholder.pub"
+          if MINISIGN_SECRET_KEY="$(cat "$proof/proof.key")" MINISIGN_PASSWORD="" \
+            sh scripts/sign-checksums.sh v0.0.0 "$proof" "$proof/placeholder.pub"; then
+            echo "::error::sign-checksums.sh accepted the placeholder public key."
+            exit 1
+          fi
+          test ! -e "$proof/SHA256SUMS.minisig"
+          echo "The placeholder key is refused, as it must be."

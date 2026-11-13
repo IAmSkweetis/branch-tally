@@ -71,10 +71,33 @@ Out of scope:
 
 ## Verifying a release
 
-Every release publishes `SHA256SUMS` and a signed build-provenance attestation for each archive.
-Before running a downloaded binary, check both:
+Every release publishes `SHA256SUMS`, a minisign signature of it (`SHA256SUMS.minisig`) and a
+Sigstore build-provenance attestation (`provenance.sigstore.json`) whose subjects are the archives,
+the installers, `SHA256SUMS` and `SHA256SUMS.minisig`.
+
+`SHA256SUMS` is an **integrity check, not proof of origin**: it catches a corrupt or truncated
+download, but anyone who can replace an archive can replace the checksum file next to it. Proof of
+origin comes from the signature and the attestation. Before running a downloaded binary, check
+them:
 
 ```bash
-sha256sum --check --ignore-missing SHA256SUMS
-gh attestation verify <archive> --repo IAmSkweetis/branch-tally
+# Get minisign.pub from .github/minisign.pub in this repository, not from the release page.
+minisign -Vm SHA256SUMS -p minisign.pub
+sha256sum --check --ignore-missing SHA256SUMS      # shasum -a 256 -c on macOS
+# One attestation covers every asset: an archive, an installer, SHA256SUMS or SHA256SUMS.minisig.
+gh attestation verify <archive> \
+  --repo IAmSkweetis/branch-tally \
+  --signer-workflow IAmSkweetis/branch-tally/.github/workflows/release.yml \
+  --source-ref refs/heads/main
+gh attestation verify SHA256SUMS \
+  --repo IAmSkweetis/branch-tally \
+  --signer-workflow IAmSkweetis/branch-tally/.github/workflows/release.yml \
+  --source-ref refs/heads/main
 ```
+
+`--repo` alone accepts an attestation from any workflow in the repository, so the commands pin the
+signer workflow and the ref too. `minisign -V` prints a trusted comment,
+`branch-tally <tag> SHA256SUMS`. Check that the tag is the release you downloaded: it stops a
+signature from another release being replayed. The signing key exists only as a GitHub Actions
+secret used by the release job. Details are in
+[release.md](docs/references/release.md#verifying-a-download).

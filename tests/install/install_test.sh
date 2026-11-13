@@ -19,7 +19,26 @@ cases=0
 failures=0
 
 pass() { cases=$((cases + 1)); printf 'ok   %s\n' "$1"; }
-fail() { cases=$((cases + 1)); failures=$((failures + 1)); printf 'FAIL %s\n' "$1"; }
+fail() {
+  cases=$((cases + 1))
+  failures=$((failures + 1))
+  printf 'FAIL %s\n' "$1"
+  diagnose
+}
+
+# diagnose: after a FAIL, the exit code of the last installer run and a bounded tail of what it
+# wrote (8 lines, 200 columns each, per stream), so a red CI run explains itself. The fakes only
+# ever carry dummy tokens (ghtok-...); they are masked anyway.
+diagnose() {
+  printf '     last run: rc=%s\n' "${rc:-unset}"
+  for stream in out err; do
+    eval "f=\${$stream:-}"
+    if [ -n "$f" ] && [ -f "$f" ]; then
+      printf '     %s (last 8 lines):\n' "$stream"
+      tail -n 8 "$f" | cut -c1-200 | sed 's/ghtok-[A-Za-z0-9]*/ghtok-***/g; s/^/       | /'
+    fi
+  done
+}
 
 # check <description> <command...>: passes when the command succeeds.
 check() {
@@ -42,6 +61,20 @@ command -v sha256sum >/dev/null 2>&1 || sha_cmd="shasum -a 256"
 shell_under_test=$T/shell-under-test
 printf '#!/bin/sh\nexec %s "$@"\n' "$shell_cmd" > "$shell_under_test"
 chmod +x "$shell_under_test"
+
+# A PATH of symlinks to the stock tools the installer needs, so the host's own gh, cosign and curl
+# can never leak into a case. TOOLBIN has curl; TOOLBIN_NOCURL has neither curl nor wget.
+TOOLBIN=$T/toolbin
+TOOLBIN_NOCURL=$T/toolbin-nocurl
+mkdir -p "$TOOLBIN" "$TOOLBIN_NOCURL"
+for tool in sh dash bash ksh busybox awk sed tr wc cat mktemp rm cp mv chmod mkdir tar grep ls env head dirname \
+  sha256sum shasum gzip basename sleep; do
+  src=$(command -v "$tool" 2>/dev/null) || continue
+  case $src in /*) ;; *) continue ;; esac
+  ln -sf "$src" "$TOOLBIN/$tool"
+  ln -sf "$src" "$TOOLBIN_NOCURL/$tool"
+done
+if src=$(command -v curl 2>/dev/null); then ln -sf "$src" "$TOOLBIN/curl"; fi
 
 FAKEBIN=$T/fakebin
 mkdir -p "$FAKEBIN"
@@ -71,6 +104,7 @@ mk_release() {
   chmod +x "$stage/$name/branch-tally"
   echo LICENSE > "$stage/$name/LICENSE"
   echo README > "$stage/$name/README.md"
+  echo '{"fake":"bundle"}' > "$root/download/$tag/provenance.sigstore.json"
   tar -C "$stage" -czf "$root/download/$tag/$name.tar.gz" "$name"
   (cd "$root/download/$tag" && $sha_cmd "$name.tar.gz" >> SHA256SUMS)
   rm -rf "$stage"
@@ -81,6 +115,29 @@ mk_latest() {
   rm -rf "$1/latest"
   mkdir -p "$1/latest"
   cp -R "$1/download/$2" "$1/latest/download"
+  mk_api "$2"
+}
+
+# mk_api <tag>: what the fake GitHub API answers for releases/latest, a pretty-printed subset of the
+# real response. The installers read it from file://$S/api (see run_install), or from the https
+# hosts the curl stub serves out of the same tree.
+mk_api() {
+  mkdir -p "$S/api/repos/IAmSkweetis/branch-tally/releases"
+  cat > "$S/api/repos/IAmSkweetis/branch-tally/releases/latest" <<API
+{
+  "url": "https://api.github.com/repos/IAmSkweetis/branch-tally/releases/1",
+  "tag_name": "$1",
+  "name": "$1",
+  "draft": false,
+  "assets": []
+}
+API
+}
+
+# set_api <body>: the fake API answers with exactly this text.
+set_api() {
+  mkdir -p "$S/api/repos/IAmSkweetis/branch-tally/releases"
+  printf '%s' "$1" > "$S/api/repos/IAmSkweetis/branch-tally/releases/latest"
 }
 
 # break_sums <root> <tag>: corrupt every hash in the release's SHA256SUMS.
@@ -91,21 +148,188 @@ break_sums() {
 }
 
 # fresh <name>: a new sandbox with HOME, TMPDIR and a release root; sets $S, $R, $D (install dir).
+# leak_free: no per-command assignment from an earlier case is still set. bash 3.2 (macOS's /bin/sh)
+# keeps `VAR=x function_call` after the call, so a variable meant for one case would change every
+# later one (a stale TOOLS once removed curl from the PATH of the rest of the suite). A token the
+# developer exported before the run is not a leak, so the tokens are compared with their values at
+# startup. They never reach the installer either way: run_install starts it under `env -i`.
+inherited_gh_token=${GH_TOKEN:-}
+inherited_github_token=${GITHUB_TOKEN:-}
+leak_free() {
+  [ -z "${TOOLS:-}" ] &&
+    [ "${GH_TOKEN:-}" = "$inherited_gh_token" ] &&
+    [ "${GITHUB_TOKEN:-}" = "$inherited_github_token" ]
+}
+
 fresh() {
+  check "no variable leaked into case '$1'" leak_free
   S=$T/$1
   R=$S/release
   D=$S/dest
-  mkdir -p "$S/home" "$S/tmp" "$R"
+  mkdir -p "$S/home" "$S/tmp" "$R" "$S/stubs"
+  : > "$S/gh.log"
+  : > "$S/cosign.log"
+  : > "$S/curl.log"
+  : > "$S/wget.log"
+  : > "$S/wget.cfg"
+  : > "$S/curl.hdr"
+  : > "$S/curl.urls"
+}
+
+# The signer and source ref the fake attestations were really made with.
+GOOD_WORKFLOW=IAmSkweetis/branch-tally/.github/workflows/release.yml
+GOOD_REF=refs/heads/main
+GOOD_IDENTITY=https://github.com/IAmSkweetis/branch-tally/.github/workflows/release.yml@refs/heads/main
+
+# mk_gh <auth rc> <verify rc> [signer workflow] [source ref]: a gh stub that logs its arguments, one
+# per line, to $S/gh.log. The fake attestation was signed by the given workflow on the given ref
+# (default: release.yml on main). Like the real gh, it enforces a signer or ref only when the
+# matching flag is passed: with no --signer-workflow any signer is accepted, which is the hole the
+# installer must close.
+mk_gh() {
+  actual_wf=${3:-$GOOD_WORKFLOW}
+  actual_ref=${4:-$GOOD_REF}
+  cat > "$S/stubs/gh" <<GH
+#!/bin/sh
+for a in "\$@"; do printf '%s\n' "\$a" >> "$S/gh.log"; done
+cmd="\$1 \$2"
+signer= ref= issuer= repo= file=
+if [ "\$cmd" = "attestation verify" ]; then
+  shift 2
+  while [ \$# -gt 0 ]; do
+    case \$1 in
+      --signer-workflow) signer=\$2; shift ;;
+      --source-ref) ref=\$2; shift ;;
+      --cert-oidc-issuer) issuer=\$2; shift ;;
+      --repo) repo=\$2; shift ;;
+      -*) exit 2 ;;
+      *) file=\$1 ;;
+    esac
+    shift
+  done
+fi
+case "\$cmd" in
+  "auth status") exit $1 ;;
+  "attestation verify")
+    # gh attestation verify <file-path> --repo <owner/repo>: the archive must exist and --repo is
+    # mandatory (without --repo or --owner the real gh refuses).
+    [ -f "\$file" ] || exit 2
+    [ "\$repo" = IAmSkweetis/branch-tally ] || exit 2
+    [ $2 -eq 0 ] || exit $2
+    [ -z "\$signer" ] || [ "\$signer" = "$actual_wf" ] || exit 1
+    [ -z "\$ref" ] || [ "\$ref" = "$actual_ref" ] || exit 1
+    [ -z "\$issuer" ] || [ "\$issuer" = https://token.actions.githubusercontent.com ] || exit 1
+    exit 0 ;;
+esac
+exit 99
+GH
+  chmod +x "$S/stubs/gh"
+}
+
+# mk_cosign <rc> [signer identity]: a cosign stub that logs its arguments, one per line, to
+# $S/cosign.log. Its fake bundle was signed by the given identity (default: release.yml on main).
+# Verification passes only with an exact --certificate-identity equal to it and the Actions issuer;
+# a regexp, or no identity, is refused.
+mk_cosign() {
+  actual_id=${2:-$GOOD_IDENTITY}
+  cat > "$S/stubs/cosign" <<COSIGN
+#!/bin/sh
+for a in "\$@"; do printf '%s\n' "\$a" >> "$S/cosign.log"; done
+# The real interface: cosign verify-blob-attestation --bundle <provenance.sigstore.json>
+# --new-bundle-format --type slsaprovenance1 --certificate-identity <id> --certificate-oidc-issuer
+# <issuer> <blob>. A missing or different piece fails here as it would in cosign.
+[ "\$1" = verify-blob-attestation ] || exit 2
+shift
+id= issuer= bundle= type= newfmt=0 blob=
+while [ \$# -gt 0 ]; do
+  case \$1 in
+    --certificate-identity) id=\$2; shift ;;
+    --certificate-oidc-issuer) issuer=\$2; shift ;;
+    --bundle) bundle=\$2; shift ;;
+    --type) type=\$2; shift ;;
+    --new-bundle-format) newfmt=1 ;;
+    -*) exit 2 ;;
+    *) blob=\$1 ;;
+  esac
+  shift
+done
+[ -f "\$bundle" ] && [ "\$(basename "\$bundle")" = provenance.sigstore.json ] || exit 2
+[ "\$newfmt" = 1 ] || exit 2
+[ "\$type" = slsaprovenance1 ] || exit 2
+[ -f "\$blob" ] || exit 2
+[ $1 -eq 0 ] || exit $1
+[ "\$id" = "$actual_id" ] || exit 1
+[ "\$issuer" = https://token.actions.githubusercontent.com ] || exit 1
+exit 0
+COSIGN
+  chmod +x "$S/stubs/cosign"
+}
+
+# mk_curl: a curl stub standing in for the network. It logs its arguments to $S/curl.log and serves
+# https://mirror.example.test/... from $R.
+mk_curl() {
+  cat > "$S/stubs/curl" <<CURL
+#!/bin/sh
+out= url=
+while [ \$# -gt 0 ]; do
+  printf '%s\n' "\$1" >> "$S/curl.log"
+  case \$1 in
+    -o) out=\$2; shift ;;
+    -H)
+      case \$2 in @*) cat "\${2#@}" >> "$S/curl.hdr" ;; *) printf '%s\n' "\$2" >> "$S/curl.hdr" ;; esac
+      shift ;;
+    http*) url=\$1 ;;
+  esac
+  shift
+done
+case \$url in
+  https://api.github.com/* | https://api.example.test/*)
+    printf '%s\n' "\$url" >> "$S/curl.urls"
+    p=\${url#https://*/}
+    cp "$S/api/\$p" "\$out" ;;
+  *) cp "$R/\${url#https://mirror.example.test/}" "\$out" ;;
+esac
+CURL
+  chmod +x "$S/stubs/curl"
+}
+
+# mk_wget [config]: like mk_curl, for wget. Advertises --https-only, and --config=FILE when given
+# "config" (GNU wget 1.17+; BusyBox's wget has neither). Logs argv to $S/wget.log and the contents
+# of any --config file to $S/wget.cfg. Serves the API hosts from $S/api.
+mk_wget() {
+  cfg_help=
+  [ "${1:-}" = config ] && cfg_help='echo "      --config=FILE  specify config file to use"; '
+  cat > "$S/stubs/wget" <<WGET
+#!/bin/sh
+if [ "\${1:-}" = --help ]; then echo "  --https-only  only follow secure HTTPS links"; $cfg_help exit 0; fi
+out= url=
+while [ \$# -gt 0 ]; do
+  printf '%s\n' "\$1" >> "$S/wget.log"
+  case \$1 in
+    -O) out=\$2; shift ;;
+    --config=*) cat "\${1#--config=}" >> "$S/wget.cfg" ;;
+    http*) url=\$1 ;;
+  esac
+  shift
+done
+case \$url in
+  https://api.github.com/* | https://api.example.test/*)
+    p=\${url#https://*/}
+    cp "$S/api/\$p" "\$out" ;;
+  *) cp "$R/\${url#https://mirror.example.test/}" "\$out" ;;
+esac
+WGET
+  chmod +x "$S/stubs/wget"
 }
 
 # run_install <env assignments and command...>: runs in the sandbox; sets $rc, $out, $err.
 run_install() {
   out=$S/out
   err=$S/err
-  env -i PATH="$FAKEBIN:$PATH" HOME="$S/home" TMPDIR="$S/tmp" \
+  env -i PATH="$S/stubs:$FAKEBIN:${TOOLS:-$TOOLBIN}" HOME="$S/home" TMPDIR="$S/tmp" \
     FAKE_UNAME_S="${FAKE_UNAME_S:-Linux}" FAKE_UNAME_M="${FAKE_UNAME_M:-x86_64}" \
     FAKE_PROC_TRANSLATED="${FAKE_PROC_TRANSLATED:-0}" \
-    BRANCH_TALLY_INSTALL_BASE_URL="file://$R" "$@" >"$out" 2>"$err" </dev/null
+    BRANCH_TALLY_INSTALL_BASE_URL="file://$R" BRANCH_TALLY_INSTALL_API_URL="file://$S/api" "$@" >"$out" 2>"$err" </dev/null
   rc=$?
 }
 
@@ -219,9 +443,9 @@ mk_release "$R" v2.0.0 $X 2.0.0
 mk_latest "$R" v2.0.0
 sh_run --to "$D"
 check "PATH hint shown when dir is not on PATH" contains "$out" "export PATH=\"$D:\$PATH\""
-run_install PATH="$D:$FAKEBIN:$PATH" "$shell_under_test" "$installer" --to "$D"
+run_install PATH="$D:$FAKEBIN:$TOOLBIN" "$shell_under_test" "$installer" --to "$D"
 check "no PATH hint when dir is on PATH" lacks "$out" "export PATH"
-run_install PATH="$D/:$FAKEBIN:$PATH" "$shell_under_test" "$installer" --to "$D"
+run_install PATH="$D/:$FAKEBIN:$TOOLBIN" "$shell_under_test" "$installer" --to "$D"
 check "no PATH hint when PATH has a trailing-slash form" lacks "$out" "export PATH"
 check "installer does not write into HOME (no rc edits)" empty_dir "$S/home"
 
@@ -292,6 +516,424 @@ check "--help exits 0" test "$rc" -eq 0
 check "--help documents --to" contains "$out" "--to"
 sh_run --bogus
 check "unknown flag exits non-zero" test "$rc" -ne 0
+
+# 12. Provenance. The checksum is an integrity check; only the attestation proves origin.
+# 12a. gh logged in and the attestation verifies: installs, and gh was pinned to this repository.
+fresh gh_pass
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_gh 0 0
+sh_run --to "$D"
+check "gh pass exits 0" test "$rc" -eq 0
+check "gh pass installs" test -x "$D/branch-tally"
+check "gh pass ran attestation verify" contains "$S/gh.log" "attestation"
+check "gh pass pins the repository" contains "$S/gh.log" "IAmSkweetis/branch-tally"
+check "gh pass uses --repo" contains "$S/gh.log" "--repo"
+check "gh pass pins the signer workflow flag" contains "$S/gh.log" "--signer-workflow"
+check "gh pass pins the signer workflow to release.yml" contains "$S/gh.log" "$GOOD_WORKFLOW"
+check "gh pass pins the source ref flag" contains "$S/gh.log" "--source-ref"
+check "gh pass pins the source ref to main" contains "$S/gh.log" "refs/heads/main"
+check "gh pass pins the issuer" contains "$S/gh.log" "https://token.actions.githubusercontent.com"
+check "gh pass verifies the archive" contains "$S/gh.log" "branch-tally-v2.0.0-$X.tar.gz"
+check "gh pass says provenance was verified" contains "$out" "Provenance verified"
+
+# 12b. gh logged in and verification fails: hard failure, nothing installed, no cosign fallback.
+fresh gh_fail
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_gh 0 1
+mk_cosign 0
+sh_run --to "$D"
+check "gh fail exits non-zero" test "$rc" -ne 0
+check "gh fail installs nothing" test ! -e "$D/branch-tally"
+check "gh fail says attestation" contains "$err" "attestation"
+check "gh fail does not fall back to cosign" test ! -s "$S/cosign.log"
+check "gh fail leaves no temp files" empty_dir "$S/tmp"
+
+# 12c. A checksum failure stops before any provenance tool runs.
+fresh gh_after_sum
+mk_release "$R" v2.0.0 $X 2.0.0
+break_sums "$R" v2.0.0
+mk_latest "$R" v2.0.0
+mk_gh 0 0
+sh_run --to "$D"
+check "bad checksum exits non-zero" test "$rc" -ne 0
+check "bad checksum never reaches gh attestation" lacks "$S/gh.log" "attestation"
+
+# 12d. gh not logged in, cosign present and verifies: the bundle is checked against this repository's
+# release workflow and the GitHub Actions issuer.
+fresh cosign_pass
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_gh 1 0
+mk_cosign 0
+sh_run --to "$D"
+check "cosign pass exits 0" test "$rc" -eq 0
+check "cosign pass installs" test -x "$D/branch-tally"
+check "cosign pass did not run gh attestation verify" lacks "$S/gh.log" "attestation"
+check "cosign pass uses the bundle" contains "$S/cosign.log" "provenance.sigstore.json"
+check "cosign pass pins an exact identity" contains "$S/cosign.log" "--certificate-identity"
+check "cosign pass pins release.yml on main" contains "$S/cosign.log" "$GOOD_IDENTITY"
+check "cosign pass uses no identity regexp" lacks "$S/cosign.log" "--certificate-identity-regexp"
+check "cosign pass pins the issuer" contains "$S/cosign.log" "https://token.actions.githubusercontent.com"
+check "cosign pass verifies the archive" contains "$S/cosign.log" "branch-tally-v2.0.0-$X.tar.gz"
+check "cosign pass says provenance was verified" contains "$out" "Provenance verified"
+
+# 12e. cosign verification fails: hard failure.
+fresh cosign_fail
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_cosign 1
+sh_run --to "$D"
+check "cosign fail exits non-zero" test "$rc" -ne 0
+check "cosign fail installs nothing" test ! -e "$D/branch-tally"
+check "cosign fail says attestation" contains "$err" "attestation"
+
+# 12f. cosign present but the release has no bundle: provenance could not be checked.
+fresh cosign_nobundle
+mk_release "$R" v2.0.0 $X 2.0.0
+rm "$R/download/v2.0.0/provenance.sigstore.json"
+mk_latest "$R" v2.0.0
+mk_cosign 0
+sh_run --to "$D"
+check "no bundle installs with a warning" test "$rc" -eq 0
+check "no bundle warns provenance was not verified" contains "$err" "NOT verified"
+check "no bundle never ran cosign" test ! -s "$S/cosign.log"
+rm -rf "$D"
+sh_run --require-attestation --to "$D"
+check "no bundle with --require-attestation fails" test "$rc" -ne 0
+
+# 12g. Neither tool: warn plainly, print the command, install. Strict mode fails instead.
+fresh unavailable
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+sh_run --to "$D"
+check "unavailable exits 0" test "$rc" -eq 0
+check "unavailable installs" test -x "$D/branch-tally"
+check "unavailable warns provenance was not verified" contains "$err" "NOT verified"
+check "unavailable says the checksum is only an integrity check" contains "$err" "integrity"
+check "unavailable prints the gh command" contains "$err" "gh attestation verify"
+check "unavailable prints the repository" contains "$err" "--repo IAmSkweetis/branch-tally"
+rm -rf "$D"
+sh_run --require-attestation --to "$D"
+check "--require-attestation with no tool exits non-zero" test "$rc" -ne 0
+check "--require-attestation with no tool installs nothing" test ! -e "$D/branch-tally"
+check "--require-attestation says why" contains "$err" "attestation"
+run_install BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION=1 "$shell_under_test" "$installer" --to "$D"
+check "BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION=1 exits non-zero" test "$rc" -ne 0
+check "BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION=1 installs nothing" test ! -e "$D/branch-tally"
+run_install BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION=0 "$shell_under_test" "$installer" --to "$D"
+check "BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION=0 does not require it" test "$rc" -eq 0
+
+# 12h. Strict mode with a tool that verifies succeeds.
+fresh strict_ok
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_gh 0 0
+sh_run --require-attestation --to "$D"
+check "--require-attestation with a passing gh exits 0" test "$rc" -eq 0
+
+# 12i. gh on PATH but not logged in, no cosign: unavailable.
+fresh gh_loggedout
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_gh 1 0
+sh_run --require-attestation --to "$D"
+check "logged-out gh with no cosign is unavailable (strict fails)" test "$rc" -ne 0
+check "logged-out gh never ran attestation verify" lacks "$S/gh.log" "attestation"
+
+# 12j. An attestation from another workflow, or another ref, in this repository must not install.
+fresh gh_other_wf
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_gh 0 0 IAmSkweetis/branch-tally/.github/workflows/other.yml refs/heads/main
+sh_run --to "$D"
+check "gh: attestation from another workflow exits non-zero" test "$rc" -ne 0
+check "gh: attestation from another workflow installs nothing" test ! -e "$D/branch-tally"
+
+fresh gh_other_ref
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_gh 0 0 "$GOOD_WORKFLOW" refs/heads/some-branch
+sh_run --to "$D"
+check "gh: attestation from another ref exits non-zero" test "$rc" -ne 0
+check "gh: attestation from another ref installs nothing" test ! -e "$D/branch-tally"
+
+fresh cosign_other_wf
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_cosign 0 https://github.com/IAmSkweetis/branch-tally/.github/workflows/other.yml@refs/heads/main
+sh_run --to "$D"
+check "cosign: bundle from another workflow exits non-zero" test "$rc" -ne 0
+check "cosign: bundle from another workflow installs nothing" test ! -e "$D/branch-tally"
+
+fresh cosign_other_ref
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_cosign 0 https://github.com/IAmSkweetis/branch-tally/.github/workflows/release.yml@refs/heads/feature
+sh_run --to "$D"
+check "cosign: bundle from another ref exits non-zero" test "$rc" -ne 0
+check "cosign: bundle from another ref installs nothing" test ! -e "$D/branch-tally"
+
+# 12k. The manual command, in the warning and in --help, carries the same pins.
+fresh manual_cmd
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+sh_run --to "$D"
+check "warning command pins the signer workflow" contains "$err" "--signer-workflow $GOOD_WORKFLOW"
+check "warning command pins the source ref" contains "$err" "--source-ref refs/heads/main"
+check "warning command pins the issuer" contains "$err" "--cert-oidc-issuer https://token.actions.githubusercontent.com"
+sh_run --require-attestation --to "$D"
+check "strict failure command pins the signer workflow" contains "$err" "--signer-workflow $GOOD_WORKFLOW"
+check "strict failure command pins the source ref" contains "$err" "--source-ref refs/heads/main"
+sh_run --help
+check "--help command pins the signer workflow" contains "$out" "--signer-workflow $GOOD_WORKFLOW"
+check "--help command pins the source ref" contains "$out" "--source-ref refs/heads/main"
+check "--help names the exact cosign identity" contains "$out" "$GOOD_IDENTITY"
+
+# 13. F-06: mirror URL scheme.
+fresh scheme
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+for bad in http://mirror.example.test ftp://mirror.example.test mirror.example.test; do
+  run_install BRANCH_TALLY_INSTALL_BASE_URL="$bad" "$shell_under_test" "$installer" --to "$D"
+  check "mirror '$bad' is rejected" test "$rc" -ne 0
+  check "mirror '$bad' says https or file" contains "$err" "https://"
+  check "mirror '$bad' installs nothing" test ! -e "$D/branch-tally"
+done
+
+# 13b. A mirror is announced.
+sh_run --to "$D"
+check "a file:// mirror prints the effective source" contains "$out" "file://$R"
+
+# 13c. Over https, curl is held to HTTPS and TLS 1.2+.
+fresh curlflags
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_curl
+run_install BRANCH_TALLY_INSTALL_BASE_URL=https://mirror.example.test "$shell_under_test" "$installer" --to "$D"
+check "https mirror install exits 0" test "$rc" -eq 0
+check "https mirror prints the effective source" contains "$out" "https://mirror.example.test"
+check "curl gets --proto" contains "$S/curl.log" "--proto"
+check "curl is restricted to https" contains "$S/curl.log" "=https"
+check "curl gets --tlsv1.2" contains "$S/curl.log" "--tlsv1.2"
+check "curl restricts redirects to https" contains "$S/curl.log" "--proto-redir"
+
+# 13d. wget (no curl) is held to HTTPS where it can be.
+fresh wgetflags
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_wget
+# Not `TOOLS=... run_install`: bash 3.2 would keep TOOLS set for every later case.
+TOOLS=$TOOLBIN_NOCURL
+run_install BRANCH_TALLY_INSTALL_BASE_URL=https://mirror.example.test "$shell_under_test" "$installer" --to "$D"
+unset TOOLS
+check "wget https mirror install exits 0" test "$rc" -eq 0
+check "wget gets --https-only" contains "$S/wget.log" "--https-only"
+
+# 14. F-06: a tag read from the remote SHA256SUMS must be vMAJOR.MINOR.PATCH.
+fresh badtag
+for badname in "branch-tally-vevil-$X.tar.gz" "branch-tally-v1.2-$X.tar.gz" "branch-tally-v1.2.3.4-$X.tar.gz" "branch-tally-v../../x-$X.tar.gz"; do
+  rm -rf "$R"
+  mkdir -p "$R/latest/download"
+  printf '%s  %s\n' 0000000000000000000000000000000000000000000000000000000000000000 "$badname" > "$R/latest/download/SHA256SUMS"
+  sh_run --to "$D"
+  check "remote tag in '$badname' is rejected" test "$rc" -ne 0
+  check "remote tag in '$badname' is named in the error" contains "$err" "not of the form vMAJOR.MINOR.PATCH"
+  check "remote tag in '$badname' installs nothing" test ! -e "$D/branch-tally"
+done
+
+# 15. F-06: a truncated download must not run partway. Cut the script just before its end.
+fresh truncated
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+size=$(wc -c < "$installer")
+head -c $((size - 150)) "$installer" > "$S/truncated.sh"
+run_install "$shell_under_test" "$S/truncated.sh" --to "$D"
+check "a truncated script exits non-zero" test "$rc" -ne 0
+check "a truncated script installs nothing" test ! -e "$D/branch-tally"
+check "a truncated script prints nothing of the install" lacks "$out" "Installing"
+
+# 16. Help documents the new options.
+fresh helpnew
+sh_run --help
+check "--help documents --require-attestation" contains "$out" "--require-attestation"
+check "--help documents the env variable" contains "$out" "BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION"
+check "--help calls the checksum an integrity check" contains "$out" "integrity"
+check "--help mentions gh attestation verify" contains "$out" "gh attestation verify"
+check "--help mentions cosign" contains "$out" "cosign"
+check "--help limits mirrors to https and file" contains "$out" "file://"
+
+# 17. F-04: "latest" comes from the GitHub API, not from the mirror.
+API_TAG_URL=https://api.github.com/repos/IAmSkweetis/branch-tally/releases/latest
+fresh api_wins
+mk_release "$R" v1.0.0 $X 1.0.0
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v1.0.0   # the mirror's latest/ is stale (a rollback)
+mk_api v2.0.0           # GitHub says v2.0.0
+sh_run --to "$D"
+check "api: exits 0" test "$rc" -eq 0
+check "api: installs the release GitHub names, not the mirror's latest" contains "$out" "branch-tally 2.0.0"
+check "api: no fallback warning when the API answered" lacks "$err" "not confirmed"
+
+# 17b. Fallback: API unreachable, rate limited or garbage. Warn loudly and use the mirror's latest.
+fresh api_down
+mk_release "$R" v1.0.0 $X 1.0.0
+mk_latest "$R" v1.0.0
+rm -rf "$S/api"
+sh_run --to "$D"
+check "api down: falls back and exits 0" test "$rc" -eq 0
+check "api down: installs the mirror's latest" contains "$out" "branch-tally 1.0.0"
+check "api down: warns latest was not confirmed by GitHub" contains "$err" "not confirmed by GitHub"
+check "api down: says an older release could be served" contains "$err" "older release"
+check "api down: names the mirror as the source" contains "$err" "mirror"
+check "api down: prints the --version route" contains "$err" "--version"
+rm -rf "$D"
+mk_gh 0 0
+sh_run --require-attestation --to "$D"
+check "api down: allowed under --require-attestation" test "$rc" -eq 0
+check "api down: still warns under --require-attestation" contains "$err" "not confirmed by GitHub"
+
+fresh api_garbage
+mk_release "$R" v1.0.0 $X 1.0.0
+mk_latest "$R" v1.0.0
+for garbage in '<html>rate limited</html>' '{"message":"API rate limit exceeded"}' '' '{"tag_name":"v1.2"}' '{"tag_name":"evil"}' \
+  '{"tag_name":"v1.0.0;rm -rf /"}' '{"tag_name":"v1.0.0.1"}' '{"tag_name":"v../../x"}'; do
+  set_api "$garbage"
+  sh_run --to "$D"
+  check "api garbage '$garbage': falls back with a warning" contains "$err" "not confirmed by GitHub"
+  check "api garbage '$garbage': installs the mirror's latest" contains "$out" "branch-tally 1.0.0"
+done
+
+# 17c. A minified response is parsed too, and a tag_name inside another field is not taken.
+fresh api_min
+mk_release "$R" v1.0.0 $X 1.0.0
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v1.0.0
+set_api '{"url":"x","body":"see \"tag_name\": \"v1.0.0\" here","tag_name":"v2.0.0","assets":[]}'
+sh_run --to "$D"
+check "api minified: reads the tag" contains "$out" "branch-tally 2.0.0"
+check "api minified: no warning" lacks "$err" "not confirmed"
+
+# 17d. The API base override: https:// or file:// only, printed when set.
+fresh api_scheme
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+for bad in http://api.example.test ftp://api.example.test api.example.test; do
+  run_install BRANCH_TALLY_INSTALL_API_URL="$bad" "$shell_under_test" "$installer" --to "$D"
+  check "api base '$bad' is rejected" test "$rc" -ne 0
+  check "api base '$bad' names the variable" contains "$err" "BRANCH_TALLY_INSTALL_API_URL"
+  check "api base '$bad' installs nothing" test ! -e "$D/branch-tally"
+done
+sh_run --to "$D"
+check "a custom api base is printed" contains "$out" "Using release API: file://$S/api"
+run_install BRANCH_TALLY_INSTALL_API_URL= "$shell_under_test" "$installer" --version v2.0.0 --to "$D"
+check "an empty api base means the default (nothing printed)" lacks "$out" "Using release API"
+
+# 17e. Pinned version: the API is not consulted.
+fresh api_pinned
+mk_release "$R" v1.0.0 $X 1.0.0
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+rm -rf "$S/api"
+sh_run --version v1.0.0 --to "$D"
+check "pinned: exits 0 without the API" test "$rc" -eq 0
+check "pinned: no fallback warning" lacks "$err" "not confirmed"
+
+# 17f. Over https: the default API URL, and the token as a bearer header that is never printed.
+fresh api_https
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_curl
+run_install BRANCH_TALLY_INSTALL_BASE_URL=https://mirror.example.test BRANCH_TALLY_INSTALL_API_URL= \
+  "$shell_under_test" "$installer" --to "$D"
+check "default api: exits 0" test "$rc" -eq 0
+check "default api: asks api.github.com releases/latest" contains "$S/curl.urls" "$API_TAG_URL"
+check "default api: no Authorization without a token" lacks "$S/curl.hdr" "Authorization"
+check "default api: curl is held to https" contains "$S/curl.log" "=https"
+
+fresh api_token
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_curl
+run_install BRANCH_TALLY_INSTALL_BASE_URL=https://mirror.example.test BRANCH_TALLY_INSTALL_API_URL=https://api.example.test \
+  GH_TOKEN=ghtok-AAA GITHUB_TOKEN=ghtok-BBB "$shell_under_test" "$installer" --to "$D"
+check "token: exits 0" test "$rc" -eq 0
+check "token: prints the custom API" contains "$out" "Using release API: https://api.example.test"
+check "token: GH_TOKEN is sent as a bearer token" contains "$S/curl.hdr" "Authorization: Bearer ghtok-AAA"
+check "token: GH_TOKEN wins over GITHUB_TOKEN" lacks "$S/curl.hdr" "ghtok-BBB"
+check "token: never on the command line" lacks "$S/curl.log" "ghtok-"
+check "token: never on stdout" lacks "$out" "ghtok-"
+check "token: never on stderr" lacks "$err" "ghtok-"
+: > "$S/curl.hdr"
+run_install BRANCH_TALLY_INSTALL_BASE_URL=https://mirror.example.test BRANCH_TALLY_INSTALL_API_URL=https://api.example.test \
+  GITHUB_TOKEN=ghtok-BBB "$shell_under_test" "$installer" --to "$D"
+check "token: GITHUB_TOKEN is used when GH_TOKEN is unset" contains "$S/curl.hdr" "Authorization: Bearer ghtok-BBB"
+check "token: GITHUB_TOKEN never on stderr" lacks "$err" "ghtok-"
+check "token: no token is sent to the mirror" test "$(grep -c Authorization "$S/curl.hdr")" -eq 1
+
+# 17g. A failing API call with a token still never prints it, and the token did reach the installer.
+fresh api_token_fail
+mk_release "$R" v1.0.0 $X 1.0.0
+mk_latest "$R" v1.0.0
+rm -rf "$S/api"
+mk_curl
+run_install BRANCH_TALLY_INSTALL_BASE_URL=https://mirror.example.test BRANCH_TALLY_INSTALL_API_URL=https://api.example.test \
+  GH_TOKEN=ghtok-CCC "$shell_under_test" "$installer" --to "$D"
+check "token on failure: the API was asked with the token" contains "$S/curl.hdr" "Authorization: Bearer ghtok-CCC"
+check "token on failure: fallback warns" contains "$err" "not confirmed by GitHub"
+check "token on failure: falls back and installs" contains "$out" "branch-tally 1.0.0"
+check "token on failure: never printed on stderr" lacks "$err" "ghtok-CCC"
+check "token on failure: never printed on stdout" lacks "$out" "ghtok-CCC"
+
+# 17j. wget and the token (CWE-214): argv is readable by other local users, so the token never goes
+# on wget's command line. A wget with --config reads it from a private file. Any other wget gets no
+# token, with a one-line notice, and the lookup carries on unauthenticated.
+fresh wget_token
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_wget config
+TOOLS=$TOOLBIN_NOCURL
+run_install BRANCH_TALLY_INSTALL_BASE_URL=https://mirror.example.test BRANCH_TALLY_INSTALL_API_URL=https://api.example.test \
+  GH_TOKEN=ghtok-WWW "$shell_under_test" "$installer" --to "$D"
+unset TOOLS
+check "wget --config: exits 0" test "$rc" -eq 0
+check "wget --config: the API was fetched" contains "$out" "branch-tally 2.0.0"
+check "wget --config: the token is in the private config file" contains "$S/wget.cfg" "Authorization: Bearer ghtok-WWW"
+check "wget --config: the token is never in argv" lacks "$S/wget.log" "ghtok-"
+check "wget --config: no --header on the command line" lacks "$S/wget.log" "--header"
+check "wget --config: never printed" lacks "$err" "ghtok-"
+
+fresh wget_token_old
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_wget
+TOOLS=$TOOLBIN_NOCURL
+run_install BRANCH_TALLY_INSTALL_BASE_URL=https://mirror.example.test BRANCH_TALLY_INSTALL_API_URL=https://api.example.test \
+  GH_TOKEN=ghtok-WWW "$shell_under_test" "$installer" --to "$D"
+unset TOOLS
+check "wget without --config: exits 0" test "$rc" -eq 0
+check "wget without --config: still resolves latest from the API" contains "$out" "branch-tally 2.0.0"
+check "wget without --config: the token is never in argv" lacks "$S/wget.log" "ghtok-"
+check "wget without --config: no config file was written for it" test ! -s "$S/wget.cfg"
+check "wget without --config: says the token was not sent" contains "$err" "not sent"
+check "wget without --config: never printed" lacks "$err" "ghtok-"
+
+# 17h. A trailing newline is not a valid version (case patterns reject it, unlike a regexp's $).
+fresh nl_version
+mk_release "$R" v1.0.0 $X 1.0.0
+mk_latest "$R" v1.0.0
+NL='
+'
+sh_run --version "v1.0.0$NL" --to "$D"
+check "version with a trailing newline is rejected" test "$rc" -ne 0
+check "version with a trailing newline installs nothing" test ! -e "$D/branch-tally"
+
+# 17i. --help documents the API base and the fallback.
+sh_run --help
+check "--help documents the API base variable" contains "$out" "BRANCH_TALLY_INSTALL_API_URL"
+check "--help mentions GH_TOKEN" contains "$out" "GH_TOKEN"
+check "--help explains the mirror fallback" contains "$out" "not confirmed by GitHub"
 
 printf '\n%s cases run, %s failed\n' "$cases" "$failures"
 [ "$failures" -eq 0 ] && [ "$cases" -gt 0 ]

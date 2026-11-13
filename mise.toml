@@ -22,5 +22,7 @@ git-cliff = "2.13.1"
 rumdl = "0.3.2"
 zizmor = "1.31.1"
 mdbook = "0.5.4"
+# Pinned (with the archive sha256) in scripts/ci-install-minisign.sh, which CI runs.
+minisign = "0.12"
 # No aqua registry entry; the github backend takes the release binaries.
 "github:badboy/mdbook-mermaid" = "0.17.1"
