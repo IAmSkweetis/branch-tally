@@ -19,7 +19,26 @@ cases=0
 failures=0
 
 pass() { cases=$((cases + 1)); printf 'ok   %s\n' "$1"; }
-fail() { cases=$((cases + 1)); failures=$((failures + 1)); printf 'FAIL %s\n' "$1"; }
+fail() {
+  cases=$((cases + 1))
+  failures=$((failures + 1))
+  printf 'FAIL %s\n' "$1"
+  diagnose
+}
+
+# diagnose: after a FAIL, the exit code of the last installer run and a bounded tail of what it
+# wrote (8 lines, 200 columns each, per stream), so a red CI run explains itself. The fakes only
+# ever carry dummy tokens (ghtok-...); they are masked anyway.
+diagnose() {
+  printf '     last run: rc=%s\n' "${rc:-unset}"
+  for stream in out err; do
+    eval "f=\${$stream:-}"
+    if [ -n "$f" ] && [ -f "$f" ]; then
+      printf '     %s (last 8 lines):\n' "$stream"
+      tail -n 8 "$f" | cut -c1-200 | sed 's/ghtok-[A-Za-z0-9]*/ghtok-***/g; s/^/       | /'
+    fi
+  done
+}
 
 # check <description> <command...>: passes when the command succeeds.
 check() {
