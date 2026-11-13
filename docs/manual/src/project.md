@@ -161,14 +161,24 @@ it at the limit and marks the report unreliable, as `report` does (see
 - The SVG adds the footer line `totals overflowed, unreliable`, and its heading says "at least".
 
 One overflowed branch is enough to mark the whole report, because the project total includes it.
-The line under the Markdown chart that explains `*` gives an unpriced model as the reason for a
-floor point. When the totals overflowed, the overflow is a reason too, even if no model is
-unpriced.
+The line under the Markdown chart that explains `*` names the cause, looking only at the dated
+branches the chart is built from:
+
+- "has an unpriced model" when no dated branch's own total overflowed;
+- "has totals overflowed, unreliable" when one did, and no dated branch has an unpriced model;
+- "has an unpriced model and totals overflowed, unreliable" when both are true.
+
+For example:
+
+```text
+Points marked * are floors: that branch or an earlier one has totals overflowed, unreliable, so the real cost is at least this.
+```
 
 A total that large means some ledger line claims far more tokens than a real API call uses. Find
 it in the ledger's history before trusting any figure in the report.
 [`ledger check`](ledger.md#checking-ledger-changes) rejects new lines with a token field above
-10,000,000, so running it in CI on each pull request keeps such a line out of the ledger.
+10,000,000, so [running it in CI](ledger.md#running-it-in-ci) on each pull request keeps such a line
+out of the ledger.
 
 ## The cost-over-time chart
 
