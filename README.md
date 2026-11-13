@@ -2,9 +2,10 @@
 
 ![branch-tally logo](docs/manual/src/images/branch-tally-logo.svg)
 
-branch-tally is a utility to help you track AI costs across multiple workspaces, agents, worktrees
-and harnesses. It does so by reading local transcripts, assigning calls to a record in a ledger,
-and persisting that ledger.
+branch-tally is a utility to help you track AI costs across multiple workspaces, agents and
+worktrees. Claude Code is the only harness supported today. It reads local transcripts and assigns
+calls to a record in a ledger. Persisting the ledger is opt-in: `branch-tally record` writes only
+in a repository that has a `.tally/` directory.
 
 The ledger only stores relevant metadata from the transcript. Prompts and messages are never
 stored.
@@ -77,8 +78,8 @@ how to read it.
 ## Price table
 
 Estimated costs come from a price table sourced from [LiteLLM](https://github.com/BerriAI/litellm).
-We bundle the latest pricing at build time. But branch-tally also provides a path for updating and
-overriding with custom pricing. The manual's
+The binary bundles a dated snapshot, and every report states its date. `branch-tally prices update`
+caches newer prices, which take precedence, and a repository can override them. The manual's
 [`prices` reference](https://branch-tally.io/cli.html#branch-tally-prices-update) provides details.
 
 ## Licence
