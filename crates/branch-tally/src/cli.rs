@@ -50,6 +50,10 @@ pub(crate) enum Command {
     /// keeps that from blocking the session.
     Capture,
 
+    /// Check the committed `.tally/` files against a base ref.
+    #[command(subcommand)]
+    Ledger(LedgerCommand),
+
     /// Manage the model price table.
     #[command(subcommand)]
     Prices(PricesCommand),
@@ -66,6 +70,34 @@ pub(crate) enum Command {
     /// package manager should be updated with that package manager instead.
     #[command(alias = "upgrade")]
     Update(UpdateArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum LedgerCommand {
+    /// Fail if the working tree's `.tally/` files are not a well-formed append to the base's.
+    ///
+    /// Compares `.tally/ledger.jsonl` and `.tally/captures.jsonl` on the working tree with the
+    /// same files on `--base`. Every base line must still be there; every new line must parse,
+    /// be recorded for the head branch, carry a valid non-future `recorded_at`, not repeat a
+    /// base request, and stay under 10,000,000 tokens per field. Violations are listed on
+    /// stderr (file, line, rule; never line text) and the exit status is 1.
+    Check(LedgerCheckArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct LedgerCheckArgs {
+    /// The ref to compare against (for example `origin/main`). Required.
+    #[arg(long, value_name = "REF")]
+    pub(crate) base: String,
+
+    /// The branch the new lines must be recorded for (default: the current branch; pass it on a
+    /// detached checkout).
+    #[arg(long, value_name = "NAME")]
+    pub(crate) head_branch: Option<String>,
+
+    /// Repository path (default: cwd).
+    #[arg(long, default_value = ".", value_name = "PATH")]
+    pub(crate) repo: PathBuf,
 }
 
 #[derive(Debug, Args)]
