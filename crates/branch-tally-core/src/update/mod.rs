@@ -3,12 +3,16 @@
 //! Everything that touches the network, the filesystem or the terminal sits behind a trait
 //! ([`ReleaseClient`], [`Installer`], [`Confirmer`]); the CLI supplies the real ones and core never
 //! prints. Messages are plain, one line each.
+//!
+//! Trust comes from a minisign signature, not from where a file was fetched. `SHA256SUMS.minisig`
+//! is verified against a caller-supplied [`ReleaseKey`] before any checksum is trusted; the
+//! checksum itself is only an integrity check.
 
 mod assets;
 mod version;
 
 pub use assets::{
-    SUMS_NAME, UNSUPPORTED_TARGET, archive_name, current_target, is_binary_entry,
+    SIGNATURE_NAME, SUMS_NAME, UNSUPPORTED_TARGET, archive_name, current_target, is_binary_entry,
     latest_version_from_sums, sha256_hex, verify_checksum,
 };
 pub use version::{DEV_VERSION, Version, is_dev_version};
@@ -49,6 +53,42 @@ pub enum UpdateError {
         /// Archive name.
         asset: String,
     },
+    /// The compiled-in release public key could not be decoded.
+    #[error("the release public key is not valid; nothing installed")]
+    InvalidReleaseKey,
+    /// The release has no `SHA256SUMS.minisig`.
+    #[error(
+        "{tag} is not signed, so its origin can't be verified; nothing installed (to verify by hand see SECURITY.md: gh attestation verify)"
+    )]
+    SignatureMissing {
+        /// Release tag.
+        tag: String,
+    },
+    /// `SHA256SUMS.minisig` could not be parsed.
+    #[error("SHA256SUMS.minisig is malformed; nothing installed")]
+    SignatureMalformed,
+    /// The signature does not match `SHA256SUMS`.
+    #[error(
+        "the signature does not match SHA256SUMS, so its origin can't be verified; nothing installed"
+    )]
+    SignatureInvalid,
+    /// The signature was made by a different key than the release key.
+    #[error("the signature was made by a different key than the release key; nothing installed")]
+    SignatureWrongKey,
+    /// The signature is a legacy (non-prehashed) one, which is refused.
+    #[error("the signature uses the legacy format, which is refused; nothing installed")]
+    SignatureLegacy,
+    /// The signed trusted comment names a different release.
+    #[error("the signature is for release {signed_for}, not {expected}; nothing installed")]
+    SignatureWrongTag {
+        /// Tag named by the signature (sanitised).
+        signed_for: String,
+        /// Tag being installed.
+        expected: String,
+    },
+    /// The signed trusted comment names a different file, or is not recognised.
+    #[error("the signature is not for this release's SHA256SUMS; nothing installed")]
+    SignatureWrongFile,
     /// Extracting or replacing the binary failed.
     #[error("install failed: {0}")]
     Install(String),
@@ -198,19 +238,43 @@ impl Outcome {
     }
 }
 
-/// Run `branch-tally update`.
+/// The release public key `SHA256SUMS.minisig` must verify against. The caller supplies it; core
+/// never reads it from the environment or a file.
+#[derive(Debug, Clone)]
+pub struct ReleaseKey(minisign_verify::PublicKey);
+
+impl ReleaseKey {
+    /// Decode a minisign public key from its base64 form (the second line of `minisign.pub`).
+    ///
+    /// # Errors
+    /// [`UpdateError::InvalidReleaseKey`] when it does not decode.
+    pub fn from_base64(key: &str) -> Result<Self, UpdateError> {
+        minisign_verify::PublicKey::from_base64(key)
+            .map(Self)
+            .map_err(|_| UpdateError::InvalidReleaseKey)
+    }
+}
+
+/// Run `branch-tally update`, verifying the release signature against `release_key`.
 ///
 /// `current` is the running binary's version string (it may be [`DEV_VERSION`]) and `target` its
 /// target triple. Order of effects: dev-build refusal, then (unless `check`) a writability check,
-/// then version resolution, then the prompt, and only then any download.
+/// then version resolution, then the prompt, and only then any download. The downloads are
+/// `SHA256SUMS` and `SHA256SUMS.minisig` first. The signature is verified against `release_key`
+/// (proof of origin) over the exact `SHA256SUMS` bytes, with legacy signatures refused, and its
+/// trusted comment must be `branch-tally <tag> SHA256SUMS` for the tag being installed. Only then
+/// is the archive fetched and checked against `SHA256SUMS` (an integrity check) and installed.
+/// `--check` downloads nothing. The key is an input so a shipped binary's key is whatever the CLI
+/// compiles in; core reads no environment variable or file for it.
 ///
 /// # Errors
 /// [`UpdateError`] for an invalid or unknown version, an unsupported target, a failed download, a
-/// failed checksum, or a failed install. In every error case the installed binary is untouched.
-pub fn run(
+/// missing, invalid or mismatched signature, a failed checksum, or a failed install. In every error case the installed binary is untouched.
+pub fn run_verified(
     current: &str,
     target: &str,
     options: &UpdateOptions,
+    release_key: &ReleaseKey,
     client: &dyn ReleaseClient,
     installer: &dyn Installer,
     confirmer: &dyn Confirmer,
@@ -266,6 +330,13 @@ pub fn run(
     let sums = client
         .download(&tag, SUMS_NAME)
         .map_err(|e| fetch_error(&e, &tag))?;
+    let signature = client.download(&tag, SIGNATURE_NAME).map_err(|e| match e {
+        FetchError::NotFound => UpdateError::SignatureMissing {
+            tag: sanitize_tag(&tag),
+        },
+        other @ FetchError::Failed(_) => fetch_error(&other, &tag),
+    })?;
+    verify_sums_signature(release_key, &tag, &sums, &signature)?;
     let archive = client
         .download(&tag, &asset)
         .map_err(|e| fetch_error(&e, &tag))?;
@@ -277,6 +348,52 @@ pub fn run(
         from: current,
         to: wanted,
     })
+}
+
+/// Check that `signature` (the bytes of `SHA256SUMS.minisig`) is a prehashed minisign signature of
+/// exactly `sums` by `key`, and that its signed trusted comment is `branch-tally <tag> SHA256SUMS`.
+/// This is the proof of origin; the checksum that follows is only an integrity check.
+fn verify_sums_signature(
+    key: &ReleaseKey,
+    tag: &str,
+    sums: &[u8],
+    signature: &[u8],
+) -> Result<(), UpdateError> {
+    use minisign_verify::{Error as Sig, Signature};
+    let text = std::str::from_utf8(signature).map_err(|_| UpdateError::SignatureMalformed)?;
+    let signature = Signature::decode(text).map_err(|_| UpdateError::SignatureMalformed)?;
+    key.0.verify(sums, &signature, false).map_err(|e| match e {
+        Sig::UnexpectedKeyId => UpdateError::SignatureWrongKey,
+        Sig::UnexpectedAlgorithm | Sig::UnsupportedLegacyMode => UpdateError::SignatureLegacy,
+        Sig::InvalidEncoding | Sig::UnsupportedAlgorithm | Sig::IoError(_) => {
+            UpdateError::SignatureMalformed
+        }
+        Sig::InvalidSignature => UpdateError::SignatureInvalid,
+    })?;
+    // The comment is verified now, so it can be compared; it is still remote data for messages.
+    let comment = signature.trusted_comment();
+    let mut parts = comment.split(' ');
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some("branch-tally"), Some(signed_tag), Some(SUMS_NAME), None) => {
+            if signed_tag == tag {
+                Ok(())
+            } else {
+                Err(UpdateError::SignatureWrongTag {
+                    signed_for: sanitize_tag(signed_tag),
+                    expected: sanitize_tag(tag),
+                })
+            }
+        }
+        _ => Err(UpdateError::SignatureWrongFile),
+    }
+}
+
+/// Keep a tag from remote data short and printable: ASCII alphanumerics and `.-+_` only.
+fn sanitize_tag(tag: &str) -> String {
+    tag.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+' | '_'))
+        .take(40)
+        .collect()
 }
 
 fn fetch_error(error: &FetchError, what: &str) -> UpdateError {
@@ -296,4 +413,22 @@ pub(crate) fn scrub(text: &str) -> String {
         .map(|word| if word.contains("://") { "<url>" } else { word })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// The pre-signing entry point, kept only so the CLI keeps compiling until it passes a
+/// [`ReleaseKey`] to [`run_verified`]. It has no key, so it installs nothing: it always fails
+/// closed.
+///
+/// # Errors
+/// Always [`UpdateError::InvalidReleaseKey`].
+#[doc(hidden)]
+pub fn run(
+    _current: &str,
+    _target: &str,
+    _options: &UpdateOptions,
+    _client: &dyn ReleaseClient,
+    _installer: &dyn Installer,
+    _confirmer: &dyn Confirmer,
+) -> Result<Outcome, UpdateError> {
+    Err(UpdateError::InvalidReleaseKey)
 }

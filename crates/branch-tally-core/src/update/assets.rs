@@ -8,6 +8,9 @@ use super::{UpdateError, scrub};
 /// Name of the checksum file attached to every release.
 pub const SUMS_NAME: &str = "SHA256SUMS";
 
+/// The release asset holding the minisign signature of [`SUMS_NAME`].
+pub const SIGNATURE_NAME: &str = "SHA256SUMS.minisig";
+
 /// The target triples releases are built for.
 const TARGETS: [&str; 6] = [
     "x86_64-unknown-linux-musl",
