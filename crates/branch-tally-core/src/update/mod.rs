@@ -13,7 +13,7 @@ mod version;
 
 pub use assets::{
     SIGNATURE_NAME, SUMS_NAME, UNSUPPORTED_TARGET, archive_name, current_target, is_binary_entry,
-    latest_version_from_sums, sha256_hex, verify_checksum,
+    latest_tag_from_release_json, latest_version_from_sums, sha256_hex, verify_checksum,
 };
 pub use version::{DEV_VERSION, Version, is_dev_version};
 
