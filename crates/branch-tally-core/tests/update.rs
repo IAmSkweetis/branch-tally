@@ -227,8 +227,42 @@ fn up_to_date_does_nothing_without_force() {
 fn latest_older_than_current_is_not_a_downgrade() {
     let (c, i, k) = (Client::new("v1.0.0"), Inst::default(), Confirm::new(true));
     let out = do_run("1.2.0", &opts(), &c, &i, &k).unwrap();
-    assert!(matches!(out, Outcome::UpToDate { .. }));
+    assert!(matches!(&out, Outcome::LatestOlder { current, latest }
+        if current.tag() == "v1.2.0" && latest.tag() == "v1.0.0"));
     assert!(i.installed.borrow().is_empty());
+    assert_eq!(c.downloads(), 0);
+    let msg = out.message();
+    assert!(msg.contains("v1.0.0") && msg.contains("v1.2.0"), "{msg}");
+    assert!(msg.contains("older") && msg.contains("--version"), "{msg}");
+    assert!(!msg.contains("up to date"), "{msg}");
+    assert!(!out.is_refusal());
+}
+
+#[test]
+fn force_with_older_latest_installs_nothing() {
+    let (c, i, k) = (Client::new("v1.0.0"), Inst::default(), Confirm::new(true));
+    let o = UpdateOptions {
+        force: true,
+        yes: true,
+        ..UpdateOptions::default()
+    };
+    let out = do_run("1.2.0", &o, &c, &i, &k).unwrap();
+    assert!(matches!(out, Outcome::LatestOlder { .. }), "{out:?}");
+    assert!(i.installed.borrow().is_empty());
+    assert_eq!(c.downloads(), 0);
+    assert!(k.asked.borrow().is_empty());
+}
+
+#[test]
+fn check_with_older_latest_is_not_an_update() {
+    let (c, i, k) = (Client::new("v1.0.0"), Inst::default(), Confirm::new(true));
+    let o = UpdateOptions {
+        check: true,
+        ..UpdateOptions::default()
+    };
+    let out = do_run("1.2.0", &o, &c, &i, &k).unwrap();
+    assert!(matches!(out, Outcome::LatestOlder { .. }), "{out:?}");
+    assert_eq!(c.downloads(), 0);
 }
 
 #[test]
@@ -468,11 +502,28 @@ fn latest_not_found_and_network_errors_are_typed() {
     c.latest = Err(FetchError::NotFound);
     let i = Inst::default();
     let err = do_run("1.2.0", &opts(), &c, &i, &Confirm::new(true)).unwrap_err();
-    assert!(matches!(err, UpdateError::NotFound(_)));
+    assert!(matches!(err, UpdateError::LatestUnresolved(_)), "{err:?}");
 
     c.latest = Err(FetchError::Failed("timeout".into()));
     let err = do_run("1.2.0", &opts(), &c, &i, &Confirm::new(true)).unwrap_err();
-    assert_eq!(err, UpdateError::Network("timeout".into()));
+    assert_eq!(err, UpdateError::LatestUnresolved("timeout".into()));
+}
+
+#[test]
+fn latest_failure_asks_for_version_and_carries_no_url() {
+    let mut c = Client::new("v1.3.0");
+    for failure in [
+        FetchError::NotFound,
+        FetchError::Failed("GET https://api.example.com/x?token=SECRET123 failed\nmore".into()),
+    ] {
+        c.latest = Err(failure);
+        let err = do_run("1.2.0", &opts(), &c, &Inst::default(), &Confirm::new(true)).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("--version v"), "{msg}");
+        assert!(msg.contains("latest release"), "{msg}");
+        assert!(!msg.contains("://") && !msg.contains("SECRET123"), "{msg}");
+        assert_eq!(msg.lines().count(), 1);
+    }
 }
 
 #[test]

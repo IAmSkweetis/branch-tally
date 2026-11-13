@@ -276,6 +276,15 @@ environment variable or file for it, so the binary's compiled-in key is the only
 fine, since trust comes from the signature. A dev build (`0.0.0-dev`) and an unwritable binary
 directory are refused, with the installer one-liner in the message. `--check` downloads nothing;
 `--version` may downgrade; `--force` reinstalls the current version; `--yes` skips the prompt.
+
+Without `--version`, `update` never installs a release older than the running binary, `--force`
+included. Core returns `Outcome::LatestOlder` and the message says the latest release (vX) is older
+than the running version (vY), nothing was installed, and `--version` is the way back. It is not
+"up to date" (that would hide the mismatch) and not an error (exit 0, nothing went wrong), and
+`--check` reports it the same way instead of offering an update. If "latest" can't be resolved
+(`ReleaseClient::latest_tag` fails), the error is `UpdateError::LatestUnresolved`: it says the
+latest release could not be resolved and to pin one with `--version vX.Y.Z`, with URLs scrubbed.
+`latest_tag` must resolve from the GitHub API, independent of the mirror, and never fall back to it.
 Core's tests use throwaway keys and signatures in
 `crates/branch-tally-core/tests/data/update_signing/`.
 
