@@ -27,7 +27,19 @@ pub(crate) fn run(args: &LedgerCheckArgs) -> Result<(), String> {
             format!("ledger check: cannot tell the current branch ({e}); pass --head-branch")
         })?,
     };
-    let summary = check_repo(&git, &SystemClock, &top, &args.base, &head_branch)?;
+    // Temporary until the CLI Builder adds a way to name the base branch: the repository's
+    // default branch, else the `--base` text itself (a branch name when the caller passes one).
+    let base_branch = git
+        .default_branch(&top)
+        .unwrap_or_else(|_| args.base.clone());
+    let summary = check_repo(
+        &git,
+        &SystemClock,
+        &top,
+        &args.base,
+        &head_branch,
+        &base_branch,
+    )?;
     crate::report::stderr(&summary);
     Ok(())
 }
@@ -39,6 +51,7 @@ fn check_repo(
     top: &Path,
     base: &str,
     head_branch: &str,
+    base_branch: &str,
 ) -> Result<String, String> {
     let base_file = |name: &str| {
         git.file_at(top, base, &Path::new(".tally").join(name))
@@ -65,6 +78,7 @@ fn check_repo(
         base_captures: base_captures.as_deref(),
         head_captures: head_captures.as_deref(),
         head_branch,
+        base_branch,
         now: &now,
     });
     if report.is_clean() {
@@ -90,7 +104,7 @@ fn describe(v: &Violation) -> String {
     let rule = match v.rule {
         Rule::BaseLineRemoved => "a base line was removed or changed".to_owned(),
         Rule::Unparseable => "unparseable".to_owned(),
-        Rule::WrongBranch => "wrong branch (not recorded for the head branch)".to_owned(),
+        Rule::RecordedForBaseBranch => "recorded for the base branch".to_owned(),
         Rule::MissingRecordedAt => "missing recorded_at".to_owned(),
         Rule::InvalidTimestamp => "invalid timestamp".to_owned(),
         Rule::FutureTimestamp => "future timestamp".to_owned(),

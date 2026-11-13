@@ -588,7 +588,7 @@ the line number in the working tree's copy (or `removed base line`) and the rule
 line text, request ids or session ids. For example, from a synthetic repository:
 
 ```text
-ledger: line 3: wrong branch (not recorded for the head branch)
+ledger: line 3: recorded for the base branch
 ledger: line 4: missing recorded_at
 ledger: line 5: future timestamp
 ledger: line 6: token field output over the 10000000 ceiling
@@ -602,8 +602,8 @@ ledger check: 9 violation(s) against main
 
 Here the captures file's only base line was replaced by a new one, so the check reports both the
 new line and the removed one. One line can break several rules, and each is listed: a line
-recorded for another branch that also repeats a base request gets both `wrong branch` and
-`duplicate of a base request`.
+recorded for the base branch that also repeats a base request gets both
+`recorded for the base branch` and `duplicate of a base request`.
 
 | Message (stderr, exit 1) | Cause |
 | ------------------------ | ----- |
