@@ -48,7 +48,7 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
             // Python's `sys.exit(msg)`: the message and a newline on stderr, status 1.
-            let _ = writeln!(std::io::stderr(), "{message}");
+            report::stderr(&message);
             ExitCode::from(1)
         }
     }

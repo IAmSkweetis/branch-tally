@@ -19,6 +19,7 @@ use branch_tally_core::report::{
 };
 use branch_tally_core::sources::claude_code::ClaudeCode;
 use branch_tally_core::sources::{ReadStats, Source, SourceError};
+use branch_tally_core::text::replace_control_chars;
 
 use clap::CommandFactory;
 use clap::error::ErrorKind;
@@ -323,6 +324,7 @@ fn update(
 /// real run would teach people to ignore the note. Malformed lines, records without a request id
 /// and synthetic records are the ones the reference drops without a word.
 fn note_skipped(stats: &ReadStats) {
+    note_undated(stats.malformed_timestamps);
     let parts = [
         (stats.malformed_lines, "malformed"),
         (stats.no_dedupe_key, "without a request id"),
@@ -341,6 +343,16 @@ fn note_skipped(stats: &ReadStats) {
         "note: skipped {total} transcript record(s): {}",
         detail.join(", ")
     ));
+}
+
+/// Governance II: records whose timestamp was not strict RFC 3339 are kept but undated. Informational,
+/// not part of the skipped total. Count only.
+fn note_undated(count: u64) {
+    if count > 0 {
+        stderr(&format!(
+            "note: {count} record(s) had an unreadable timestamp; they were kept but are undated"
+        ));
+    }
 }
 
 /// Governance II for the hook captures: lines of `.tally/captures.jsonl` that could not be used.
@@ -390,6 +402,7 @@ fn note_ledger(ledger: &LedgerReport) {
 
 /// Governance II: the ledger lines that could not be used, and conflicting requests. Counts only.
 pub(crate) fn note_ledger_stats(stats: &branch_tally_core::ledger::ReadStats) {
+    note_undated(stats.malformed_timestamps);
     let skipped = [
         (stats.malformed, "malformed"),
         (stats.unsupported_version, "unsupported version"),
@@ -442,8 +455,20 @@ pub(crate) fn stdout(text: &str) {
     let _ = out.flush();
 }
 
+/// The one choke point for stderr text. Messages interpolate recorded and ledger-derived text
+/// (model ids, branch names, paths), so every line passes through
+/// [`replace_control_chars`]: an escape sequence or bidi override in a transcript must not reach a
+/// terminal. Newlines are the message's own layout, so the text is split on them first and each
+/// line cleaned on its own.
+pub(crate) fn clean_lines(text: &str) -> String {
+    text.split('\n')
+        .map(|line| replace_control_chars(line).into_owned())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 pub(crate) fn stderr(line: &str) {
-    let _ = writeln!(std::io::stderr(), "{line}");
+    let _ = writeln!(std::io::stderr(), "{}", clean_lines(line));
 }
 
 #[cfg(test)]
