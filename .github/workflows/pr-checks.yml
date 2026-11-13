@@ -89,3 +89,45 @@ jobs:
       - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: moderate
+
+  # Always runs (never path-filtered at the workflow level) so it can be a required check; when
+  # .tally/ is untouched it only reports. The checker is built from the BASE commit and run against
+  # the PR's merge checkout, so a PR that edits the checker cannot disable its own check. The PR's
+  # own code is never built here. Logic and its tests: scripts/ci-tally-check.sh.
+  tally-check:
+    name: tally-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the base commit must be reachable for `git diff` and the checker
+          persist-credentials: false
+      - name: Did the PR touch .tally/?
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: sh scripts/ci-tally-check.sh changed "$BASE_SHA"
+      - name: Check out the base commit
+        if: steps.scope.outputs.changed == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+      - name: Install Rust (base toolchain pin)
+        if: steps.scope.outputs.changed == 'true'
+        working-directory: base
+        run: sh scripts/ci-install-rust.sh
+      - name: Build branch-tally from the base commit
+        if: steps.scope.outputs.changed == 'true'
+        working-directory: base
+        run: cargo build --release --locked -p branch-tally
+      - name: Check the ledger and captures against the base
+        if: steps.scope.outputs.changed == 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: sh scripts/ci-tally-check.sh run base/target/release/branch-tally "$BASE_SHA" "$HEAD_REF"
