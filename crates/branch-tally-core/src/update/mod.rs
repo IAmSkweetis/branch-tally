@@ -32,6 +32,11 @@ pub enum UpdateError {
     /// The release tag or asset does not exist.
     #[error("release not found: {0}")]
     NotFound(String),
+    /// "Latest" could not be resolved. Carries a scrubbed one-line reason.
+    #[error(
+        "the latest release could not be resolved ({0}); nothing installed. Pin a release with --version vX.Y.Z"
+    )]
+    LatestUnresolved(String),
     /// The download failed.
     #[error("download failed: {0}")]
     Network(String),
@@ -108,6 +113,11 @@ pub enum FetchError {
 pub trait ReleaseClient {
     /// The tag of the latest published release, for example `v1.2.3`.
     ///
+    /// The implementation must resolve "latest" from a source independent of the mirror (the
+    /// GitHub API), and must not fall back to the mirror: a mirror that serves old files could
+    /// otherwise roll users back to a vulnerable release. `update` reports a failure here as
+    /// "latest could not be resolved" and suggests `--version`.
+    ///
     /// # Errors
     /// [`FetchError`] when it cannot be resolved.
     fn latest_tag(&self) -> Result<String, FetchError>;
@@ -148,11 +158,12 @@ pub trait Confirmer {
 pub struct UpdateOptions {
     /// Only report whether a newer version exists. Installs nothing, downloads nothing.
     pub check: bool,
-    /// Install this release (`v1.2.3` or `1.2.3`) instead of the latest. Allows a downgrade.
+    /// Install this release (`v1.2.3` or `1.2.3`) instead of the latest. The only way to go to an
+    /// older release.
     pub version: Option<String>,
     /// Skip the confirmation prompt.
     pub yes: bool,
-    /// Reinstall even when already on the target version.
+    /// Reinstall even when already on the target version. Never installs an older "latest".
     pub force: bool,
 }
 
@@ -179,6 +190,14 @@ pub enum Outcome {
         current: Version,
         /// The version an update would install.
         available: Version,
+    },
+    /// Without `--version`, the latest release is older than the running binary, so nothing is
+    /// installed (not even with `--force`). `--version` is the way to go back.
+    LatestOlder {
+        /// The running version.
+        current: Version,
+        /// The older version "latest" resolved to.
+        latest: Version,
     },
     /// The binary was replaced.
     Updated {
@@ -210,6 +229,12 @@ impl Outcome {
                 "update available: {} -> {}; run `branch-tally update` to install it",
                 current.tag(),
                 available.tag()
+            ),
+            Self::LatestOlder { current, latest } => format!(
+                "the latest release ({}) is older than the running version ({}); nothing installed. \
+                 To go back to an older release, pin it with --version",
+                latest.tag(),
+                current.tag()
             ),
             Self::Updated { from, to } => {
                 format!("updated branch-tally {} -> {}", from.tag(), to.tag())
@@ -269,7 +294,8 @@ impl ReleaseKey {
 ///
 /// # Errors
 /// [`UpdateError`] for an invalid or unknown version, an unsupported target, a failed download, a
-/// missing, invalid or mismatched signature, a failed checksum, or a failed install. In every error case the installed binary is untouched.
+/// missing, invalid or mismatched signature, a failed checksum, or a failed install. In every
+/// error case the installed binary is untouched.
 pub fn run_verified(
     current: &str,
     target: &str,
@@ -291,18 +317,22 @@ pub fn run_verified(
     let pinned = options.version.as_deref().map(Version::parse).transpose()?;
     let wanted = match pinned {
         Some(version) => version,
-        None => Version::parse(
-            &client
-                .latest_tag()
-                .map_err(|e| fetch_error(&e, "latest release"))?,
-        )?,
+        None => Version::parse(&client.latest_tag().map_err(|e| {
+            UpdateError::LatestUnresolved(match e {
+                FetchError::NotFound => "not found".to_string(),
+                FetchError::Failed(reason) => scrub(&reason),
+            })
+        })?)?,
     };
-    // Without a pin, an older "latest" is not an update; a pin may go either way.
-    let nothing_to_do = if pinned.is_some() {
-        wanted == current
-    } else {
-        wanted <= current
-    };
+    // Without a pin, an older "latest" is never installed, not even with `--force`: it would be a
+    // silent downgrade. Say so, rather than calling it "up to date". A pin may go either way.
+    if pinned.is_none() && wanted < current {
+        return Ok(Outcome::LatestOlder {
+            current,
+            latest: wanted,
+        });
+    }
+    let nothing_to_do = wanted == current;
     if options.check {
         return Ok(if nothing_to_do {
             Outcome::UpToDate { version: current }
