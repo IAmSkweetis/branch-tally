@@ -10,7 +10,7 @@ expression: text
 
 | Session | Where | Agents | Span (UTC date) | Calls | Tokens |
 |---|---|---|---|--:|--:|
-| `s1` | main checkout | agent-1 | 2026-01-01 → 2026-01-01 | 3 | 0.0M |
+| `s1` | main checkout | `agent-1` | 2026-01-01 → 2026-01-01 | 3 | 0.0M |
 
 <sub>Branch `feat/x` · 1 session(s), 0 in a worktree · 2 of 3 calls from subagents · attributed by heuristic: dispatcher roll-up 2 call(s) / 120 tokens · identifiers redacted</sub>
 
@@ -18,7 +18,7 @@ expression: text
 
 | Workspace | Subagent | Model | Calls | Input | Cache write | Cache read | Output | (thinking) | Tokens |
 |---|---|---|--:|--:|--:|--:|--:|--:|--:|
-| unknown workspace | a1 | `claude-test-1` | 2 | 20 | 0 | 60 | 40 | 0 | 120 |
+| unknown workspace | `a1` | `claude-test-1` | 2 | 20 | 0 | 60 | 40 | 0 | 120 |
 
 120 tokens (2 calls) from 1 dispatched subagent(s) across 1 workspace(s) (0 worktree(s)).
 0 subagent call(s) had no dispatch link.
@@ -27,8 +27,8 @@ expression: text
 
 | Attribution | Calls | Tokens |
 |---|--:|--:|
-| agent:agent-1 | 2 | 120 |
-| main | 1 | 60 |
+| `agent:agent-1` | 2 | 120 |
+| `main` | 1 | 60 |
 
 </details>
 <!-- token-report:end -->
