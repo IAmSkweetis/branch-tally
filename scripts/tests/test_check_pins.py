@@ -45,6 +45,7 @@ git-cliff = "2.13.1"
 rumdl = "0.3.2"
 zizmor = "1.31.1"
 minisign = "0.12"
+powershell = "7.7.0"
 """
 MINISIGN_SCRIPT = """#!/bin/sh
 set -eu
@@ -53,11 +54,19 @@ version=0.12
 sha256=9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73
 dest=${1:-/usr/local/bin}
 """
+PWSH_SCRIPT = """#!/bin/sh
+set -eu
+
+version=7.7.0
+sha256_linux_x64=c89d9c682d2c403dfe726f3df948e359675235a5bd6fab535776de69729ca0cb
+sha256_linux_arm64=e59c89776eaa59790d44b3edd14277435225ab08b6e7603763101b89de83d935
+"""
 ASSET = b"console.log('pan');\n"
 
 
 def make_repo(mise: str = MISE, justfile: str = JUSTFILE, ci: str = CI, asset: bytes = ASSET,
-              sha: str | None = None, minisign: str | None = MINISIGN_SCRIPT) -> Path:
+              sha: str | None = None, minisign: str | None = MINISIGN_SCRIPT,
+              pwsh: str | None = PWSH_SCRIPT) -> Path:
     root = Path(tempfile.mkdtemp())
     (root / ".github" / "workflows").mkdir(parents=True)
     (root / "docs" / "manual").mkdir(parents=True)
@@ -66,6 +75,8 @@ def make_repo(mise: str = MISE, justfile: str = JUSTFILE, ci: str = CI, asset: b
     (root / "scripts").mkdir()
     if minisign is not None:
         (root / "scripts" / "ci-install-minisign.sh").write_text(minisign, encoding="utf-8")
+    if pwsh is not None:
+        (root / "scripts" / "ci-install-pwsh.sh").write_text(pwsh, encoding="utf-8")
     (root / "rust-toolchain.toml").write_text(TOOLCHAIN, encoding="utf-8")
     (root / "mise.toml").write_text(mise, encoding="utf-8")
     (root / "docs" / "manual" / "svg-pan-zoom.min.js").write_bytes(asset)
@@ -148,6 +159,31 @@ class CheckPins(unittest.TestCase):
     def test_minisign_script_missing_rejected(self):
         problems = self.check(minisign=None)
         self.assertTrue(any("minisign" in p for p in problems))
+
+    def test_drifted_powershell_version_rejected(self):
+        problems = self.check(mise=MISE.replace('powershell = "7.7.0"', 'powershell = "7.6.10"'))
+        self.assertTrue(any("powershell" in p and "7.7.0" in p for p in problems))
+
+    def test_powershell_missing_from_mise_rejected(self):
+        problems = self.check(mise=MISE.replace('powershell = "7.7.0"\n', ""))
+        self.assertTrue(any("powershell" in p and "missing" in p for p in problems))
+
+    def test_powershell_bumped_in_script_only_rejected(self):
+        problems = self.check(pwsh=PWSH_SCRIPT.replace("version=7.7.0", "version=7.7.1"))
+        self.assertTrue(any("powershell" in p for p in problems))
+
+    def test_powershell_malformed_sha_rejected(self):
+        bad = PWSH_SCRIPT.replace("sha256_linux_arm64=e59c", "sha256_linux_arm64=XYZ")
+        problems = self.check(pwsh=bad)
+        self.assertTrue(any("powershell" in p and "sha256" in p for p in problems))
+
+    def test_powershell_script_without_any_sha_rejected(self):
+        problems = self.check(pwsh="#!/bin/sh\nversion=7.7.0\n")
+        self.assertTrue(any("powershell" in p and "sha256" in p for p in problems))
+
+    def test_powershell_script_missing_rejected(self):
+        problems = self.check(pwsh=None)
+        self.assertTrue(any("powershell" in p for p in problems))
 
     def test_real_repository_agrees(self):
         self.assertEqual(cp.check(REPO), [])

@@ -153,11 +153,12 @@ its own lists the recipes.
 | `just secret-scan [args…]` | `gitleaks git` over the full history of every local ref, redacted. CI passes `--log-opts=HEAD` | `gitleaks git --redact .` |
 | `just audit-workflows [--offline]` | `zizmor` over `.github/`, pinned. Online audits run when `GH_TOKEN` is set. | `uvx zizmor@<pin> .github/` |
 | `just test-scripts` | proves `scripts/check-commit-subject.sh`, `scripts/check-branch-name.sh` and `scripts/package.sh` and `scripts/sign-checksums.sh` (release signing, against the real minisign when present, a failure in CI when absent) reject what they must and accept what they should | `sh scripts/test-checks.sh` |
-| `just check-pins` | fails when `mise.toml` disagrees with the pins in the justfile, the workflows, `rust-toolchain.toml` or `scripts/ci-install-minisign.sh` (whose `sha256=` must also be a well-formed 64-hex digest) (or lacks one of them, or lists a tool nothing else pins), or when a vendored manual asset no longer matches its recorded sha256. Reads the files as text: needs `uv` only, not mise, just's evaluator or the network | `uv run scripts/check_pins.py` |
+| `just check-pins` | fails when `mise.toml` disagrees with the pins in the justfile, the workflows, `rust-toolchain.toml`, `scripts/ci-install-minisign.sh` or `scripts/ci-install-pwsh.sh` (whose `sha256` pins must also be well-formed 64-hex digests) (or lacks one of them, or lists a tool nothing else pins), or when a vendored manual asset no longer matches its recorded sha256. Reads the files as text: needs `uv` only, not mise, just's evaluator or the network | `uv run scripts/check_pins.py` |
 | `just test-py` | `unittest` for `scripts/scrub_transcripts.py` and `scripts/make_goldens.py`, including one end-to-end run of the reference | `uv run python -m unittest discover -s scripts/tests` |
 | `just check-plugin` | build the binary, then check the shipped plugin and marketplace: manifests parse, every hook command ends in `; exit 0`, every hook names a real subcommand of that binary. `claude plugin validate` also runs when the `claude` CLI is installed and is a printed `SKIP` otherwise (CI has none). Needs `cargo` and `uv` | `cargo build -p branch-tally` then `sh plugin/tests/check.sh target/debug/branch-tally` |
 | `just lint-install` | ShellCheck on `install.sh` and its test, PSScriptAnalyzer on the `.ps1` files. A missing tool is a printed skip locally and an error when `CI` is set | `sh scripts/lint-install.sh` |
 | `just test-install` | the installers' offline tests under `sh` and `pwsh`, with the same skip rule | `sh scripts/test-install.sh` |
+| `just test-install-live [shell]` | `install.ps1`'s downloader against real GitHub, under `pwsh` (the default) or `powershell` (Windows PowerShell 5.1). Needs the network, so not part of `just ci` | `pwsh -NoProfile -ExecutionPolicy Bypass -File tests/install/install_live_test.ps1` |
 | `just docs` | build the user manual with mdBook and mdbook-mermaid (pinned) into `docs/manual/book/`; a `SUMMARY.md` entry with no page fails it ([The user manual](#the-user-manual)) | `mdbook build docs/manual` |
 | `just docs-serve` | serve the manual locally and rebuild on change, at `http://localhost:3000` | `mdbook serve docs/manual` |
 | `just scrub --root <repo root> <src> <dest>` | scrub a real transcript tree into a committable fixture ([testing.md](testing.md#fixtures)) | `uv run scripts/scrub_transcripts.py …` |
@@ -184,19 +185,22 @@ the justfile only. For gitleaks also bump the archive checksum in `ci.yml`, and 
 mdbook-mermaid the checksums in `docs.yml`; a mismatch fails the job. `just`, nextest and cargo-deny
 are pinned in `ci.yml`.
 
-**`mise.toml`.** `mise install` at the repository root sets up a dev machine with every one of
-those pins (`rust`, `just`, `cargo-nextest`, `cargo-deny`, `gitleaks`, `git-cliff`, `rumdl`,
-`zizmor`, `mdbook`, `mdbook-mermaid`). It is a **local convenience, not an authority**: the
-justfile, the workflows and `rust-toolchain.toml` still decide what CI runs, and nothing in CI or
-the hooks calls mise. `just check-pins` (part of `just ci`, and a CI step in the `scripts` job)
-compares them as text and fails on any drift: a version that differs, a pinned tool missing from
-`mise.toml`, or a tool in `mise.toml` that nothing else pins (so mise can't grow a pin of its own).
-To bump a tool, change it where it is really pinned, then in `mise.toml` in the same commit.
-Backends: `aqua:` (via the short registry name) for `just`, `cargo-deny`, `gitleaks`, `git-cliff`,
-`rumdl`, `zizmor` and `mdbook`; `cargo:cargo-nextest` (not in the aqua registry; compiles from
-source unless `cargo-binstall` is installed); `github:badboy/mdbook-mermaid` (no registry entry).
-`uv`, `git`, `sh` and the installer linters are not pinned anywhere, so they are not in
-`mise.toml`; install them yourself.
+**`mise.toml`.** `mise install` at the repository root sets up a dev machine with every one of those
+pins (`rust`, `just`, `cargo-nextest`, `cargo-deny`, `gitleaks`, `git-cliff`, `rumdl`, `zizmor`,
+`mdbook`, `mdbook-mermaid`, `minisign`, `powershell`). It is a
+**local convenience, not an authority**: the justfile, the workflows, the `scripts/ci-install-*.sh`
+scripts (minisign and pwsh, each pinned by version and archive sha256) and `rust-toolchain.toml`
+still decide what CI runs, and nothing in CI or the hooks calls mise. `just check-pins` (part of
+`just ci`, and a CI step in the `scripts` job) compares them as text and fails on any drift: a
+version that differs, a pinned tool missing from `mise.toml`, or a tool in `mise.toml` that nothing
+else pins (so mise can't grow a pin of its own). To bump a tool, change it where it is really
+pinned, then in `mise.toml` in the same commit. Backends: `aqua:` (via the short registry name) for
+`just`, `cargo-deny`, `gitleaks`, `git-cliff`, `rumdl`, `zizmor`, `mdbook`, `minisign` and
+`powershell` (PowerShell 7, the `pwsh` the installer jobs run; Windows PowerShell 5.1 ships with
+Windows and can't be installed anywhere else); `cargo:cargo-nextest` (not in the aqua registry;
+compiles from source unless `cargo-binstall` is installed); `github:badboy/mdbook-mermaid` (no
+registry entry). `uv`, `git`, `sh` and the installer linters are not pinned anywhere, so they are
+not in `mise.toml`; install them yourself.
 
 `mise.toml` also lists `rust`, even though `rustup` already reads `rust-toolchain.toml` and installs
 that channel the first time `cargo` runs. The file stays the authority (it also carries the
