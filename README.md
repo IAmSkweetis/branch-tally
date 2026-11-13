@@ -79,7 +79,8 @@ how to read it.
 
 Estimated costs come from a price table sourced from [LiteLLM](https://github.com/BerriAI/litellm).
 The binary bundles a dated snapshot, and every report states its date. `branch-tally prices update`
-caches newer prices, which take precedence, and a repository can override them. The manual's
+caches newer prices, which take precedence, and a repository can override them; a report priced
+with an override says so on stderr. The manual's
 [`prices` reference](https://branch-tally.io/cli.html#branch-tally-prices-update) provides details.
 
 ## Licence

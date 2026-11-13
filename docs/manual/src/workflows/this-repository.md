@@ -98,6 +98,21 @@ out. So the main checkout often has uncommitted `.tally/` lines, and the skills 
 their clean-tree checks ignore `.tally/` (`git status --short -- . ':!.tally'`), and the lines are
 committed on the next feature branch, never on `main` and never discarded.
 
+### Checking the committed lines
+
+Because the ledger sets the number every PR publishes, changes to `.tally/` are checked on every
+pull request:
+
+- The **`tally-check`** CI job runs on every pull request. When the PR changes anything under
+  `.tally/`, it runs
+  [`branch-tally ledger check`](../cli.md#branch-tally-ledger-check) against the PR's base commit,
+  with the PR's branch as `--head-branch`. The PR may only append to the ledger and captures
+  files, and every new ledger line must be recorded for the PR's own branch. When `.tally/` is
+  unchanged the job passes without building anything.
+- The job builds the checker **from the base commit**, never from the PR, so a PR that changes the
+  checker can't switch off its own check.
+- `.github/CODEOWNERS` names a reviewer for `.tally/**`.
+
 ## Why the numbers come out right
 
 The subagents' transcripts are written under the main checkout's transcript directory, inside the

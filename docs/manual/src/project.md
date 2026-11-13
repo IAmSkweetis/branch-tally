@@ -43,7 +43,11 @@ change any number. In `strict` mode the report doesn't list the attribution heur
 
 The ledger notes that `report --from-ledger` prints on stderr (skipped lines, conflicting lines,
 unreadable timestamps, mixed modes) are printed by `project` too. They are described in
-[Report from the ledger](ledger.md#report-from-the-ledger).
+[Report from the ledger](ledger.md#report-from-the-ledger). Like `report --from-ledger`, `project`
+stops with exit 3 when the ledger has conflicting lines for one request, unless you pass
+`--allow-ledger-conflicts`; see [Conflicting ledger lines](ledger.md#conflicting-ledger-lines).
+When the price table is the repository's `.tally/prices.toml` override, `project` says so on
+stderr.
 
 ## The per-branch table
 
@@ -114,7 +118,8 @@ A cost that leaves something out is shown as a floor, a lower bound, never as an
 
 - A **row** is `at least $X` when one of its models has no price in the price table. Its tokens
   are counted, but the unpriced model's cost is not in `$X`. A branch that used only unpriced
-  models shows `at least $0.00`: its tokens are real, but nothing in them could be priced.
+  models shows `at least $0.00`: its tokens are real, but nothing in them could be priced. A
+  row is also `at least $X` when its totals overflowed (see [below](#overflowed-totals)).
 - The **project total** is `at least $X` when any figure in the report is a floor: the total, any
   row or any chart point. A note names the unpriced models.
 
@@ -131,6 +136,39 @@ When attribution heuristics such as session claim or dispatcher roll-up assigned
 branch, a note lists each one with its call and token counts. Those calls are counted, but their
 branch was inferred rather than stamped. The heuristics are described in
 [Attribution modes](cli.md#attribution-modes).
+
+### Overflowed totals
+
+A token or call count can't grow past 18,446,744,073,709,551,615, the largest value branch-tally
+holds. A ledger line can claim any number, so a sum can reach that limit. branch-tally then stops
+it at the limit and marks the report unreliable, as `report` does (see
+[Overflowed totals](cli.md#overflowed-totals)):
+
+- The Markdown report puts this statement under the total line, before the table:
+
+  ```text
+  **Totals overflowed and are unreliable**: a token or call count exceeded the largest value the
+  tool can hold, so every total here is at least what is shown and the real figure is unknown.
+  ```
+
+  (The real statement is a single line; it is wrapped here to fit the page.)
+- The project total reads `at least $X`, and so does the cost of each branch whose own total
+  overflowed. The chart's title says "at least", and from the first overflowed branch on, its
+  points are floors, marked `*`.
+- In JSON, `totalsOverflowed` is `true` at the top level, and on each branch whose own total
+  overflowed. `totalTokensIsFloor` and `totalCostIsFloor` are `true`, and so is the overflowed
+  branches' `costIsFloor`.
+- The SVG adds the footer line `totals overflowed, unreliable`, and its heading says "at least".
+
+One overflowed branch is enough to mark the whole report, because the project total includes it.
+The line under the Markdown chart that explains `*` gives an unpriced model as the reason for a
+floor point. When the totals overflowed, the overflow is a reason too, even if no model is
+unpriced.
+
+A total that large means some ledger line claims far more tokens than a real API call uses. Find
+it in the ledger's history before trusting any figure in the report.
+[`ledger check`](ledger.md#checking-ledger-changes) rejects new lines with a token field above
+10,000,000, so running it in CI on each pull request keeps such a line out of the ledger.
 
 ## The cost-over-time chart
 
@@ -249,7 +287,8 @@ option: branch names appear in the table as they are in the ledger.
 | --- | ----- |
 | `totalCalls` | API calls in the project, each counted once. |
 | `totalTokens` | Their tokens, each call counted once. |
-| `totalTokensIsFloor` | `true` when some calls could not be placed with certainty, so token totals are a lower bound. |
+| `totalTokensIsFloor` | `true` when some calls could not be placed with certainty, or a total overflowed, so token totals are a lower bound. |
+| `totalsOverflowed` | `true` when a token or call total overflowed, in the project total or any branch, so every total is an unreliable floor (see [Overflowed totals](#overflowed-totals)). Absent otherwise. |
 | `totalCostUSD` | The estimated project cost in US dollars, each call counted once. |
 | `totalCostIsFloor` | `true` when any figure in the report is a floor: the total, a branch or a series point. |
 | `unpricedModels` | Model ids that had no price, across all branches. |
@@ -257,7 +296,7 @@ option: branch names appear in the table as they are in the ledger.
 | `heuristics` | Calls and tokens per attribution heuristic, and `ambiguous`, as in `report`'s JSON, plus `isFloor`. Every key is present, with zeros where nothing applied. |
 | `undatedBranches` | How many branches have no usable timestamp and are left off the series. |
 | `undatedCalls` | How many calls have no usable timestamp, each counted once, undated branches included. |
-| `branches` | One object per branch, in table order: `branch`, `lastCall` (the full timestamp as recorded, or `null`), `calls`, `tokens`, `costUSD`, `costIsFloor`, `unpricedModels`, `heuristics` and `undatedCalls` (this branch's calls with no usable timestamp). |
+| `branches` | One object per branch, in table order: `branch`, `lastCall` (the full timestamp as recorded, or `null`), `calls`, `tokens`, `costUSD`, `costIsFloor`, `unpricedModels`, `heuristics` and `undatedCalls` (this branch's calls with no usable timestamp), plus `totalsOverflowed: true` when this branch's own total overflowed. |
 | `series` | One object per chart point, in date order: `date` (the full timestamp), `branch`, `cumulativeCostUSD` and `isFloor`. |
 
 Dollar amounts are rounded to four decimal places. An all-unpriced branch has `"costUSD": 0.0`
@@ -295,11 +334,13 @@ cut off. The report still prints on stdout as usual, in whichever format you cho
 
 - The heading, which is also the SVG's `<title>`, gives the last plotted point:
   `Cumulative cost: $X`, or `Cumulative cost: at least $X` when any figure in the report is a
-  floor or some branch is undated. As in the Markdown chart, `$X` covers the dated branches only.
+  floor (an overflowed total included) or some branch is undated. As in the Markdown chart, `$X`
+  covers the dated branches only.
 - The axis shows the first and last dates. A floor point is a hollow circle, and the segment
   leading into it is dashed.
 - Lines under the chart explain what it can't show: `hollow = floor (at least), dashed line leads
-  to a floor` when there is a floor, `N undated branch(es) not shown`, and
+  to a floor` when there is a floor, `totals overflowed, unreliable` when a total overflowed (see
+  [Overflowed totals](#overflowed-totals)), `N undated branch(es) not shown`, and
   `N call(s) with no usable timestamp, branch dates may be early`. Each appears only when it
   applies.
 - Branch names are not printed on the chart. Each point has a tooltip with its branch, date and

@@ -169,10 +169,30 @@ What a ledger report tells you on stderr, as counts only:
 | `note: ledger mixes modes (claim, timeline); the numbers combine them` | The branch was recorded under more than one attribution mode. |
 | `note: skipped N ledger line(s): …` | Lines that were malformed or written by an unsupported ledger version were skipped and counted. |
 | `note: N record(s) had an unreadable timestamp; they were kept but are undated` | Ledger lines whose `ts` is not strict RFC 3339 (see [Timestamps](cli.md#timestamps)). The lines are used and counted, but treated as having no timestamp. With `--with-live`, a separate line of the same form counts the live transcripts' records. |
-| `note: N ledger request(s) had conflicting lines; kept the latest` | Two lines with the same key held different data. The one with the latest `recorded_at` is used. |
+| `note: N ledger request(s) had conflicting lines; kept the latest` | Printed only with `--allow-ledger-conflicts`. Two lines with the same key held different data, and the one with the latest `recorded_at` was used. See [Conflicting ledger lines](#conflicting-ledger-lines). |
 
 A duplicate line, such as one left by a union merge or by recording twice, is collapsed silently:
 it is not a conflict.
+
+### Conflicting ledger lines
+
+Each line is keyed by its `request_id` and `recorded_for`. A conflict is two lines with the same
+key and different contents. It is unusual, because `record` skips a key the ledger already holds,
+so it can mean a line was edited or added by hand. Which line wins decides what that call costs,
+so by default a conflict stops the run. `report --from-ledger` and `project` exit with status 3 and
+print a count, never a request id or line text:
+
+```text
+error: 1 ledger request(s) have conflicting lines, so the reported cost depends on which line wins. Inspect the ledger, or pass --allow-ledger-conflicts to proceed with the latest line for each
+```
+
+Look at the ledger's history (`git log -p -- .tally/ledger.jsonl`) to find out where the extra line
+came from, and remove the wrong one. To report anyway, pass `--allow-ledger-conflicts`. The line
+with the latest `recorded_at` is then used for each key, and the count is still printed on stderr
+as `note: N ledger request(s) had conflicting lines; kept the latest`.
+
+Exit 3 is separate from the general failure status, 1. A script that runs `report --from-ledger`
+or `project` and tests only for exit 1 should test for any non-zero status instead.
 
 If the ledger has no lines for the branch, `report --from-ledger` fails with
 `No ledger records found for branch '…'` (exit 1). If the ledger file, or the `.tally/` directory,
@@ -228,6 +248,42 @@ price override first, so a linked `.tally` stops them with the price table's mes
 To fix it, replace the link with a real directory or file. An explicit `--ledger <path>` is your
 own choice, so it is exempt: it is read and written as given, a link included. The guard still
 applies to the captures file and the price override, which `--ledger` does not move.
+
+## Checking ledger changes
+
+The ledger is a plain text file in your repository. Nothing signs it, so anyone who can push a
+commit can add, edit or remove lines, and a report from the ledger uses whatever it reads. The
+same goes for `.tally/captures.jsonl`, which can move calls between branches, and for the
+[price override](cli.md#which-price-table-is-used), which sets every cost. Review changes to
+`.tally/` the way you review code. GitHub's `CODEOWNERS` file can require a named reviewer for
+`.tally/**`.
+
+`branch-tally ledger check` makes the mechanical part of that review automatic. Run it in CI on
+each pull request, against the pull request's base:
+
+```sh
+branch-tally ledger check --base origin/main --head-branch "$PR_BRANCH"
+```
+
+It passes only when the pull request appends to `.tally/ledger.jsonl` and `.tally/captures.jsonl`
+and changes nothing already there, and when each new ledger line is recorded for the pull
+request's own branch, has a `recorded_at` that is not in the future, does not repeat a key the
+base already holds, and has no token count above 10,000,000. Pass `--head-branch` in CI, where the
+checkout is usually detached. The full rules and messages are in the
+[CLI reference](cli.md#branch-tally-ledger-check).
+
+Two things to know before relying on it:
+
+- **Run a binary the pull request can't change.** If the branch under review can change the
+  checker, it can switch the check off. Use a released binary, or build it from the base commit,
+  never from the pull request.
+- **A line that passes is well-formed, not proven.** The check can't tell a line `record` wrote
+  from an invented one that follows the rules. It narrows what a bad line can do, such as
+  rewriting another branch's history or claiming an impossible token count, but the reviewer
+  still decides whether the new lines are plausible.
+
+The price override is not covered by `ledger check`. Reports announce it on stderr instead; see
+[Which price table is used](cli.md#which-price-table-is-used).
 
 ## What is stored
 
