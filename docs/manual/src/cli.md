@@ -146,6 +146,35 @@ Every heuristic that assigned calls is listed in the report's footnote with its 
 counts, and in the JSON `heuristics` object. When calls were ambiguous, the report says the token
 total is "at least" the figure shown.
 
+#### Unstamped calls
+
+Some calls carry no branch stamp at all, and no report places them on a branch: no session claim,
+no hook captures, no worktree to recover the branch from. branch-tally does not guess. Such a call
+stays on no branch, and a report says how many there are:
+
+- the Markdown output has a line after the footnote, such as "1 call(s) / 1,115 tokens in this
+  repository carry no branch stamp and are not attributed to any branch";
+- the JSON output has a top-level `unstamped` object, such as
+  `"unstamped": { "calls": 1, "tokens": 1115 }`.
+
+Both are left out when there are no such calls. The count covers the whole repository, not the
+branch you asked about, so it is the same in every branch's report. It is reported in every mode,
+`strict` included. A call that a session claim places on a branch is in that branch's total, so it
+is not counted here; in `strict` mode there is no claim, so every call with no stamp is. These
+calls are in no branch's totals, and they are not counted again in the
+subagent section's unattributed counts. In timeline mode, an ambiguous call that kept no branch is
+counted here and, when its session is in the report, in the ambiguous total too. To list every
+call with no branch stamp, including those claim mode did place, report on `(none)` in strict
+mode:
+
+```sh
+branch-tally report '(none)' --strict
+```
+
+A report from the ledger alone (`--from-ledger`) can't count them, because the ledger holds only
+the requested branch's calls. It leaves both out and says so on stderr; see
+[The ledger](ledger.md). Adding `--with-live` brings the count back.
+
 ### Output formats
 
 **Markdown** (`--format md`, the default) is the table shown in
@@ -160,9 +189,11 @@ and `<!-- token-report:end -->` markers. It has, in order:
 4. a footnote: the branch and mode, session and subagent counts, the heuristics used, the
    work-branch rule in timeline mode, whether identifiers were redacted, the price table's date
    and source, unpriced models, and a reminder that costs are estimates at list API rates;
-5. a **Subagent usage** section, when subagents did part of the work: one row per subagent and
+5. a line such as "1 call(s) / 1,115 tokens in this repository carry no branch stamp and are not
+   attributed to any branch", when there are any (see [Unstamped calls](#unstamped-calls));
+6. a **Subagent usage** section, when subagents did part of the work: one row per subagent and
    model with its workspace, plus how many subagent calls had no dispatch link;
-6. a collapsed **Breakdown by skill / agent** table.
+7. a collapsed **Breakdown by skill / agent** table.
 
 With `--no-cost`, the cost columns are left out.
 
@@ -179,6 +210,7 @@ With `--no-cost`, the cost columns are left out.
 | `unpricedModels` | Model ids that had no price. |
 | `priceTable` | `asOf` (the table's date) and `source`: `"bundled"`, `"cache"` or `"override"`. |
 | `heuristics` | Calls and tokens per attribution heuristic (`sessionClaim`, `worktreeRecovery`, `originRecovery`, `dispatcherRollUp`, `timelineForward`, `timelineCarried`) and `ambiguous`, plus `isFloor`. `captured` is added only when [hook captures](captures.md) placed at least one call. Absent when no heuristic applied. |
+| `unstamped` | `calls` and `tokens`: the calls in the repository that carry no branch stamp and were not attributed to any branch (see [Unstamped calls](#unstamped-calls)). Absent when there are none, and in a report from the ledger alone. |
 | `subagents` | Subagent totals (calls, tokens, dispatched subagents, workspaces, worktrees, unattributed and unlinked counts, cost) and `rows`, one per subagent and model with token counts and cost. Present when subagents did part of the work. |
 | `sessions` | One object per session: `id`, `origin` (`"main"` or the worktree), `first` and `last` timestamps, `calls`, `tokens` and `agents`. |
 | `models` | One object per model id: `calls`, `input`, `cacheWrite5m`, `cacheWrite1h`, `cacheRead`, `output`, `thinking` and `costUSD` (`null` when unpriced). |

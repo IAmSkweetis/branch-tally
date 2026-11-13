@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 
 use branch_tally_core::model::{
     Bucket, Costs, Footnote, HeuristicBreakdown, HeuristicCount, Mode, PriceTableInfo,
-    PriceTableSource, SessionId, SessionRow, Summary,
+    PriceTableSource, SessionId, SessionRow, Summary, Unstamped,
 };
 use branch_tally_core::render::{END, HEADING, START, json, markdown, splice, wrap};
 
@@ -93,6 +93,7 @@ fn sample() -> (Summary, Costs) {
         ],
         subagents: branch_tally_core::model::SubagentSummary::default(),
         work_branch: None,
+        unstamped: Unstamped::default(),
         redacted: false,
     };
     // 0.125 and 2.675 are ties for two decimals: 0.125 is exact (half-even gives 0.12), 2.675 is
@@ -1393,4 +1394,36 @@ fn json_carries_captured_only_when_used() {
     let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
     assert_eq!(v["heuristics"]["captured"]["calls"], 4);
     assert_eq!(v["heuristics"]["captured"]["tokens"], 800);
+}
+
+#[test]
+fn markdown_reports_unstamped_calls_in_the_footer_only_when_there_are_some() {
+    let (mut s, c) = sample();
+    assert!(!markdown(&s, &c, false).contains("no branch stamp"));
+    s.unstamped = Unstamped {
+        calls: 2,
+        tokens: 2_221,
+    };
+    let md = markdown(&s, &c, false);
+    let line = "2 call(s) / 2,221 tokens in this repository carry no branch stamp and are not \
+                attributed to any branch";
+    assert!(md.contains(line), "{md}");
+    // It sits after the footnote, before the attribution details.
+    assert!(md.find("<sub>Branch").unwrap() < md.find(line).unwrap());
+    assert!(md.find(line).unwrap() < md.find("<details>").unwrap());
+}
+
+#[test]
+fn json_has_a_top_level_unstamped_key_only_when_there_are_some() {
+    use serde_json::Value;
+    let (mut s, c) = sample();
+    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    assert!(v.get("unstamped").is_none());
+    s.unstamped = Unstamped {
+        calls: 2,
+        tokens: 2_221,
+    };
+    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    assert_eq!(v["unstamped"]["calls"], 2);
+    assert_eq!(v["unstamped"]["tokens"], 2_221);
 }

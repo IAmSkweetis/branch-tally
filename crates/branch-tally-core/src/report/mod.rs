@@ -295,6 +295,8 @@ struct Picked {
     attributed: Vec<crate::model::AttributedRecord>,
     selected: Vec<crate::model::SelectedRecord>,
     unattributed: (u64, u64),
+    /// Calls with no branch stamp that no branch was assigned, over the full attributed set.
+    unstamped: crate::model::Unstamped,
     ambiguous: crate::model::HeuristicCount,
     work_rule: Option<WorkBranchRule>,
 }
@@ -326,6 +328,7 @@ fn select_for(
         crate::attribution::attribute_with_captures(records, dispatches, captures, &map, strict)
     };
     let unattributed = crate::model::SubagentSummary::count_unattributed(&attributed);
+    let unstamped = crate::summary::count_unstamped(&attributed, mode);
     let all = attributed.clone();
     let selected = if mode == Mode::Timeline {
         crate::attribution::select_timeline(attributed, branch)
@@ -337,6 +340,7 @@ fn select_for(
         attributed: all,
         selected,
         unattributed,
+        unstamped,
         ambiguous,
         work_rule,
     }
@@ -358,6 +362,7 @@ fn finish(
         sel.ambiguous,
     );
     summary.work_branch = sel.work_rule;
+    summary.unstamped = sel.unstamped;
     if let Some(redaction) = options.redaction {
         summary = crate::redact::redact(summary, redaction);
     }
@@ -815,6 +820,8 @@ pub fn run_from_ledger_at(
         info.live_read_stats = Some(live.stats);
         let sel = Picked {
             unattributed: crate::model::SubagentSummary::count_unattributed(&all),
+            // Live records only: ledger entries were selected for their branch, so are placed.
+            unstamped: live_sel.unstamped,
             ambiguous: crate::summary::count_ambiguous(&all, &records),
             attributed: all,
             selected: records,
@@ -831,6 +838,7 @@ pub fn run_from_ledger_at(
             attributed,
             selected: ledger_records,
             unattributed: (0, 0),
+            unstamped: crate::model::Unstamped::default(),
             ambiguous,
             work_rule: None,
         };

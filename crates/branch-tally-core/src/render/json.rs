@@ -10,7 +10,8 @@ use std::cmp::Reverse;
 use std::fmt::Write as _;
 
 use crate::model::{
-    Costs, HeuristicBreakdown, PriceTableSource, RowCost, SubagentSummary, Summary, WorkBranchRule,
+    Costs, HeuristicBreakdown, PriceTableSource, RowCost, SubagentSummary, Summary, Unstamped,
+    WorkBranchRule,
 };
 
 /// Python `json.dumps` string escaping with `ensure_ascii=True`.
@@ -174,6 +175,20 @@ fn work_branch(rule: Option<&WorkBranchRule>, o: &mut String) {
     }
 }
 
+/// The `unstamped` object (#60): calls and tokens with no branch stamp that no branch was
+/// assigned, repository-wide. Not in the reference; omitted when zero so reports without any keep
+/// its shape. (A ledger-only report cannot know the count, so it also omits it.)
+fn unstamped(u: &Unstamped, o: &mut String) {
+    if u.calls == 0 {
+        return;
+    }
+    let _ = writeln!(
+        o,
+        "  \"unstamped\": {{ \"calls\": {}, \"tokens\": {} }},",
+        u.calls, u.tokens
+    );
+}
+
 /// The `subagents` object (#6). Not in the reference: omitted when empty, so strict mode and
 /// reports without dispatched subagents keep the reference's shape. Totals come from the
 /// accessors and count rolled-up records only; `unattributed*` span every attributed record, not
@@ -311,6 +326,7 @@ pub fn json(summary: &Summary, costs: &Costs) -> String {
 
     heuristics(heur, &mut o);
     work_branch(summary.work_branch.as_ref(), &mut o);
+    unstamped(&summary.unstamped, &mut o);
     subagents(&summary.subagents, costs, &mut o);
 
     if sessions.is_empty() {

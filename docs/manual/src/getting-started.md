@@ -108,6 +108,9 @@ When subagents did part of the work, a **Subagent usage** section follows, with 
 subagent, the workspace it ran in and its cost, plus a line saying how many subagent calls had no
 dispatch link. When some calls could not be assigned to a branch with certainty, a bold line says
 "Token total is at least …" and how many tokens were ambiguous.
+When some calls in the repository carry no branch stamp and could not be placed on any branch, a
+line after the footnote says how many calls and tokens. That count is for the whole repository, not
+this branch; see [Unstamped calls](cli.md#unstamped-calls).
 
 ## Next steps
 

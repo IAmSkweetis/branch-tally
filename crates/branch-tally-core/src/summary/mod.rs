@@ -13,7 +13,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use crate::model::{
     AttributedRecord, BranchBasis, Bucket, HeuristicCount, Mode, Origin, SelectedRecord, Selection,
-    SessionId, SessionRow, SubagentRow, SubagentSummary, SubagentTags, Summary,
+    SessionId, SessionRow, SubagentRow, SubagentSummary, SubagentTags, Summary, Unstamped,
 };
 
 /// Calls and tokens of every [`BranchBasis::TimelineAmbiguous`] or
@@ -39,6 +39,33 @@ pub fn count_ambiguous(
         }
     }
     count
+}
+
+/// The branch attribution gives a record whose transcript carried no `gitBranch` stamp.
+const NO_BRANCH: &str = "(none)";
+
+/// Counts the calls no branch's report places (#60): see [`Unstamped`]. Pass the **full
+/// attributed set before selection** and the report's `mode`.
+#[must_use]
+pub fn count_unstamped(attributed: &[AttributedRecord], mode: Mode) -> Unstamped {
+    // Only claim mode places a record on a branch it was not assigned (the session claim);
+    // strict and timeline selection keep `assigned == branch` only.
+    let claims = if mode == Mode::Claim {
+        crate::attribution::session_claims(attributed)
+    } else {
+        HashMap::new()
+    };
+    attributed
+        .iter()
+        .filter(|a| {
+            a.basis != BranchBasis::SubagentUnlinked
+                && a.branch == NO_BRANCH
+                && !claims.contains_key(&a.record.session_id)
+        })
+        .fold(Unstamped::default(), |acc, a| Unstamped {
+            calls: acc.calls + 1,
+            tokens: acc.tokens + a.record.usage.tokens(),
+        })
 }
 
 /// The `origin` text used when a record has no origin. The reference always has one, so this can
@@ -179,6 +206,8 @@ pub fn summarize(
         sessions,
         subagents,
         work_branch: None,
+        // Repository-wide, so the caller sets it from the full attributed set.
+        unstamped: crate::model::Unstamped::default(),
         redacted: false,
     }
 }
@@ -297,4 +326,74 @@ fn add(b: &mut Bucket, r: &crate::model::Record) {
     b.output += u.output;
     b.thinking += u.thinking.unwrap_or(0);
     b.calls += 1;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Harness, Record, RequestId, Usage};
+
+    fn attributed(
+        session: &str,
+        branch: &str,
+        basis: BranchBasis,
+        output: u64,
+    ) -> AttributedRecord {
+        let usage = Usage {
+            output,
+            ..Usage::default()
+        };
+        AttributedRecord {
+            record: Record::new(
+                Harness::ClaudeCode,
+                SessionId::new(session),
+                RequestId::new("r"),
+                usage,
+            ),
+            branch: branch.to_owned(),
+            basis,
+            subagent: None,
+        }
+    }
+
+    fn un(calls: u64, tokens: u64) -> Unstamped {
+        Unstamped { calls, tokens }
+    }
+
+    #[test]
+    fn claim_mode_counts_only_none_records_no_session_claim_places() {
+        let recs = [
+            // Session a: only feat/x, so its (none) call is claimed there: placed.
+            attributed("a", "feat/x", BranchBasis::Stamped, 1),
+            attributed("a", "(none)", BranchBasis::Stamped, 100),
+            // Session b: no work branch at all: unplaced.
+            attributed("b", "main", BranchBasis::Stamped, 1),
+            attributed("b", "(none)", BranchBasis::Stamped, 7),
+            // Session c: two work branches, so no claim: unplaced.
+            attributed("c", "feat/x", BranchBasis::Stamped, 1),
+            attributed("c", "fix/y", BranchBasis::Stamped, 1),
+            attributed("c", "(none)", BranchBasis::Stamped, 3),
+            // Session d: only (none): unplaced.
+            attributed("d", "(none)", BranchBasis::Stamped, 5),
+            // Excluded: counted by `subagents.unattributed*`.
+            attributed("d", "(none)", BranchBasis::SubagentUnlinked, 50),
+            // Ambiguous but still on no branch: counted.
+            attributed("e", "(none)", BranchBasis::TimelineAmbiguous, 60),
+            // Ambiguous between real branches: has a branch, not unstamped.
+            attributed("f", "feat/x", BranchBasis::TimelineAmbiguous, 70),
+        ];
+        assert_eq!(count_unstamped(&recs, Mode::Claim), un(4, 75));
+        assert_eq!(count_unstamped(&[], Mode::Claim), Unstamped::default());
+    }
+
+    #[test]
+    fn strict_and_timeline_have_no_claim_so_every_none_record_counts() {
+        let recs = [
+            attributed("a", "feat/x", BranchBasis::Stamped, 1),
+            attributed("a", "(none)", BranchBasis::Stamped, 100),
+            attributed("b", "(none)", BranchBasis::SubagentUnlinked, 50),
+        ];
+        assert_eq!(count_unstamped(&recs, Mode::Strict), un(1, 100));
+        assert_eq!(count_unstamped(&recs, Mode::Timeline), un(1, 100));
+    }
 }

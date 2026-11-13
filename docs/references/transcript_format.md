@@ -127,7 +127,16 @@ What follows for attribution:
   read under a **worktree** root. `git worktree list` lists the main checkout too, but its entry
   only says what is checked out now, not what was checked out when the call was made. So an
   unstamped main-checkout record stays `(none)` (#37). The reference recovers it. Fixture:
-  `unstamped-main`.
+  `unstamped-main`. Such a record is never dropped silently (#60): the report counts the `(none)`
+  records that no branch's report places, repository-wide and before selection, as `unstamped`
+  calls and tokens (JSON key `unstamped`, a Markdown footer line). In claim mode a session claim
+  places a `(none)` record on the session's only work-shaped branch, so it is not counted: in
+  `unstamped-main`, `req_2` is claimed onto `feat/x` and only `req_5` (1 call, 1,115 tokens) is
+  unplaced, on any branch's report. Strict mode has no claim, so it counts both (2 calls, 2,221
+  tokens). The count appears in live and ledger+live reports, not in ledger-only ones. A subagent
+  record with no dispatch link is counted under `subagents.unattributed*` instead, never in both.
+  A timeline-ambiguous record that kept `(none)` is in `unstamped` always, and also in the
+  session-scoped ambiguous count when its session has a selected record.
 
 ### Captured attribution (#13)
 

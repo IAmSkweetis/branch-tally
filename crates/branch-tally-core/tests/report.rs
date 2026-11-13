@@ -477,6 +477,35 @@ fn unstamped_main_checkout_calls_are_not_put_on_the_checkouts_current_branch() {
 }
 
 #[test]
+fn unstamped_calls_are_counted_repository_wide_whichever_branch_is_reported() {
+    // #60: `req_2` is claimed onto `feat/x` (session `s1`'s only work branch), so only `req_5`
+    // (1,115 tokens) is placed by no branch. The count is the same on either branch.
+    for branch in ["main", "feat/x"] {
+        let r = fixture_report("unstamped-main", branch, Mode::Claim, &[]).unwrap();
+        assert_eq!(
+            (r.summary.unstamped.calls, r.summary.unstamped.tokens),
+            (1, 1_115),
+            "{branch}"
+        );
+        let json = branch_tally_core::render::json(&r.summary, &r.costs);
+        assert!(json.contains("\"unstamped\""), "{branch}: {json}");
+    }
+    // Strict has no claim, so both `(none)` calls (the reference's bucket) are unplaced.
+    let strict = fixture_report("unstamped-main", "main", Mode::Strict, &[]).unwrap();
+    assert_eq!(
+        (
+            strict.summary.unstamped.calls,
+            strict.summary.unstamped.tokens
+        ),
+        (2, 2_221)
+    );
+    // A fixture with every call stamped reports none, and omits the key.
+    let none = fixture_report("subagent", "feat/x", Mode::Claim, &[]).unwrap();
+    assert_eq!(none.summary.unstamped.calls, 0);
+    assert!(!branch_tally_core::render::json(&none.summary, &none.costs).contains("unstamped"));
+}
+
+#[test]
 fn removed_worktrees_roll_up_to_the_dispatcher_branch() {
     let r = fixture_report("subagent-removed-worktree", "feat/x", Mode::Claim, &[]).unwrap();
     assert_eq!(r.summary.total.calls, 7);
@@ -800,5 +829,39 @@ fn run_with_a_custom_rule_reports_the_pattern_and_ignores_git_defaults() {
         Some(WorkBranchRule::Custom {
             pattern: ".".to_owned()
         })
+    );
+}
+
+#[test]
+fn timeline_ambiguous_unstamped_call_in_an_unselected_session_is_still_counted() {
+    // #60 audit: an unstamped call with no parseable timestamp is timeline-ambiguous and keeps
+    // `(none)`. Its session has no record on `feat/x`, so the session-scoped ambiguous count
+    // never sees it; `unstamped` must.
+    let mut stray = rec("s2", "z", None);
+    stray.ts = None;
+    let records = vec![
+        rec_at("s1", "a", "feat/x", "2026-01-01T00:00:01Z"),
+        rec_at("s2", "y", "feat/y", "2026-01-01T00:00:01Z"),
+        stray,
+    ];
+    let opts = Options::new(Mode::Timeline).with_default_branch(DefaultBranch {
+        name: "main".to_owned(),
+        source: DefaultBranchSource::OriginHead,
+    });
+    let r = build(
+        records,
+        &[],
+        ReadStats::default(),
+        Path::new("/repo"),
+        &[],
+        "feat/x",
+        &opts,
+        bundled(),
+    )
+    .unwrap();
+    assert_eq!(r.summary.footnote.heuristics.ambiguous.calls, 0);
+    assert_eq!(
+        (r.summary.unstamped.calls, r.summary.unstamped.tokens),
+        (1, 15)
     );
 }

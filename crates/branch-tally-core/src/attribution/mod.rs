@@ -300,28 +300,49 @@ fn recover(record: &Record, stamp: &str, map: &WorktreeMap) -> (String, BranchBa
     (stamp.to_owned(), BranchBasis::Stamped)
 }
 
+/// Each session's claim in claim mode: the session's only work-shaped branch (a branch
+/// [`is_feature`] accepts), for every session with exactly one. [`select`] keeps all of a
+/// claimed session's records for that branch, so a record whose own branch is not that one is
+/// placed by the claim. Sessions with no work-shaped branch, or several, have no claim.
+///
+/// This is the single definition of a claim: [`select`] and `summary::count_unstamped` both use it,
+/// so what a branch's report keeps and what counts as placed cannot drift apart.
+#[must_use]
+pub fn session_claims(records: &[AttributedRecord]) -> HashMap<&SessionId, &str> {
+    let mut features: HashMap<&SessionId, HashSet<&str>> = HashMap::new();
+    for r in records {
+        if is_feature(&r.branch) {
+            features
+                .entry(&r.record.session_id)
+                .or_default()
+                .insert(&r.branch);
+        }
+    }
+    features
+        .into_iter()
+        .filter_map(|(session, branches)| {
+            let mut it = branches.into_iter();
+            match (it.next(), it.next()) {
+                (Some(only), None) => Some((session, only)),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
 /// Picks the records belonging to `branch` (`select`). Order is preserved.
 ///
 /// Strict keeps `assigned == branch`. Otherwise a session is claimed when its only work-shaped
-/// branch is `branch`, and all its records are kept ([`Selection::SessionClaim`] unless the
-/// record itself is on `branch`).
+/// branch is `branch` (see [`session_claims`]), and all its records are kept
+/// ([`Selection::SessionClaim`] unless the record itself is on `branch`).
 #[must_use]
 pub fn select(records: Vec<AttributedRecord>, branch: &str, strict: bool) -> Vec<SelectedRecord> {
     let claimed: HashSet<SessionId> = if strict {
         HashSet::new()
     } else {
-        let mut features: HashMap<&SessionId, HashSet<&str>> = HashMap::new();
-        for r in &records {
-            if is_feature(&r.branch) {
-                features
-                    .entry(&r.record.session_id)
-                    .or_default()
-                    .insert(&r.branch);
-            }
-        }
-        features
+        session_claims(&records)
             .into_iter()
-            .filter(|(_, brs)| brs.len() == 1 && brs.contains(branch))
+            .filter(|(_, claim)| *claim == branch)
             .map(|(s, _)| s.clone())
             .collect()
     };

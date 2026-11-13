@@ -25,7 +25,7 @@ pub use project::{BranchRow, ProjectReport, ProjectTotals, SeriesPoint, SharedOv
 pub use subagent::{Dispatch, SubagentRow, SubagentSummary, SubagentTags, Workspace};
 pub use summary::{
     Bucket, DefaultBranchSource, Footnote, HeuristicBreakdown, HeuristicCount, Mode, SessionRow,
-    Summary, WorkBranchRule,
+    Summary, Unstamped, WorkBranchRule,
 };
 
 /// The transcript root a record was read from (`origin` in `load_records` of

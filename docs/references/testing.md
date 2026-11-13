@@ -216,6 +216,29 @@ expected behaviour directly, next to the same issue number. `malformed-and-keyle
   `defaultBranch` and `source`, or `custom` with `pattern`), and the footnote names the default
   branch when it did not come from `origin/HEAD` and any custom pattern; neither appears in claim
   or strict output.
+- Output divergence #60 (unstamped calls): the JSON report has a top-level
+  `"unstamped": {"calls", "tokens"}` object that the reference lacks, and the Markdown gains a
+  footer line "N call(s) / T tokens in this repository carry no branch stamp and are not attributed
+  to any branch". Both are omitted when N is 0. It counts the `(none)` calls that **no branch's
+  report places** under the report's mode, so a call in some branch's total is never also called
+  unattributed. In claim mode a session claim places a `(none)` call on the session's only
+  work-shaped branch (`attribution::session_claims`, the same definition `select` uses), so it is
+  not counted; in strict and timeline modes there is no claim, so every `(none)` call is. Subagent
+  records with no dispatch link are excluded (they are in `subagents.unattributed*`, so the two
+  never double-count). A timeline-ambiguous record that kept `(none)` is counted, and can also be
+  in the session-scoped ambiguous heuristic when its session has a selected record. The count is
+  taken over the full attributed set before selection (`summary::count_unstamped`), so it is the
+  same for every branch's report. In `unstamped-main`: claim mode places `req_2` on `feat/x`, so
+  both `main` and `feat/x` report 1 call (`req_5`) and 1,115 tokens; strict reports 2 calls and
+  2,221 tokens, the reference's `(none)` bucket. Live and ledger+live reports carry it; a
+  ledger-only report cannot know it and omits it (the CLI already notes that unattributed counts
+  are unavailable from the ledger). In a ledger+live report only live records are counted: ledger
+  entries were selected for their branch, so they are placed. No `CLAIM_DIVERGENCES` pair is
+  added. `without_unstamped_divergence` (and `strip_unstamped_divergence` in
+  `branch-tally/tests/report.rs`) removes only that key, after checking it against the strict
+  golden's `(none)` bucket: exactly equal in strict mode, and in claim mode exactly the
+  `CLAIM_UNSTAMPED` entry (1 / 1,115 for `unstamped-main`, none elsewhere, never above the
+  bucket); a zero count must be omitted.
 - A redacted summary (`Summary.redacted`, #9) is rendered by reading that flag only. JSON gains
   `"redacted": true` right after `mode`, omitted when false so parity with the reference holds.
   Markdown adds the segment `identifiers redacted` to the footnote (with or without cost), and

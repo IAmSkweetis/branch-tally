@@ -228,6 +228,30 @@ pub struct Footnote {
     pub worktree_sessions: u64,
 }
 
+/// Calls that no branch's report places (#60): a record whose branch is `(none)` after
+/// attribution and that no branch's selection would keep, under the report's mode. In claim mode
+/// a session claim places a `(none)` record on the session's only work-shaped branch, so it is not
+/// counted; in strict and timeline modes there is no claim, so every `(none)` record is.
+/// Subagent records with no dispatch link are excluded (they are in
+/// [`SubagentSummary`]'s `unattributed_*`). Counted by `summary::count_unstamped` over the
+/// **full attributed set before selection**, so it is the same for every branch's report.
+///
+/// It can overlap the ambiguous heuristic: a timeline-ambiguous record that kept `(none)` is
+/// counted here, and also in `footnote.heuristics.ambiguous` when its session has a record
+/// selected for the branch. That count is session-scoped, so it can't be excluded here without
+/// making this one differ by branch.
+///
+/// Present in live and ledger+live reports; a ledger-only report cannot know it and leaves it
+/// zero (not "none exist"). Ledger entries are placed by definition (selected for their
+/// `recorded_for` branch), so only live records are counted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Unstamped {
+    /// Calls with no branch stamp that were not attributed to any branch.
+    pub calls: u64,
+    /// Tokens of those calls (same definition as [`Bucket::tokens`]).
+    pub tokens: u64,
+}
+
 /// The three tables `summarize` returns, each in first-seen order, plus what render derives.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Summary {
@@ -253,6 +277,11 @@ pub struct Summary {
     /// Absent in older serialized data.
     #[serde(default)]
     pub work_branch: Option<WorkBranchRule>,
+    /// Calls with no branch stamp that no branch was assigned (#60). Repository-wide. Zero when
+    /// there are none, and also when the count is unknown (ledger-only). Absent in older
+    /// serialized data.
+    #[serde(default)]
+    pub unstamped: Unstamped,
     /// `true` when `redact` replaced identifying detail. Absent in older serialized data.
     #[serde(default)]
     pub redacted: bool,
