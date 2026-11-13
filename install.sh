@@ -116,7 +116,7 @@ valid_tag() {
 # only a line that is exactly a "tag_name" member matches, so the same text inside another string
 # (where its quotes are escaped) cannot. The result is validated with valid_tag by the caller.
 json_tag() {
-  tr '{},' '\n\n\n' <"$1" |
+  awk '{ gsub(/[{},]/, "\n"); print }' <"$1" |
     sed -n 's/^[[:space:]]*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)"[[:space:]]*$/\1/p' |
     head -n 1
 }

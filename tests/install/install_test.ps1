@@ -19,6 +19,8 @@ New-Item -ItemType Directory -Path $T | Out-Null
 
 $script:cases = 0
 $script:failures = 0
+$script:lastRes = $null
+$script:S = $null
 
 function Test-Case {
   param([string]$Description, [bool]$Condition, [string]$Detail = '')
@@ -29,6 +31,35 @@ function Test-Case {
     $script:failures++
     [Console]::Out.WriteLine("FAIL $Description")
     if ($Detail) { [Console]::Out.WriteLine("     $Detail") }
+    Write-Diagnostic
+  }
+}
+
+function Write-Diagnostic {
+  # After a FAIL: the exit code of the last installer run and a bounded tail of what it wrote (8
+  # lines of 200 columns per stream), so a red CI run explains itself. The fakes only carry dummy
+  # tokens (ghtok-...); they are masked anyway. The stub logs show what the fakes were asked.
+  $r = $script:lastRes
+  if ($null -eq $r) { return }
+  [Console]::Out.WriteLine("     last run: rc=$($r.Rc)")
+  foreach ($name in @('Out', 'Err')) {
+    $lines = @(($r[$name] -split "`r?`n") | Where-Object { $_ -ne '' } | Select-Object -Last 8)
+    if ($lines.Count -gt 0) {
+      [Console]::Out.WriteLine("     $($name.ToLowerInvariant()) (last 8 lines):")
+      foreach ($l in $lines) {
+        $t = $l -replace 'ghtok-[A-Za-z0-9]*', 'ghtok-***'
+        if ($t.Length -gt 200) { $t = $t.Substring(0, 200) }
+        [Console]::Out.WriteLine("       | $t")
+      }
+    }
+  }
+  foreach ($stubName in @('gh', 'cosign')) {
+    $log = Get-StubLog $stubName
+    if ($log) {
+      $t = ($log -split "`r?`n" | Where-Object { $_ -ne '' } | Select-Object -Last 4) -join ' // '
+      if ($t.Length -gt 400) { $t = $t.Substring(0, 400) }
+      [Console]::Out.WriteLine("     $stubName.log (last 4): $t")
+    }
   }
 }
 
@@ -48,7 +79,7 @@ function Get-SafePath {
   return $p
 }
 
-function New-Stub {
+function Write-Stub {
   # A .cmd stub for gh or cosign in the sandbox that logs its arguments to <name>.log. For gh,
   # $Codes is @(auth status rc, attestation verify rc). For cosign, @(rc). The fake attestation was
   # signed by $Signer (gh: workflow path, cosign: certificate identity) on $Ref (gh only). Verify
@@ -58,18 +89,18 @@ function New-Stub {
   $body = "@echo off`r`necho %*>>`"%~dp0$Name.log`"`r`n"
   if ($Name -eq 'gh') {
     if (-not $Signer) { $Signer = $script:GoodWorkflow }
-    $body += "if `"%1 %2`"==`"auth status`" exit /b $($Codes[0])`r`n"
-    $body += "if `"%1 %2`"==`"attestation verify`" (`r`n"
-    $body += "  if not $($Codes[1])==0 exit /b $($Codes[1])`r`n"
+    # No parenthesised blocks: a flat script, so every `exit /b` is a plain top-level exit.
+    $body += "if `\"%1 %2`\"==`\"auth status`\" exit /b $($Codes[0])`r`n"
+    $body += "if not `\"%1 %2`\"==`\"attestation verify`\" exit /b 99`r`n"
+    $body += "if not $($Codes[1])==0 exit /b $($Codes[1])`r`n"
     # The real interface: gh attestation verify <file-path> --repo <owner/repo>. The archive must
     # exist, and --repo is mandatory (without --repo or --owner the real gh refuses).
-    $body += "  if not exist `"%3`" exit /b 2`r`n"
-    $body += "  echo %* | findstr /C:`"--repo IAmSkweetis/branch-tally `" >nul || exit /b 2`r`n"
-    $body += "  echo %* | findstr /C:`"--signer-workflow $Signer `" >nul || exit /b 1`r`n"
-    $body += "  echo %* | findstr /C:`"--source-ref $Ref `" >nul || exit /b 1`r`n"
-    $body += "  echo %* | findstr /C:`"--cert-oidc-issuer https://token.actions.githubusercontent.com`" >nul || exit /b 1`r`n"
-    $body += "  exit /b 0`r`n)`r`n"
-    $body += "exit /b 99`r`n"
+    $body += "if not exist `\"%3`\" exit /b 2`r`n"
+    $body += "echo %* | findstr /C:`\"--repo IAmSkweetis/branch-tally `\" >nul || exit /b 2`r`n"
+    $body += "echo %* | findstr /C:`\"--signer-workflow $Signer `\" >nul || exit /b 1`r`n"
+    $body += "echo %* | findstr /C:`\"--source-ref $Ref `\" >nul || exit /b 1`r`n"
+    $body += "echo %* | findstr /C:`\"--cert-oidc-issuer https://token.actions.githubusercontent.com`\" >nul || exit /b 1`r`n"
+    $body += "exit /b 0`r`n"
   } else {
     if (-not $Signer) { $Signer = $script:GoodIdentity }
     # The real interface: cosign verify-blob-attestation --bundle <provenance.sigstore.json>
@@ -124,7 +155,8 @@ function Invoke-Installer {
   $outTask = $p.StandardOutput.ReadToEndAsync()
   $errTask = $p.StandardError.ReadToEndAsync()
   $p.WaitForExit()
-  return @{ Rc = $p.ExitCode; Out = $outTask.Result; Err = $errTask.Result }
+  $script:lastRes = @{ Rc = $p.ExitCode; Out = $outTask.Result; Err = $errTask.Result }
+  return $script:lastRes
 }
 
 function Initialize-Sandbox {
@@ -227,10 +259,10 @@ function Build-Latest {
   if (Test-Path $latest) { Remove-Item -LiteralPath $latest -Recurse -Force }
   New-Item -ItemType Directory -Path $latest | Out-Null
   Copy-Item -LiteralPath (Join-Path (Join-Path $Root 'download') $Tag) -Destination (Join-Path $latest 'download') -Recurse
-  Set-Api ('{' + "`n  `"url`": `"x`",`n  `"tag_name`": `"$Tag`",`n  `"assets`": []`n}")
+  Write-Api ('{' + "`n  `"url`": `"x`",`n  `"tag_name`": `"$Tag`",`n  `"assets`": []`n}")
 }
 
-function Set-Api {
+function Write-Api {
   # What the fake GitHub API answers for releases/latest: exactly this text. Without a call, there
   # is no file, which is an unreachable API.
   param([string]$Body)
@@ -399,7 +431,7 @@ Initialize-Sandbox 'gh_pass'
 $R = $script:S.Release; $D = $script:S.Dest
 Build-Release $R 'v2.0.0' $target '2.0.0'
 Build-Latest $R 'v2.0.0'
-New-Stub 'gh' @(0, 0)
+Write-Stub 'gh' @(0, 0)
 $res = Invoke-Installer @('-To', $D)
 $ghLog = Get-StubLog 'gh'
 Test-Case 'gh pass exits 0' ($res.Rc -eq 0)
@@ -417,8 +449,8 @@ Initialize-Sandbox 'gh_fail'
 $R = $script:S.Release; $D = $script:S.Dest
 Build-Release $R 'v2.0.0' $target '2.0.0'
 Build-Latest $R 'v2.0.0'
-New-Stub 'gh' @(0, 1)
-New-Stub 'cosign' @(0)
+Write-Stub 'gh' @(0, 1)
+Write-Stub 'cosign' @(0)
 $res = Invoke-Installer @('-To', $D)
 Test-Case 'gh fail exits non-zero' ($res.Rc -ne 0)
 Test-Case 'gh fail installs nothing' (-not (Test-Path (Join-Path $D 'branch-tally.exe')))
@@ -432,7 +464,7 @@ $R = $script:S.Release; $D = $script:S.Dest
 Build-Release $R 'v2.0.0' $target '2.0.0'
 Build-BadChecksum $R 'v2.0.0'
 Build-Latest $R 'v2.0.0'
-New-Stub 'gh' @(0, 0)
+Write-Stub 'gh' @(0, 0)
 $res = Invoke-Installer @('-To', $D)
 Test-Case 'bad checksum exits non-zero' ($res.Rc -ne 0)
 Test-Case 'bad checksum never reaches gh attestation' ((Get-StubLog 'gh') -notlike '*attestation*')
@@ -442,8 +474,8 @@ Initialize-Sandbox 'cosign_pass'
 $R = $script:S.Release; $D = $script:S.Dest
 Build-Release $R 'v2.0.0' $target '2.0.0'
 Build-Latest $R 'v2.0.0'
-New-Stub 'gh' @(1, 0)
-New-Stub 'cosign' @(0)
+Write-Stub 'gh' @(1, 0)
+Write-Stub 'cosign' @(0)
 $res = Invoke-Installer @('-To', $D)
 $cosignLog = Get-StubLog 'cosign'
 Test-Case 'cosign pass exits 0' ($res.Rc -eq 0)
@@ -460,7 +492,7 @@ Initialize-Sandbox 'cosign_fail'
 $R = $script:S.Release; $D = $script:S.Dest
 Build-Release $R 'v2.0.0' $target '2.0.0'
 Build-Latest $R 'v2.0.0'
-New-Stub 'cosign' @(1)
+Write-Stub 'cosign' @(1)
 $res = Invoke-Installer @('-To', $D)
 Test-Case 'cosign fail exits non-zero' ($res.Rc -ne 0)
 Test-Case 'cosign fail installs nothing' (-not (Test-Path (Join-Path $D 'branch-tally.exe')))
@@ -472,7 +504,7 @@ $R = $script:S.Release; $D = $script:S.Dest
 Build-Release $R 'v2.0.0' $target '2.0.0'
 Remove-Item (Join-Path (Join-Path (Join-Path $R 'download') 'v2.0.0') 'provenance.sigstore.json')
 Build-Latest $R 'v2.0.0'
-New-Stub 'cosign' @(0)
+Write-Stub 'cosign' @(0)
 $res = Invoke-Installer @('-To', $D)
 Test-Case 'no bundle installs with a warning' ($res.Rc -eq 0 -and $res.Err -like '*NOT verified*')
 Test-Case 'no bundle never ran cosign' ((Get-StubLog 'cosign') -eq '')
@@ -507,7 +539,7 @@ Initialize-Sandbox 'strict_ok'
 $R = $script:S.Release; $D = $script:S.Dest
 Build-Release $R 'v2.0.0' $target '2.0.0'
 Build-Latest $R 'v2.0.0'
-New-Stub 'gh' @(0, 0)
+Write-Stub 'gh' @(0, 0)
 $res = Invoke-Installer @('-To', $D, '-RequireAttestation')
 Test-Case '-RequireAttestation with a passing gh exits 0' ($res.Rc -eq 0)
 
@@ -516,7 +548,7 @@ Initialize-Sandbox 'gh_loggedout'
 $R = $script:S.Release; $D = $script:S.Dest
 Build-Release $R 'v2.0.0' $target '2.0.0'
 Build-Latest $R 'v2.0.0'
-New-Stub 'gh' @(1, 0)
+Write-Stub 'gh' @(1, 0)
 $res = Invoke-Installer @('-To', $D, '-RequireAttestation')
 Test-Case 'logged-out gh with no cosign is unavailable (strict fails)' ($res.Rc -ne 0)
 Test-Case 'logged-out gh never ran attestation verify' ((Get-StubLog 'gh') -notlike '*attestation*')
@@ -531,7 +563,7 @@ foreach ($case in @(
   $R = $script:S.Release; $D = $script:S.Dest
   Build-Release $R 'v2.0.0' $target '2.0.0'
   Build-Latest $R 'v2.0.0'
-  if ($case.Tool -eq 'gh') { New-Stub 'gh' @(0, 0) $case.Signer $case.Ref } else { New-Stub 'cosign' @(0) $case.Signer }
+  if ($case.Tool -eq 'gh') { Write-Stub 'gh' @(0, 0) $case.Signer $case.Ref } else { Write-Stub 'cosign' @(0) $case.Signer }
   $res = Invoke-Installer @('-To', $D)
   Test-Case "$($case.Label) exits non-zero" ($res.Rc -ne 0)
   Test-Case "$($case.Label) installs nothing" (-not (Test-Path (Join-Path $D 'branch-tally.exe')))
@@ -587,7 +619,7 @@ $R = $script:S.Release; $D = $script:S.Dest
 Build-Release $R 'v1.0.0' $target '1.0.0'
 Build-Release $R 'v2.0.0' $target '2.0.0'
 Build-Latest $R 'v1.0.0'   # the mirror's latest/ is stale (a rollback)
-Set-Api '{"tag_name": "v2.0.0"}'
+Write-Api '{"tag_name": "v2.0.0"}'
 $res = Invoke-Installer @('-To', $D)
 Test-Case 'api: exits 0' ($res.Rc -eq 0)
 Test-Case "api: installs the release GitHub names, not the mirror's latest" ($res.Out -like '*branch-tally 2.0.0*')
@@ -607,7 +639,7 @@ Test-Case 'api down: says an older release could be served' ($res.Err -like '*ol
 Test-Case 'api down: names the mirror as the source' ($res.Err -like '*mirror*')
 Test-Case 'api down: prints the -Version route' ($res.Err -like '*-Version*')
 Remove-Item -LiteralPath $D -Recurse -Force
-New-Stub 'gh' @(0, 0)
+Write-Stub 'gh' @(0, 0)
 $res = Invoke-Installer @('-To', $D, '-RequireAttestation')
 Test-Case 'api down: allowed under -RequireAttestation' ($res.Rc -eq 0)
 Test-Case 'api down: still warns under -RequireAttestation' ($res.Err -like '*not confirmed by GitHub*')
@@ -618,7 +650,7 @@ Build-Release $R 'v1.0.0' $target '1.0.0'
 Build-Latest $R 'v1.0.0'
 foreach ($garbage in @('<html>rate limited</html>', '{"message":"API rate limit exceeded"}', '', '{"tag_name":"v1.2"}', '{"tag_name":"evil"}',
     '{"tag_name":"v1.0.0;rm -rf /"}', '{"tag_name":"v1.0.0.1"}', '{"tag_name":"v1.0.0\n"}', '{"tag_name":["v1.0.0"]}', '[]')) {
-  Set-Api $garbage
+  Write-Api $garbage
   $res = Invoke-Installer @('-To', $D)
   Test-Case "api garbage '$garbage': falls back with a warning" ($res.Err -like '*not confirmed by GitHub*')
   Test-Case "api garbage '$garbage': installs the mirror's latest" ($res.Out -like '*branch-tally 1.0.0*')
@@ -675,7 +707,8 @@ $src = [IO.File]::ReadAllText($installer)
 Test-Case 'Get-Remote turns automatic redirects off' ($src -like '*-MaximumRedirection 0*')
 Test-Case 'Get-Remote has a hop limit' ($src -like '*$maxRedirects*')
 Test-Case 'Get-Remote refuses a non-https hop' ($src -like '*refusing to follow a non-https redirect*')
-Test-Case 'Get-Remote compares the file scheme case-insensitively' ($src -like "*StartsWith('file://', [System.StringComparison]::OrdinalIgnoreCase)*")
+# .Contains, not -like: a [ in a -like pattern is a wildcard character class.
+Test-Case 'Get-Remote compares the file scheme case-insensitively' ($src.Contains("StartsWith('file://', [System.StringComparison]::OrdinalIgnoreCase)"))
 Test-Case 'the version check uses \z, not $' ($src.Contains('[0-9]+\.[0-9]+\.[0-9]+\z') -and -not $src.Contains('[0-9]+\.[0-9]+\.[0-9]+$'''))
 
 # 12. The help names the new parameter.
