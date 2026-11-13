@@ -397,3 +397,271 @@ fn a_line_without_origin_still_reads_with_origin_none() {
         None
     );
 }
+
+// --- ledger check (#96) ---
+
+mod check {
+    use branch_tally_core::ledger::{
+        CheckInput, CheckedFile, LedgerEntry, MAX_TOKENS_PER_FIELD, Rule, Violation, check,
+    };
+    use branch_tally_core::model::{CAPTURE_SCHEMA_VERSION, CaptureEvent, CaptureKind, Timestamp};
+
+    use super::*;
+
+    const NOW: &str = "2026-06-01T00:00:00Z";
+    const BEFORE: &str = "2026-05-01T00:00:00Z";
+    const BRANCH: &str = "feat/x";
+
+    #[expect(clippy::expect_used, reason = "test constant")]
+    fn now() -> Timestamp {
+        NOW.parse().expect("valid timestamp")
+    }
+
+    fn entry(id: &str, branch: &str, output: u64, at: Option<&str>) -> LedgerEntry {
+        let mut e =
+            LedgerEntry::from_selected(&selected(id, branch, output), branch, Mode::Strict, None);
+        e.recorded_at = at.map(str::to_owned);
+        e
+    }
+
+    #[expect(clippy::expect_used, reason = "test helper")]
+    fn line(e: &LedgerEntry) -> String {
+        serde_json::to_string(e).expect("entry serializes")
+    }
+
+    fn good(id: &str) -> String {
+        line(&entry(id, BRANCH, 5, Some(BEFORE)))
+    }
+
+    #[expect(clippy::expect_used, reason = "test helper")]
+    fn capture(ts: &str) -> String {
+        serde_json::to_string(&CaptureEvent {
+            v: CAPTURE_SCHEMA_VERSION,
+            harness: Harness::ClaudeCode,
+            kind: CaptureKind::Stop,
+            session_id: SessionId::new("s"),
+            agent_id: None,
+            branch: "other".to_owned(),
+            worktree_branch: None,
+            ts: ts.to_owned(),
+        })
+        .expect("event serializes")
+    }
+
+    fn lines(ls: &[&str]) -> Vec<u8> {
+        let mut s = ls.join("\n");
+        s.push('\n');
+        s.into_bytes()
+    }
+
+    fn run(
+        base: Option<&[u8]>,
+        head: Option<&[u8]>,
+        base_c: Option<&[u8]>,
+        head_c: Option<&[u8]>,
+    ) -> Vec<Violation> {
+        let now = now();
+        check(&CheckInput {
+            base_ledger: base,
+            head_ledger: head,
+            base_captures: base_c,
+            head_captures: head_c,
+            head_branch: BRANCH,
+            now: &now,
+        })
+        .violations
+    }
+
+    fn v(file: CheckedFile, line: Option<u64>, rule: Rule) -> Violation {
+        Violation { file, line, rule }
+    }
+
+    #[test]
+    fn clean_append_in_any_order_passes() {
+        let (a, b, c) = (good("a"), good("b"), good("c"));
+        let base = lines(&[&a, &b]);
+        let head = lines(&[&c, &b, &a]);
+        let (cap_a, cap_b) = (capture(BEFORE), capture("2026-05-02T00:00:00Z"));
+        let out = run(
+            Some(&base),
+            Some(&head),
+            Some(&lines(&[&cap_a])),
+            Some(&lines(&[&cap_b, &cap_a])),
+        );
+        assert_eq!(out, vec![]);
+    }
+
+    #[test]
+    fn files_absent_everywhere_pass_and_new_files_are_all_new_lines() {
+        assert_eq!(run(None, None, None, None), vec![]);
+        assert_eq!(
+            run(
+                None,
+                Some(&lines(&[&good("a")])),
+                None,
+                Some(&lines(&[&capture(BEFORE)]))
+            ),
+            vec![]
+        );
+    }
+
+    #[test]
+    fn removed_base_line_is_flagged_in_each_file() {
+        let (a, b) = (good("a"), good("b"));
+        let (ca, cb) = (capture(BEFORE), capture("2026-05-02T00:00:00Z"));
+        let out = run(
+            Some(&lines(&[&a, &b])),
+            Some(&lines(&[&a])),
+            Some(&lines(&[&ca, &cb])),
+            None,
+        );
+        assert_eq!(
+            out,
+            vec![
+                v(CheckedFile::Ledger, None, Rule::BaseLineRemoved),
+                v(CheckedFile::Captures, None, Rule::BaseLineRemoved),
+                v(CheckedFile::Captures, None, Rule::BaseLineRemoved),
+            ]
+        );
+    }
+
+    #[test]
+    fn multiset_semantics_a_dropped_duplicate_is_removed() {
+        let a = good("a");
+        let out = run(Some(&lines(&[&a, &a])), Some(&lines(&[&a])), None, None);
+        assert_eq!(
+            out,
+            vec![v(CheckedFile::Ledger, None, Rule::BaseLineRemoved)]
+        );
+    }
+
+    #[test]
+    fn edited_base_line_is_removed_plus_new_line_checked() {
+        let a = good("a");
+        let edited = line(&entry("a", BRANCH, 6, Some(BEFORE)));
+        let out = run(Some(&lines(&[&a])), Some(&lines(&[&edited])), None, None);
+        assert_eq!(
+            out,
+            vec![
+                v(CheckedFile::Ledger, Some(1), Rule::DuplicateKey),
+                v(CheckedFile::Ledger, None, Rule::BaseLineRemoved),
+            ]
+        );
+    }
+
+    #[test]
+    fn unparseable_new_lines_are_violations_with_head_line_numbers() {
+        let a = good("a");
+        let head = lines(&[&a, "not json", "", &capture(BEFORE)]);
+        let out = run(
+            Some(&lines(&[&a])),
+            Some(&head),
+            None,
+            Some(&lines(&["{}", "x"])),
+        );
+        assert_eq!(
+            out,
+            vec![
+                v(CheckedFile::Ledger, Some(2), Rule::Unparseable),
+                v(CheckedFile::Ledger, Some(4), Rule::Unparseable),
+                v(CheckedFile::Captures, Some(1), Rule::Unparseable),
+                v(CheckedFile::Captures, Some(2), Rule::Unparseable),
+            ]
+        );
+    }
+
+    #[test]
+    fn new_ledger_line_for_another_branch_is_flagged() {
+        let l = line(&entry("a", "other", 5, Some(BEFORE)));
+        let out = run(None, Some(&lines(&[&l])), None, None);
+        assert_eq!(
+            out,
+            vec![v(CheckedFile::Ledger, Some(1), Rule::WrongBranch)]
+        );
+    }
+
+    #[test]
+    fn recorded_at_missing_invalid_and_future_are_flagged() {
+        let missing = line(&entry("a", BRANCH, 5, None));
+        let invalid = line(&entry("b", BRANCH, 5, Some("yesterday")));
+        let future = line(&entry("c", BRANCH, 5, Some("2026-06-01T00:00:01Z")));
+        let equal = line(&entry("d", BRANCH, 5, Some(NOW)));
+        let out = run(
+            None,
+            Some(&lines(&[&missing, &invalid, &future, &equal])),
+            None,
+            None,
+        );
+        assert_eq!(
+            out,
+            vec![
+                v(CheckedFile::Ledger, Some(1), Rule::MissingRecordedAt),
+                v(CheckedFile::Ledger, Some(2), Rule::InvalidTimestamp),
+                v(CheckedFile::Ledger, Some(3), Rule::FutureTimestamp),
+            ]
+        );
+    }
+
+    #[test]
+    fn new_line_reusing_a_base_key_is_flagged() {
+        let base = line(&entry("a", BRANCH, 5, Some(BEFORE)));
+        let again = line(&entry("a", BRANCH, 5, Some("2026-05-02T00:00:00Z")));
+        let out = run(
+            Some(&lines(&[&base])),
+            Some(&lines(&[&base, &again])),
+            None,
+            None,
+        );
+        assert_eq!(
+            out,
+            vec![v(CheckedFile::Ledger, Some(2), Rule::DuplicateKey)]
+        );
+    }
+
+    #[test]
+    fn token_fields_over_the_ceiling_are_flagged_and_the_ceiling_itself_passes() {
+        let at_limit = line(&entry("a", BRANCH, MAX_TOKENS_PER_FIELD, Some(BEFORE)));
+        let mut big = entry("b", BRANCH, 1, Some(BEFORE));
+        big.usage.input = MAX_TOKENS_PER_FIELD + 1;
+        big.usage.cache_read = u64::MAX;
+        big.usage.thinking = Some(MAX_TOKENS_PER_FIELD + 1);
+        let out = run(None, Some(&lines(&[&at_limit, &line(&big)])), None, None);
+        let over = |field| {
+            v(
+                CheckedFile::Ledger,
+                Some(2),
+                Rule::TokenOverCeiling { field },
+            )
+        };
+        assert_eq!(
+            out,
+            vec![over("input"), over("cache_read"), over("thinking")]
+        );
+    }
+
+    #[test]
+    fn future_capture_timestamp_is_flagged_and_branch_is_not_enforced() {
+        let future = capture("2026-06-01T00:00:01Z");
+        let bad = capture("nope");
+        let out = run(
+            None,
+            None,
+            None,
+            Some(&lines(&[&future, &bad, &capture(BEFORE)])),
+        );
+        assert_eq!(
+            out,
+            vec![
+                v(CheckedFile::Captures, Some(1), Rule::FutureTimestamp),
+                v(CheckedFile::Captures, Some(2), Rule::InvalidTimestamp),
+            ]
+        );
+    }
+
+    #[test]
+    fn violations_never_carry_line_text() {
+        let secret = "SECRET-CONTENT";
+        let out = run(None, Some(secret.as_bytes()), None, None);
+        assert!(!format!("{out:?}").contains(secret));
+    }
+}

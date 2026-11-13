@@ -20,11 +20,16 @@
 //! a path, never line content.
 
 mod captures;
+mod check;
 mod tally_dir;
 
 use std::path::{Path, PathBuf};
 
 pub use tally_dir::{TALLY_DIR, TallyDir};
+
+pub use check::{
+    CheckInput, CheckReport, CheckedFile, MAX_TOKENS_PER_FIELD, Rule, Violation, check,
+};
 
 pub use captures::{
     CAPTURES_PATH, CaptureAppendOutcome, CaptureReadStats, Captures, append_captures,
