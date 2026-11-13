@@ -71,7 +71,16 @@ impl Repo {
     }
 
     fn check(&self) -> Output {
-        self.run(&["ledger", "check", "--base", "main", "--head-branch", BRANCH])
+        self.run(&[
+            "ledger",
+            "check",
+            "--base",
+            "main",
+            "--base-branch",
+            "main",
+            "--head-branch",
+            BRANCH,
+        ])
     }
 }
 
@@ -166,7 +175,7 @@ fn unchanged_head_is_clean() {
 fn head_branch_defaults_to_the_current_branch() {
     let r = repo();
     r.append("ledger.jsonl", &good("req_new_1"));
-    let o = r.run(&["ledger", "check", "--base", "main"]);
+    let o = r.run(&["ledger", "check", "--base", "main", "--base-branch", "main"]);
     assert_eq!(o.status.code(), Some(0), "{}", err(&o));
 }
 
@@ -244,7 +253,16 @@ fn duplicate_key() {
         "ledger.jsonl",
         &ledger_line("req_base_1", "main", Some("2026-01-02T00:00:00Z"), 9),
     );
-    let o = r.run(&["ledger", "check", "--base", "main", "--head-branch", "main"]);
+    let o = r.run(&[
+        "ledger",
+        "check",
+        "--base",
+        "main",
+        "--base-branch",
+        "main",
+        "--head-branch",
+        "main",
+    ]);
     assert_violation(&o, &["ledger", "line 2", "duplicate"]);
 }
 
@@ -295,7 +313,16 @@ fn removed_capture_line() {
 fn missing_tally_on_both_sides_is_clean() {
     let r = bare_repo();
     git(&r.root, &["commit", "-q", "--allow-empty", "-m", "init"]);
-    let o = r.run(&["ledger", "check", "--base", "main", "--head-branch", "x"]);
+    let o = r.run(&[
+        "ledger",
+        "check",
+        "--base",
+        "main",
+        "--base-branch",
+        "main",
+        "--head-branch",
+        "x",
+    ]);
     assert_eq!(o.status.code(), Some(0), "{}", err(&o));
 }
 
@@ -338,7 +365,14 @@ fn base_without_tally_checks_every_head_line() {
 #[test]
 fn unknown_base_is_an_error_naming_the_ref() {
     let r = repo();
-    let o = r.run(&["ledger", "check", "--base", "no-such-ref-zzz"]);
+    let o = r.run(&[
+        "ledger",
+        "check",
+        "--base",
+        "no-such-ref-zzz",
+        "--base-branch",
+        "main",
+    ]);
     assert_eq!(o.status.code(), Some(1));
     assert!(err(&o).contains("no-such-ref-zzz"), "{}", err(&o));
 }
@@ -357,4 +391,253 @@ fn a_symlinked_head_file_is_refused() {
     std::os::unix::fs::symlink(r.file("captures.jsonl"), r.file("ledger.jsonl")).unwrap();
     let o = r.check();
     assert_eq!(o.status.code(), Some(1), "{}", err(&o));
+}
+
+// ---- #96: --head, --base-branch, --head-branch, notes and warnings ----
+
+fn head_sha(r: &Repo) -> String {
+    let out = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&r.root)
+        .output()
+        .unwrap();
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
+}
+
+fn commit_all(r: &Repo, msg: &str) {
+    git(&r.root, &["add", "-A"]);
+    git(&r.root, &["commit", "-q", "-m", msg]);
+}
+
+#[test]
+fn head_rev_is_read_from_git_not_the_working_tree() {
+    let r = repo();
+    r.append("ledger.jsonl", &good("req_new_1"));
+    commit_all(&r, "head");
+    // The working tree now breaks the rule; the committed head does not.
+    r.write("ledger.jsonl", "");
+    let o = r.run(&[
+        "ledger",
+        "check",
+        "--base",
+        "main",
+        "--base-branch",
+        "main",
+        "--head",
+        "HEAD",
+        "--head-branch",
+        BRANCH,
+    ]);
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    // Without --head the same tree is read and fails.
+    assert_eq!(r.check().status.code(), Some(1));
+}
+
+#[test]
+fn head_rev_violation_is_found_even_when_the_working_tree_is_clean() {
+    let r = repo();
+    r.append(
+        "ledger.jsonl",
+        &ledger_line("req_new_1", "main", Some("2026-01-02T00:00:00Z"), 5),
+    );
+    commit_all(&r, "head");
+    git(&r.root, &["checkout", "-q", "main", "--", ".tally"]);
+    let o = r.run(&[
+        "ledger",
+        "check",
+        "--base",
+        "main",
+        "--base-branch",
+        "main",
+        "--head",
+        "HEAD",
+        "--head-branch",
+        BRANCH,
+    ]);
+    assert_violation(&o, &["ledger", "line 2", "recorded for the base branch"]);
+}
+
+#[test]
+fn unknown_head_rev_exits_1_naming_it() {
+    let r = repo();
+    let o = r.run(&[
+        "ledger",
+        "check",
+        "--base",
+        "main",
+        "--base-branch",
+        "main",
+        "--head",
+        "no-such-rev-xyz",
+        "--head-branch",
+        BRANCH,
+    ]);
+    assert_eq!(o.status.code(), Some(1), "{}", err(&o));
+    assert!(err(&o).contains("no-such-rev-xyz"), "{}", err(&o));
+}
+
+#[test]
+fn missing_base_branch_with_no_origin_head_exits_1_and_says_to_pass_it() {
+    let r = repo();
+    // Even though --base is a branch name, it is never used as the base branch.
+    let o = r.run(&["ledger", "check", "--base", "main", "--head-branch", BRANCH]);
+    assert_eq!(o.status.code(), Some(1), "{}", err(&o));
+    assert!(err(&o).contains("--base-branch"), "{}", err(&o));
+}
+
+#[test]
+fn base_branch_flag_makes_the_base_rule_fire_with_a_sha_base() {
+    let r = repo();
+    let sha = head_sha(&r);
+    r.append(
+        "ledger.jsonl",
+        &ledger_line("req_new_1", "main", Some("2026-01-02T00:00:00Z"), 5),
+    );
+    let o = r.run(&[
+        "ledger",
+        "check",
+        "--base",
+        &sha,
+        "--base-branch",
+        "main",
+        "--head-branch",
+        BRANCH,
+    ]);
+    assert_violation(&o, &["ledger", "line 2", "recorded for the base branch"]);
+}
+
+#[test]
+fn detached_head_without_head_branch_exits_1_and_says_to_pass_it() {
+    let r = repo();
+    r.append("ledger.jsonl", &good("req_new_1"));
+    git(&r.root, &["checkout", "-q", "--detach"]);
+    let o = r.run(&["ledger", "check", "--base", "main", "--base-branch", "main"]);
+    assert_eq!(o.status.code(), Some(1), "{}", err(&o));
+    assert!(err(&o).contains("--head-branch"), "{}", err(&o));
+    // Passing it works.
+    let o = r.check();
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+}
+
+#[test]
+fn other_branch_lines_are_noted_without_changing_the_exit_code() {
+    let r = repo();
+    r.append("ledger.jsonl", &good("req_new_1"));
+    r.append(
+        "ledger.jsonl",
+        &ledger_line("req_other_1", "feat/other", Some("2026-01-02T00:00:00Z"), 5),
+    );
+    r.append(
+        "ledger.jsonl",
+        &ledger_line("req_other_2", "feat/other", Some("2026-01-02T00:00:00Z"), 5),
+    );
+    let o = r.check();
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert!(
+        err(&o)
+            .lines()
+            .any(|l| l == "note: 2 new ledger line(s) recorded for branch feat/other"),
+        "{}",
+        err(&o)
+    );
+}
+
+#[test]
+fn hostile_branch_names_are_neutralised_in_notes() {
+    let r = repo();
+    r.append(
+        "ledger.jsonl",
+        &ledger_line(
+            "req_o1",
+            "evil\n::error::boom\u{1b}[31m",
+            Some("2026-01-02T00:00:00Z"),
+            5,
+        ),
+    );
+    r.append(
+        "ledger.jsonl",
+        &ledger_line("req_o2", "::warning::x", Some("2026-01-02T00:00:00Z"), 5),
+    );
+    let o = r.check();
+    let e = err(&o);
+    assert_eq!(o.status.code(), Some(0), "{e}");
+    assert!(!e.contains('\u{1b}'), "{e:?}");
+    assert!(e.lines().all(|l| !l.starts_with("::")), "{e:?}");
+    assert!(
+        e.lines().all(|l| !l.trim_start().starts_with("::")),
+        "{e:?}"
+    );
+    assert!(
+        e.lines().any(|l| l.contains("branch \\::warning::x")),
+        "{e:?}"
+    );
+    assert_eq!(
+        e.lines().filter(|l| l.starts_with("note:")).count(),
+        2,
+        "{e:?}"
+    );
+}
+
+#[test]
+fn notes_are_printed_alongside_violations() {
+    let r = repo();
+    r.append(
+        "ledger.jsonl",
+        &ledger_line("req_o1", "feat/other", Some("2026-01-02T00:00:00Z"), 5),
+    );
+    r.append("ledger.jsonl", "not json\n");
+    let o = r.check();
+    assert_eq!(o.status.code(), Some(1));
+    assert!(err(&o).contains("note: 1 new ledger line(s) recorded for branch feat/other"));
+}
+
+#[test]
+fn prices_toml_difference_warns_in_each_direction_and_never_changes_the_exit_code() {
+    const WARN: &str = "warning: .tally/prices.toml differs from base";
+    // Added on head.
+    let r = repo();
+    r.write("prices.toml", "# synthetic\n");
+    let o = r.check();
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert!(err(&o).lines().any(|l| l == WARN), "{}", err(&o));
+
+    // Changed, read from a committed head.
+    let r = repo();
+    r.write("prices.toml", "# one\n");
+    commit_all(&r, "base prices");
+    git(&r.root, &["branch", "-f", "main", "HEAD"]);
+    r.write("prices.toml", "# two\n");
+    commit_all(&r, "head prices");
+    let o = r.run(&[
+        "ledger",
+        "check",
+        "--base",
+        "main",
+        "--base-branch",
+        "main",
+        "--head",
+        "HEAD",
+        "--head-branch",
+        BRANCH,
+    ]);
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert!(err(&o).lines().any(|l| l == WARN), "{}", err(&o));
+
+    // Removed.
+    git(&r.root, &["rm", "-q", ".tally/prices.toml"]);
+    commit_all(&r, "drop prices");
+    let o = r.check();
+    assert!(err(&o).lines().any(|l| l == WARN), "{}", err(&o));
+
+    // Identical: no warning.
+    let r = repo();
+    assert!(!err(&r.check()).contains("prices.toml"));
+}
+
+#[test]
+fn allow_ledger_conflicts_without_from_ledger_is_a_usage_error() {
+    let r = repo();
+    let o = r.run(&["report", "--allow-ledger-conflicts"]);
+    assert_eq!(o.status.code(), Some(2), "{}", err(&o));
+    assert!(err(&o).contains("--from-ledger"), "{}", err(&o));
 }

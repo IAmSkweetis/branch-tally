@@ -95,6 +95,16 @@ pub(crate) struct LedgerCheckArgs {
     #[arg(long, value_name = "NAME")]
     pub(crate) head_branch: Option<String>,
 
+    /// The ref whose `.tally/` files are the head (default: the working tree). Read from git, so
+    /// the working tree is not consulted.
+    #[arg(long, value_name = "REV")]
+    pub(crate) head: Option<String>,
+
+    /// The base branch's name, which new lines must not be recorded for (default: the
+    /// repository's default branch; there is no guess if that cannot be found).
+    #[arg(long, value_name = "NAME")]
+    pub(crate) base_branch: Option<String>,
+
     /// Repository path (default: cwd).
     #[arg(long, default_value = ".", value_name = "PATH")]
     pub(crate) repo: PathBuf,
@@ -294,7 +304,7 @@ pub(crate) struct ReportArgs {
 
     /// With --from-ledger, proceed even if the ledger has conflicting lines for one request (the latest line wins).
     /// Without it such a ledger stops the run with exit 3, because a conflict can rewrite cost.
-    #[arg(long)]
+    #[arg(long, requires = "from_ledger")]
     pub(crate) allow_ledger_conflicts: bool,
 }
 
