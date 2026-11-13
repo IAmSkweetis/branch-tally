@@ -194,7 +194,8 @@ powershell -ExecutionPolicy Bypass -c "irm https://github.com/IAmSkweetis/branch
 | ------------------- | ------------------------- | -------------------- | ------- |
 | `--version <vX.Y.Z>` | `-Version` | `BRANCH_TALLY_INSTALL_VERSION` | Install that release instead of the latest |
 | `--to <dir>` | `-To` | `BRANCH_TALLY_INSTALL_DIR` | Install directory |
-| none | none | `BRANCH_TALLY_INSTALL_BASE_URL` | Releases URL, default `https://github.com/IAmSkweetis/branch-tally/releases`. The tests point it at a `file://` fake release |
+| `--require-attestation` | `-RequireAttestation` | `BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION` | Fail unless provenance was verified (`1`, `true` or `yes` for the variable) |
+| none | none | `BRANCH_TALLY_INSTALL_BASE_URL` | Releases URL, `https://` or `file://` only, default `https://github.com/IAmSkweetis/branch-tally/releases`. The effective source is printed when it is set. The tests point it at a `file://` fake release |
 
 With nothing set, the binary goes to `~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows). The
 installer **never edits PATH**: when the directory is not on it, it prints a hint. On success it
@@ -203,12 +204,46 @@ prints the installed path and the binary's `--version`. With options, use the fl
 Windows use the environment variables.
 
 **Verification.** The installer downloads the archive for the platform and checks it against the
-release's `SHA256SUMS`, and stops on a mismatch. That is the whole of it: no dependency beyond
-`curl` or `wget`, `sha256sum` or `shasum`, and `tar` on Linux and macOS, and none beyond built-in
-PowerShell on Windows (Windows PowerShell 5.1 and PowerShell 7 both work). In particular it does
-not use the `gh` CLI. A checksum from the same release only catches a corrupt or truncated
-download; for provenance, run `gh attestation verify` by hand
-([Verifying a download](#verifying-a-download)).
+release's `SHA256SUMS`, and stops on a mismatch. That is an **integrity check**: it catches a
+corrupt or truncated download, and proves nothing about origin, because the checksum comes from the
+same place as the archive. Only the build-provenance attestation proves origin
+([decision 0004](../decisions/0004-release-provenance.md)). After the checksum check the installer
+verifies it with the first tool that is available:
+
+1. `gh`, when on PATH and logged in (`gh auth status` succeeds):
+   `gh attestation verify <archive> --repo IAmSkweetis/branch-tally`.
+2. Otherwise `cosign`, when on PATH: `cosign verify-blob-attestation` of the archive against the
+   release asset `provenance.sigstore.json`, with `--certificate-identity-regexp` pinned to
+   this repository's `.github/workflows/release.yml` (on any ref) and
+   `--certificate-oidc-issuer https://token.actions.githubusercontent.com`. A release with no
+   bundle counts as "could not verify", not as a pass.
+3. Otherwise it warns on stderr that provenance was **not** verified, prints the `gh attestation
+   verify` command to run, and installs.
+
+A verification that runs and fails is a hard failure: nothing is installed, and `cosign` is not
+tried after a failing `gh`. `--require-attestation` (`-RequireAttestation`, or
+`BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION`) turns case 3, and a missing bundle, into a failure too.
+The dependency floor without `gh` or `cosign` is unchanged: `curl` or `wget`, `sha256sum` or
+`shasum`, and `tar` on Linux and macOS, and built-in PowerShell on Windows (Windows PowerShell 5.1
+and PowerShell 7 both work). A `curl | sh` install stays dependency-free and says so when it could
+not verify.
+
+**Transport hardening (F-06).**
+
+- `install.sh` runs curl with `--proto '=https' --proto-redir '=https' --tlsv1.2`, and wget with
+  `--https-only` when that wget has it (BusyBox's does not; the URL scheme check still applies).
+  `file://` mirrors are plain copies, the seam the tests use. `install.ps1` pins TLS 1.2+, and
+  PowerShell 7 refuses an HTTPS-to-HTTP redirect by default.
+- `BRANCH_TALLY_INSTALL_BASE_URL` must be `https://` or `file://`, the same rule as
+  `branch-tally update`. Plain `http://` is refused. When it is set, the installer prints
+  `Using release mirror: <url>`.
+- `install.sh` is a set of functions plus `main "$@"` on its last line, so a download cut off
+  partway is a syntax error and runs nothing.
+- The tag read from the remote `SHA256SUMS` under `latest` must be `vMAJOR.MINOR.PATCH`, the check
+  `--version` already had.
+
+Still open for the installers: a mirror set by the environment is honoured without a prompt (the
+`update --yes` half of F-06 is separate).
 
 ### Updating in place
 
