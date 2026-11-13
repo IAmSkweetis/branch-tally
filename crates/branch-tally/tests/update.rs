@@ -72,3 +72,29 @@ fn a_file_mirror_is_accepted_and_reaches_the_dev_build_refusal() {
     assert_eq!(out.status.code(), Some(1));
     assert!(text(&out.stderr).contains("development build"));
 }
+
+#[test]
+fn long_help_says_what_is_verified_and_how_to_verify_an_old_release() {
+    let out = run(&["update", "--help"]);
+    let help = text(&out.stdout)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    for needle in [
+        "SHA256SUMS.minisig",
+        "maintainer's key",
+        "integrity check",
+        "before signing are refused",
+        "gh attestation verify",
+        "SECURITY.md",
+    ] {
+        assert!(help.contains(needle), "missing {needle:?} in:\n{help}");
+    }
+}
+
+#[test]
+fn there_is_no_flag_to_replace_the_release_key() {
+    for flag in ["--key", "--public-key", "--release-key"] {
+        assert_eq!(run(&["update", flag, "x"]).status.code(), Some(2), "{flag}");
+    }
+}

@@ -414,21 +414,3 @@ pub(crate) fn scrub(text: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
-
-/// The pre-signing entry point, kept only so the CLI keeps compiling until it passes a
-/// [`ReleaseKey`] to [`run_verified`]. It has no key, so it installs nothing: it always fails
-/// closed.
-///
-/// # Errors
-/// Always [`UpdateError::InvalidReleaseKey`].
-#[doc(hidden)]
-pub fn run(
-    _current: &str,
-    _target: &str,
-    _options: &UpdateOptions,
-    _client: &dyn ReleaseClient,
-    _installer: &dyn Installer,
-    _confirmer: &dyn Confirmer,
-) -> Result<Outcome, UpdateError> {
-    Err(UpdateError::InvalidReleaseKey)
-}
