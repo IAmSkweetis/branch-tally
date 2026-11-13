@@ -150,8 +150,16 @@ break_sums() {
 # fresh <name>: a new sandbox with HOME, TMPDIR and a release root; sets $S, $R, $D (install dir).
 # leak_free: no per-command assignment from an earlier case is still set. bash 3.2 (macOS's /bin/sh)
 # keeps `VAR=x function_call` after the call, so a variable meant for one case would change every
-# later one (a stale TOOLS once removed curl from the PATH of the rest of the suite).
-leak_free() { [ -z "${TOOLS:-}" ] && [ -z "${GH_TOKEN:-}" ] && [ -z "${GITHUB_TOKEN:-}" ]; }
+# later one (a stale TOOLS once removed curl from the PATH of the rest of the suite). A token the
+# developer exported before the run is not a leak, so the tokens are compared with their values at
+# startup. They never reach the installer either way: run_install starts it under `env -i`.
+inherited_gh_token=${GH_TOKEN:-}
+inherited_github_token=${GITHUB_TOKEN:-}
+leak_free() {
+  [ -z "${TOOLS:-}" ] &&
+    [ "${GH_TOKEN:-}" = "$inherited_gh_token" ] &&
+    [ "${GITHUB_TOKEN:-}" = "$inherited_github_token" ]
+}
 
 fresh() {
   check "no variable leaked into case '$1'" leak_free

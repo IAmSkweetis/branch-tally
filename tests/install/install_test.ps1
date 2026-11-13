@@ -95,7 +95,8 @@ function Write-Stub {
     $body += "if not $($Codes[1])==0 exit /b $($Codes[1])`r`n"
     # The real interface: gh attestation verify <file-path> --repo <owner/repo>. The archive must
     # exist, and --repo is mandatory (without --repo or --owner the real gh refuses).
-    $body += "if not exist `"%3`" exit /b 2`r`n"
+    # %~3 drops the quotes cmd keeps on an argument with spaces, so one pair is added, not two.
+    $body += "if not exist `"%~3`" exit /b 2`r`n"
     $body += "echo %* | findstr /C:`"--repo IAmSkweetis/branch-tally `" >nul || exit /b 2`r`n"
     $body += "echo %* | findstr /C:`"--signer-workflow $Signer `" >nul || exit /b 1`r`n"
     $body += "echo %* | findstr /C:`"--source-ref $Ref `" >nul || exit /b 1`r`n"
