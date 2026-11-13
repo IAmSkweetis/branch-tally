@@ -395,7 +395,8 @@ and milestone but not the type or the Priority. Set those in the web UI, or thro
 Every PR:
 
 - has a Conventional Commit title;
-- links its issue with `Fixes #N`, or `Refs #N` when it only partly resolves it;
+- links its issue with `Fixes #N`, or `Refs #N` when it only partly resolves it. A small change
+  with no issue says `No issue: <reason>` instead. Roadmap work always has an issue;
 - carries the kind label for its title's commit type ([Issues](#issues)), with `bug` for `fix`,
   and the linked issue's milestone;
 - records its own token usage (dogfooding, see below).

@@ -111,7 +111,8 @@ reviews:
         mode: warning
         instructions: |
           Pass if the PR description contains a line `Fixes #N` or `Refs #N` naming an issue in
-          this repository. Fail otherwise. Dependabot PRs (author dependabot[bot]) pass.
+          this repository, or a line `No issue: <reason>`. Fail otherwise. Dependabot PRs
+          (author dependabot[bot]) pass.
 
   tools:
     # rumdl lints Markdown with this repository's own config; markdownlint's defaults disagree.

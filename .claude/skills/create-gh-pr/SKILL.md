@@ -64,7 +64,7 @@ substituting a wrong one. When the linked issue has a milestone, give the PR the
 If the branch name embeds an issue number (`feat/issue-4-…`), confirm it with `gh issue view <N>`.
 Use `Fixes #N` when the PR completes the issue's "Done when" checklist, and `Refs #N` when it only
 advances it. Never invent a link. If there is no issue, ask whether one should exist. Roadmap work
-always has one.
+always has one. If not, write `No issue: <reason>`.
 
 ## Step 3: Compose
 
