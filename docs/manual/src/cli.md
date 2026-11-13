@@ -10,7 +10,7 @@ branch-tally <COMMAND>
 | [`record`](#branch-tally-record) | Append this branch's attributed usage to the repository ledger (write only). |
 | [`project`](#branch-tally-project) | Report project-wide totals and the cost-over-time series from the ledger. |
 | [`capture`](#branch-tally-capture) | Record this session's branch from a Claude Code hook payload on stdin. Run by the [capture plugin](integration/claude-code.md), not by hand. |
-| [`ledger check`](#branch-tally-ledger-check) | Fail if the working tree's `.tally/` files are not a well-formed append to a base ref's. |
+| [`ledger check`](#branch-tally-ledger-check) | Fail unless a branch's `.tally/` files, in the working tree or at a given commit, are a well-formed append to a base ref's. |
 | [`prices update`](#branch-tally-prices-update) | Refresh the per-user price cache from the LiteLLM model price list. |
 | [`prices show`](#branch-tally-prices-show) | Show which price table reports would use, with its source, date and path. |
 | [`config show`](#branch-tally-config-show) | Show the config file path, whether it was found, and each effective value and its source. |
@@ -75,7 +75,7 @@ Reports the token usage and estimated cost for `BRANCH` (default: the current br
 | `--from-ledger` | | Report from the [ledger](ledger.md) instead of the live transcripts. Works with no transcripts. |
 | `--with-live` | | With `--from-ledger`, also read this machine's live transcripts. The ledger wins where both have a call, so nothing is counted twice. |
 | `--ledger <PATH>` | `.tally/ledger.jsonl` | The ledger file, used with `--from-ledger`. The default is at the root of the current checkout. |
-| `--allow-ledger-conflicts` | off | With `--from-ledger`, carry on when the ledger has conflicting lines for one request, using the latest line for each. Without it such a ledger stops the run with exit 3. See [Conflicting ledger lines](ledger.md#conflicting-ledger-lines). |
+| `--allow-ledger-conflicts` | off | Needs `--from-ledger`. Carry on when the ledger has conflicting lines for one request, using the latest line for each. Without it such a ledger stops the run with exit 3. See [Conflicting ledger lines](ledger.md#conflicting-ledger-lines). |
 
 Each flag that has a [config file](config.md) key overrides it for one run. Precedence is flag,
 then config file, then built-in default.
@@ -89,7 +89,7 @@ These are command-line errors (exit 2):
 - `--strict` with `--timeline`, and `--md` with `--json`;
 - both halves of an on/off pair: `--cost` with `--no-cost`, `--redact` with `--no-redact`,
   `--keep-names` with `--redact-names`;
-- `--with-live` without `--from-ledger`;
+- `--with-live` or `--allow-ledger-conflicts` without `--from-ledger`;
 - `--work-branch` when the effective mode is not timeline. The mode can come from `--mode
   timeline`, `--timeline` or the config file's `mode = "timeline"`. A `work-branch` set only in
   the config file is ignored outside timeline mode rather than being an error.
@@ -98,7 +98,6 @@ A few flags are accepted but have no effect in some combinations:
 
 - `--dry-run` without `--pr` does nothing.
 - `--ledger` without `--from-ledger` does nothing.
-- `--allow-ledger-conflicts` without `--from-ledger` does nothing.
 - `--pr` with JSON output (`--json`, `--format json` or `format = "json"` in the config file)
   prints the JSON and does not touch the PR. `--pr` only works with Markdown.
 - `--no-cost` affects the Markdown table only. JSON output always includes costs.
@@ -545,30 +544,32 @@ branch-tally ledger check --base <REF> [--head <REV>] [--head-branch <NAME>]
   [--base-branch <NAME>] [--repo <PATH>]
 ```
 
-Compares `.tally/ledger.jsonl` and `.tally/captures.jsonl` in the working tree with the same files
-at `--base`, and fails unless the working tree only adds well-formed lines. It is meant for CI on a
-pull request, with the base branch as `--base`. Why you would run it, and how, is in
+Compares `.tally/ledger.jsonl` and `.tally/captures.jsonl` on the head with the same files at
+`--base`, and fails unless the head only adds well-formed lines. The head is the working tree, or
+the commit named by `--head`. It also warns when `.tally/prices.toml` differs. It is meant for CI
+on a pull request. Why you would run it, and how, is in
 [Checking ledger changes](ledger.md#checking-ledger-changes).
 
 | Option | Default | Does |
 | ------ | ------- | ---- |
 | `--base <REF>` | required | The ref to compare against, such as `origin/main` or a commit id. |
-| `--head <REV>` | working tree | Read the head's `.tally/ledger.jsonl`, `captures.jsonl` and `prices.toml` from this rev instead of the working tree. An unknown rev exits 1. |
-| `--head-branch <NAME>` | current branch | The branch new ledger lines must be recorded for. Required on a detached checkout, where the current branch cannot be told (exit 1 without it). |
-| `--base-branch <NAME>` | repository default branch | The base branch's name: new lines must not be recorded for it. Exit 1 if it is not given and the default branch cannot be found. It is never guessed from `--base`. |
+| `--head <REV>` | working tree | Read the head's `.tally/ledger.jsonl`, `captures.jsonl` and `prices.toml` from this commit, through git, instead of from the working tree. The working tree is not read at all. |
+| `--head-branch <NAME>` | current branch | The branch under review. New lines recorded for it are checked without a note; see the rules below. Required when the current branch can't be read, as on a detached HEAD. |
+| `--base-branch <NAME>` | repository default branch | The branch the head merges into. No new line may be recorded for it. Without this option it is the branch `origin/HEAD` points to. When that can't be found, the check exits 1 and asks for it. It is never guessed from `--base`. |
 | `--repo <PATH>` | `.` | The repository. Any directory inside the checkout works. |
 
-The files are read from the working tree, so uncommitted changes are checked too. A file missing
-on one side counts as empty.
+Without `--head`, the files are read from the working tree, so uncommitted changes are checked too.
+A file missing on one side counts as empty.
 
 **Rules.** Lines are compared byte for byte, apart from a trailing carriage return. Blank lines are
 ignored.
 
-- Every line in a file at the base must still be in the working tree's copy. It may have moved,
-  but not changed. A removed or edited base line is a violation.
+- Every line in a file at the base must still be in the head's copy. It may have moved, but not
+  changed. A removed or edited base line is a violation.
 - Every new line must parse.
 - A new **ledger** line must also:
-  - have `recorded_for` equal to the head branch;
+  - not be recorded for the base branch (`recorded_for` is not `--base-branch`). If the head
+    branch and the base branch are the same, every new ledger line fails this rule;
   - have a `recorded_at` that is present, strict RFC 3339 (see [Timestamps](#timestamps)) and
     not later than the time of the check;
   - not reuse a `request_id` and `recorded_for` pair that a base line already has;
@@ -580,17 +581,38 @@ ignored.
 - A new **captures** line must have a `ts` that is strict RFC 3339 and not later than the time of
   the check.
 
-**Output.** Everything goes to stderr. A clean check prints one line and exits 0:
+New ledger lines may be recorded for a branch other than the head and the base, such as usage
+backfilled for an earlier branch. That is allowed, but each such branch gets a note with its line
+count. When `.tally/prices.toml` on the head is not byte-identical to the base's, including when
+it was added or deleted, the check prints a warning. The
+[price override](#which-price-table-is-used) sets every cost, so review that change by hand.
+Neither the notes nor the warning changes the exit status.
+
+**Output.** Everything goes to stderr. The notes and the warning come first:
 
 ```text
-ledger check: clean against main
+note: N new ledger line(s) recorded for branch <name>
+warning: .tally/prices.toml differs from base
+```
+
+A branch name in a note is printed safely: control characters are replaced with `�` (U+FFFD), and
+a name that starts with `::` gets a backslash in front, so it can't be read as a GitHub Actions
+workflow command.
+
+A clean check then prints one line and exits 0. The line names `--base` as you gave it:
+
+```text
+ledger check: clean against origin/main
 ```
 
 Otherwise it prints one line per violation, then a count, and exits 1. Each line names the file,
-the line number in the working tree's copy (or `removed base line`) and the rule. It never prints
-line text, request ids or session ids. For example, from a synthetic repository:
+the line number in the head's copy (or `removed base line`) and the rule. It never prints line
+text, request ids or session ids. For example, from a synthetic repository checked with
+`--base main`, where the branch under review is `feat/x` and line 10 is recorded for `docs/old`:
 
 ```text
+note: 1 new ledger line(s) recorded for branch docs/old
+warning: .tally/prices.toml differs from base
 ledger: line 3: recorded for the base branch
 ledger: line 4: missing recorded_at
 ledger: line 5: future timestamp
@@ -611,13 +633,11 @@ recorded for the base branch that also repeats a base request gets both
 | Message (stderr, exit 1) | Cause |
 | ------------------------ | ----- |
 | `ledger check: cannot read ledger.jsonl at base '<REF>': …` | `--base` is not a ref or commit in this repository. In CI, fetch enough history for the base to be present. |
+| `ledger check: cannot read ledger.jsonl at head '<REV>': …` | `--head` is not a ref or commit in this repository. |
 | `ledger check: <path> is not inside a git checkout (…)` | `--repo`, or the current directory, is not in a git checkout. |
-| `ledger check: cannot tell the current branch (…); pass --head-branch` | The current branch could not be read, for example on a detached HEAD. |
+| `ledger check: cannot tell the current branch (detached HEAD?); pass --head-branch` | No `--head-branch`, and the current branch could not be read, for example on a detached HEAD. |
 | `ledger check: cannot tell the base branch (…); pass --base-branch` | No `--base-branch`, and the repository has no `origin/HEAD`. |
-| `ledger check: refusing to use <path>: it is …` | `.tally`, `.tally/ledger.jsonl` or `.tally/captures.jsonl` in the working tree is a symbolic link or the wrong kind of file. See [Symbolic links are refused](ledger.md#symbolic-links-are-refused). |
-
-On a detached checkout, without `--head-branch`, every new ledger line fails the branch rule, so
-pass the pull request's branch name explicitly.
+| `ledger check: refusing to use <path>: it is …` | Without `--head`: `.tally`, or a file the check reads inside it, is a symbolic link or the wrong kind of file in the working tree. See [Symbolic links are refused](ledger.md#symbolic-links-are-refused). |
 
 ## `branch-tally prices update`
 
@@ -682,6 +702,7 @@ note: using the repository price override (.tally/prices.toml); prices are not t
 
 The JSON report also says so, with `"source": "override"` in `priceTable`, and `prices show` prints
 `source: override` and the file's path. Review changes to `.tally/prices.toml` as you would code.
+[`ledger check`](#branch-tally-ledger-check) prints a warning when a pull request changes it.
 
 The override is read only from a real `.tally/` directory, and never through a symbolic link (see
 [Symbolic links are refused](ledger.md#symbolic-links-are-refused)). With no `.tally/` directory

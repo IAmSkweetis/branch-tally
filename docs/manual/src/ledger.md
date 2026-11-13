@@ -259,30 +259,79 @@ same goes for `.tally/captures.jsonl`, which can move calls between branches, an
 `.tally/**`.
 
 `branch-tally ledger check` makes the mechanical part of that review automatic. Run it in CI on
-each pull request, against the pull request's base:
+each pull request. It passes only when the pull request appends to `.tally/ledger.jsonl` and
+`.tally/captures.jsonl` and changes nothing already there, and when each new ledger line is not
+recorded for the base branch, has a `recorded_at` that is not in the future, does not repeat a key
+the base already holds, and has no token count above 10,000,000. The full rules and messages are in
+the [CLI reference](cli.md#branch-tally-ledger-check).
 
-```sh
-branch-tally ledger check --base origin/main --head-branch "$PR_BRANCH"
+A pull request may add lines for its own branch, and also for other branches, such as usage
+backfilled for a branch that merged earlier. Each other branch gets a note on stderr:
+
+```text
+note: 2 new ledger line(s) recorded for branch docs/old
 ```
 
-It passes only when the pull request appends to `.tally/ledger.jsonl` and `.tally/captures.jsonl`
-and changes nothing already there, and when each new ledger line is recorded for the pull
-request's own branch, has a `recorded_at` that is not in the future, does not repeat a key the
-base already holds, and has no token count above 10,000,000. Pass `--head-branch` in CI, where the
-checkout is usually detached. The full rules and messages are in the
-[CLI reference](cli.md#branch-tally-ledger-check).
+A note doesn't fail the check, but it is where to look first: those lines add to another branch's
+cost. Lines recorded for the base branch always fail, because nothing should be merged as usage of
+`main` itself. A pull request that changes `.tally/prices.toml` passes with a warning, which also
+calls for a look by hand:
 
-Two things to know before relying on it:
+```text
+warning: .tally/prices.toml differs from base
+```
 
-- **Run a binary the pull request can't change.** If the branch under review can change the
-  checker, it can switch the check off. Use a released binary, or build it from the base commit,
-  never from the pull request.
-- **A line that passes is well-formed, not proven.** The check can't tell a line `record` wrote
-  from an invented one that follows the rules. It narrows what a bad line can do, such as
-  rewriting another branch's history or claiming an impossible token count, but the reviewer
-  still decides whether the new lines are plausible.
+### Running it in CI
 
-The price override is not covered by `ledger check`. Reports announce it on stderr instead; see
+The check is only worth something if the pull request under review can't change it. If the branch
+can edit the checker, the workflow or the build that runs them, it can switch the check off. So
+run a binary built from your base branch, or a released one, never one built from the pull
+request, and read the pull request's files as data.
+
+On GitHub Actions, one way is a workflow on `pull_request_target`, which runs the base branch's
+copy of the workflow:
+
+1. Check out the base branch (the default for `pull_request_target`) and build or install
+   branch-tally from it.
+2. Fetch the pull request's merge commit as git data only. Don't check it out or run anything from
+   it.
+3. Check the merge commit against its first parent, naming both branches. `--head` reads the head's
+   `.tally/` files from git, so the working tree, which holds the base branch, is not used:
+
+```sh
+git fetch --no-tags origin "+refs/pull/$PR_NUMBER/merge:refs/tally-check/merge"
+head=$(git rev-parse --verify "refs/tally-check/merge^{commit}")
+base=$(git rev-parse --verify "$head^1")
+branch-tally ledger check --base "$base" --head "$head" \
+  --head-branch "$HEAD_REF" --base-branch "$BASE_REF"
+```
+
+Here `PR_NUMBER`, `HEAD_REF` and `BASE_REF` come from the event
+(`github.event.pull_request.number`, `.head.ref` and `.base.ref`). Pass them as environment
+variables, not by pasting `${{ … }}` into the script. Using the merge commit's first parent as the
+base, rather than the base branch's tip, keeps the comparison to exactly what the pull request
+adds. GitHub doesn't create a merge commit for a pull request with conflicts, so the fetch fails
+until they are resolved.
+
+Pass `--head-branch` and `--base-branch` in CI. The current branch there is not the pull
+request's: without `--head-branch`, a detached checkout exits 1, and a checkout of the base branch
+reports the pull request's own lines as notes. A CI clone may also have no `origin/HEAD`, and then
+the check exits 1 rather than guess the base branch. The output includes branch names taken from
+the ledger, which the pull request controls. Notes escape a name that starts with `::`, and this
+repository also wraps the whole output in a `::stop-commands::` block so nothing in it can act as a
+workflow command.
+[How this repository works](workflows/this-repository.md#checking-the-committed-lines) describes
+its own job.
+
+### What it can't tell
+
+A line that passes is well-formed, not proven. The check can't tell a line `record` wrote from an
+invented one that follows the rules. It narrows what a bad line can do: it can't edit lines already
+merged, add usage to the base branch, or claim an impossible token count for one call. But many
+plausible lines still add up, there is no limit on a pull request's total, and lines for other
+branches are only noted. The reviewer still decides whether the new lines are plausible.
+
+The price override is not checked, only flagged. Reports announce it on stderr too; see
 [Which price table is used](cli.md#which-price-table-is-used).
 
 ## What is stored

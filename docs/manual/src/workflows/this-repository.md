@@ -103,15 +103,34 @@ committed on the next feature branch, never on `main` and never discarded.
 Because the ledger sets the number every PR publishes, changes to `.tally/` are checked on every
 pull request:
 
-- The **`tally-check`** CI job runs on every pull request. When the PR changes anything under
-  `.tally/`, it runs
-  [`branch-tally ledger check`](../cli.md#branch-tally-ledger-check) against the PR's base commit,
-  with the PR's branch as `--head-branch`. The PR may only append to the ledger and captures
-  files, and every new ledger line must be recorded for the PR's own branch. When `.tally/` is
-  unchanged the job passes without building anything.
-- The job builds the checker **from the base commit**, never from the PR, so a PR that changes the
-  checker can't switch off its own check.
+- The **`tally-check`** job, in its own workflow (`.github/workflows/tally-check.yml`), runs on
+  `pull_request_target` for every pull request. That trigger runs the **base branch's** copy of
+  the workflow, so the job checks out the base branch, builds the checker from it, and fetches the
+  PR's merge commit (`refs/pull/<N>/merge`) as git data only. No PR code is checked out, built or
+  run, so a PR that changes the checker, the workflow or the build can't switch off its own check.
+  It follows the recipe in [Running it in CI](../ledger.md#running-it-in-ci): the merge commit is
+  the head, its first parent is the base, and the PR's head and base branches are passed as
+  `--head-branch` and `--base-branch`.
+- When the PR changes nothing under `.tally/`, the job passes with a notice. Otherwise it runs
+  [`branch-tally ledger check`](../cli.md#branch-tally-ledger-check). The PR may only append to the
+  ledger and captures files, and no new ledger line may be recorded for the PR's base branch,
+  normally `main`.
+  Lines for any other branch pass, and each such branch is named in a notice. A change to
+  `.tally/prices.toml` passes with a warning. The checker's output is printed inside a
+  `::stop-commands::` block, so text from the ledger can't run workflow commands, and its
+  `warning:` and `note:` lines are repeated as annotations on the run.
+- A PR with merge conflicts has no merge commit to read, so the job fails until they are resolved.
+- The job checks that lines are well-formed, not that they record real work, and it has no limit
+  on how much a PR adds in total. Review covers that.
+- The PR that first added the workflow did not run it, because its base branch didn't have the
+  workflow yet. Every later PR does.
 - `.github/CODEOWNERS` names a reviewer for `.tally/**`.
+
+Leftover lines recorded for `main` are the case to watch. When a session ends while the main
+checkout has `main` checked out, the record hook can append lines recorded for `main`, and they are
+committed on the next feature branch with the rest of the uncommitted `.tally/` lines.
+`tally-check` fails that PR, and merging it anyway needs an administrator to bypass the check.
+Leftover or backfilled lines for any other branch pass, each branch with a notice.
 
 ## Why the numbers come out right
 
