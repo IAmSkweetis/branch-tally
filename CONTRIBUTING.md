@@ -65,7 +65,8 @@ The full list, and what CI runs on top, is in
 4. **Commit** with [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) messages.
    The `commit-msg` hook checks them.
 5. **Open a pull request** whose title is also a Conventional Commit. PRs are squash-merged, so
-   the title becomes the commit on `main`. Link the issue with `Fixes #N`.
+   the title becomes the commit on `main`. Link the issue with `Fixes #N`, or `Refs #N` for partial
+   work. A small change with no issue says `No issue: <reason>`.
 6. **CI must be green.** It runs the same gates as the hooks, plus tests on Linux, macOS and
    Windows, the MSRV, dependency review and `cargo deny`.
 7. **Get one approval.** [CodeRabbit](https://docs.coderabbit.ai/) reviews every non-draft PR.
