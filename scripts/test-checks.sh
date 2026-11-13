@@ -472,5 +472,115 @@ case $(printf '%s\n' "$out" | grep -c '^::error::forged') in
   *) wrong=$((wrong + 1)); echo "WRONG: a backslash-n in a note escaped as a workflow command: $out" >&2 ;;
 esac
 
+# sign-checksums.sh: the release signing step. Guard cases run against a stand-in minisign (they
+# prove the script's own refusals); the crypto cases need the real one. Both must hold: a signing
+# step that signs with nothing, or "verifies" nothing, is worse than none.
+sign="$dir/sign-checksums.sh"
+sg="$scratch/sign"
+mkdir -p "$sg/stub" "$sg/dist" "$sg/bare"
+printf 'deadbeef  branch-tally-v1.2.3-x.tar.gz\n' >"$sg/dist/SHA256SUMS"
+printf 'untrusted comment: minisign public key TEST\nRWQTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTESTTES\n' >"$sg/good.pub"
+cp "$dir/../.github/minisign.pub" "$sg/committed.pub"
+cat >"$sg/stub/minisign" <<'STUB'
+#!/bin/sh
+mode=$1
+while [ $# -gt 0 ]; do
+  case $1 in -x) x=$2; shift ;; -t) t=$2; shift ;; esac
+  shift
+done
+case $mode in
+  -S) cat >/dev/null
+      printf 'untrusted comment: s\nAAAA\ntrusted comment: %s\nBBBB\n' "${STUB_COMMENT:-$t}" >"$x" ;;
+  -V) exit "${STUB_VERIFY:-0}" ;;
+esac
+STUB
+chmod +x "$sg/stub/minisign"
+# sgn <accept|reject> <tag> <pub> [env assignments...]: run the script with the stand-in on PATH.
+# `unset=NAME` removes a variable instead.
+sgn() {
+  want=$1 tag=$2 pub=$3
+  shift 3
+  total=$((total + 1))
+  rm -f "$sg/dist/SHA256SUMS.minisig"
+  unsets=""
+  assigns=""
+  for a in "$@"; do
+    case $a in unset=*) unsets="$unsets -u ${a#unset=}" ;; *) assigns="$assigns $a" ;; esac
+  done
+  # shellcheck disable=SC2086 # the words are simple NAME=value pairs built just above
+  out=$(env PATH="$sg/stub:$PATH" MINISIGN_SECRET_KEY=k MINISIGN_PASSWORD=p $unsets $assigns \
+    sh "$sign" "$tag" "$sg/dist" "$pub" 2>&1)
+  got=$?
+  if { [ "$want" = accept ] && [ "$got" -ne 0 ]; } || { [ "$want" = reject ] && [ "$got" -eq 0 ]; }; then
+    wrong=$((wrong + 1))
+    echo "WRONG: sign-checksums $tag $* expected $want, exit $got: $out" >&2
+  fi
+}
+sgn accept v1.2.3 "$sg/good.pub"
+sgn reject v1.2.3 "$sg/committed.pub" # the committed placeholder key
+sgn reject v1.2.3 "$sg/good.pub" MINISIGN_SECRET_KEY= # empty secret
+sgn reject v1.2.3 "$sg/good.pub" unset=MINISIGN_SECRET_KEY
+sgn reject v1.2.3 "$sg/good.pub" unset=MINISIGN_PASSWORD
+sgn reject v1.2.3 "$sg/missing.pub"
+sgn reject 1.2.3 "$sg/good.pub"
+sgn reject v1.2 "$sg/good.pub"
+sgn reject v1.2.3 "$sg/good.pub" STUB_VERIFY=1 # signature does not verify
+sgn reject v1.2.3 "$sg/good.pub" "STUB_COMMENT=branch-tally v9.9.9 SHA256SUMS" # replayed comment
+total=$((total + 1))
+[ ! -e "$sg/dist/SHA256SUMS.minisig" ] || { wrong=$((wrong + 1)); echo "WRONG: a failed signing left a signature behind" >&2; }
+# no minisign on PATH: an error with an install hint, never a skip
+total=$((total + 1))
+for t in grep sed tr wc mktemp rm cat printf dirname; do
+  p=$(command -v "$t") && [ -x "$p" ] && wrap "$sg/bare/$t" "$p"
+done
+out=$(env -i PATH="$sg/bare" MINISIGN_SECRET_KEY=k MINISIGN_PASSWORD=p "$posix_sh" "$sign" v1.2.3 "$sg/dist" "$sg/good.pub" 2>&1)
+rc=$?
+{ [ "$rc" -ne 0 ] && case $out in *"minisign not found"*) true ;; *) false ;; esac; } ||
+  { wrong=$((wrong + 1)); echo "WRONG: sign-checksums without minisign (exit $rc): $out" >&2; }
+# a missing SHA256SUMS is refused
+total=$((total + 1))
+env PATH="$sg/stub:$PATH" MINISIGN_SECRET_KEY=k MINISIGN_PASSWORD=p sh "$sign" v1.2.3 "$sg/nodist" "$sg/good.pub" >/dev/null 2>&1 &&
+  { wrong=$((wrong + 1)); echo "WRONG: sign-checksums signed a missing SHA256SUMS" >&2; }
+
+# The real thing, with throwaway keys made here (never the release key).
+if command -v minisign >/dev/null 2>&1; then
+  rk="$sg/real"
+  mkdir -p "$rk"
+  minisign -G -W -f -p "$rk/a.pub" -s "$rk/a.key" >/dev/null 2>&1
+  minisign -G -W -f -p "$rk/b.pub" -s "$rk/b.key" >/dev/null 2>&1
+  # rsgn <accept|reject> <pub> <key-file>
+  rsgn() {
+    want=$1 pub=$2 key=$3
+    total=$((total + 1))
+    rm -f "$sg/dist/SHA256SUMS.minisig"
+    out=$(MINISIGN_SECRET_KEY=$(cat "$key") MINISIGN_PASSWORD= sh "$sign" v1.2.3 "$sg/dist" "$pub" 2>&1)
+    got=$?
+    if { [ "$want" = accept ] && [ "$got" -ne 0 ]; } || { [ "$want" = reject ] && [ "$got" -eq 0 ]; }; then
+      wrong=$((wrong + 1))
+      echo "WRONG: real minisign expected $want, exit $got: $out" >&2
+    fi
+  }
+  rsgn accept "$rk/a.pub" "$rk/a.key"
+  total=$((total + 1))
+  minisign -V -q -p "$rk/a.pub" -m "$sg/dist/SHA256SUMS" -x "$sg/dist/SHA256SUMS.minisig" ||
+    { wrong=$((wrong + 1)); echo "WRONG: the real signature does not verify" >&2; }
+  total=$((total + 1))
+  [ "$(sed -n 3p "$sg/dist/SHA256SUMS.minisig")" = "trusted comment: branch-tally v1.2.3 SHA256SUMS" ] ||
+    { wrong=$((wrong + 1)); echo "WRONG: real trusted comment is not exact" >&2; }
+  total=$((total + 1))
+  cp "$sg/dist/SHA256SUMS" "$sg/SHA256SUMS.orig"
+  printf 'tampered\n' >>"$sg/dist/SHA256SUMS"
+  ! minisign -V -q -p "$rk/a.pub" -m "$sg/dist/SHA256SUMS" -x "$sg/dist/SHA256SUMS.minisig" 2>/dev/null ||
+    { wrong=$((wrong + 1)); echo "WRONG: a tampered SHA256SUMS still verified" >&2; }
+  cp "$sg/SHA256SUMS.orig" "$sg/dist/SHA256SUMS"
+  rsgn reject "$rk/a.pub" "$rk/b.key" # signed by another key than the committed one
+elif [ -n "${CI:-}" ]; then
+  total=$((total + 1))
+  wrong=$((wrong + 1))
+  echo "WRONG: minisign is not installed in CI, so the signing crypto went untested (scripts/ci-install-minisign.sh)" >&2
+else
+  echo "skipped: real-minisign signing cases (minisign not on PATH; CI installs it)" >&2
+fi
+
 echo "check scripts: $total cases, $wrong wrong"
 [ "$wrong" -eq 0 ]

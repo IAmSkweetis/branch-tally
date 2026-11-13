@@ -2,11 +2,11 @@
 
 How a version of branch-tally gets from `main` to users.
 
-> **Status:** GitHub Releases ship six prebuilt binaries with release notes, `SHA256SUMS` and build
-> provenance attestations (#10), plus one-line shell and PowerShell installers (#46), proven on
-> clean Linux, macOS and Windows runners after every release. Not built yet, each a follow-up
-> issue: publishing to crates.io and `cargo binstall`, Homebrew, npm, and the GitHub Action's
-> floating major tag (`v1`).
+> **Status:** GitHub Releases ship six prebuilt binaries with release notes, a minisign-signed
+> `SHA256SUMS` and build provenance attestations (#10, #76), plus one-line shell and PowerShell
+> installers (#46), proven on clean Linux, macOS and Windows runners after every release. Not built
+> yet, each a follow-up issue: publishing to crates.io and `cargo binstall`, Homebrew, npm, and the
+> GitHub Action's floating major tag (`v1`).
 
 ## Principles (decided)
 
@@ -73,7 +73,7 @@ Every release builds. There is no label or input to turn that off.
 | release | `version` | Checks the commit is releasable, works out the version, writes the release notes (also to the run summary) | A dispatch is off `main` or the commit has no green CI push run, no commits since the last tag (dispatch), a malformed version, or the tag exists |
 | release | `release` | Creates the tag on the exact commit through the API, then a **draft** GitHub release with the notes | The tag exists on a different commit |
 | build | `build` (x6) | Installs the pinned toolchain and the target, builds with `--locked`, smoke-tests the binary, packages it | Compilation fails, `--version` is not `branch-tally X.Y.Z`, `report` fails on the fixtures, or packaging fails |
-| release | `publish` | Downloads the six archives, fetches `install.sh` and `install.ps1` from the tagged commit, writes `SHA256SUMS`, attests the archives and installers, uploads them to the draft, then publishes it as **latest** | Fewer than six archives, an installer missing at the tagged commit, or an upload or attestation error |
+| release | `publish` | Downloads the six archives, fetches `install.sh` and `install.ps1` from the tagged commit, writes `SHA256SUMS`, signs it with minisign (`SHA256SUMS.minisig`) and verifies the signature against the committed public key, attests the archives, installers, `SHA256SUMS` and `SHA256SUMS.minisig` (bundle shipped as `provenance.sigstore.json`), uploads everything to the draft, then publishes it as **latest** | Fewer than six archives, an installer missing at the tagged commit, a missing signing secret, the placeholder public key, a signature that does not verify, or an upload or attestation error |
 | install-check | `resolve`, `check` (x6) | After a successful `Release` run, resolves the released tag and runs the real one-liners from `releases/latest/download` on a clean runner of each target ([Installing](#installing)) | The installed binary's `--version` is not the released tag, the default directory was not used, or the latest release has no installer |
 
 The order is deliberate. The tag exists before the build, so a failed build leaves a draft release
@@ -172,10 +172,14 @@ home directory, so it never reads the runner's transcripts.
 
 `release.yml` runs only from `main`, so it cannot be tried on a branch. `build.yml` therefore also
 runs on a **pull request** that changes `build.yml`, `release.yml`, `scripts/package.sh`,
-`scripts/smoke-test.sh`, `cliff.toml`, `Cargo.lock` or `rust-toolchain.toml`. It builds the full
-matrix with the dummy version `v0.0.0` and uploads nothing to any release. The lockfile is on the
-list because a dependency can break one target only: `ring` (rustls's crypto, added in #53)
-compiles C, and nothing outside the release build compiles for musl.
+`scripts/smoke-test.sh`, `scripts/sign-checksums.sh`, `scripts/ci-install-minisign.sh`,
+`.github/minisign.pub`, `cliff.toml`, `Cargo.lock` or `rust-toolchain.toml`. It builds the full
+matrix with the dummy version `v0.0.0` and uploads nothing to any release. A `signing proof` job
+runs only on pull requests: it installs minisign, signs a dummy `SHA256SUMS` with a throwaway key
+generated in the job and verifies it, and (while the committed public key is still the placeholder)
+checks the script refuses that placeholder. It needs no secret and cannot touch the real key. The
+lockfile is on the list because a dependency can break one target only: `ring` (rustls's crypto,
+added in #53) compiles C, and nothing outside the release build compiles for musl.
 
 ## Installing
 
@@ -254,15 +258,47 @@ release is public: fix forward with a new release.
 
 ## Verifying a download
 
-Every archive has a line in `SHA256SUMS` and a GitHub build-provenance attestation.
+What a release contains and what proves what
+([decision 0004](../decisions/0004-release-provenance.md)):
+
+| Asset | What it is | Proves |
+| ----- | ---------- | ------ |
+| archives, `install.sh`, `install.ps1` | The artifacts | Nothing alone |
+| `SHA256SUMS` | sha256 of every archive and installer | **Integrity only**: the download is not corrupt. Whoever can replace an archive can replace this file beside it |
+| `SHA256SUMS.minisig` | minisign (Ed25519) signature of `SHA256SUMS`, trusted comment exactly `branch-tally <tag> SHA256SUMS` | Origin: the maintainer's key signed this checksum file for this tag. A signature for one tag can't be replayed as another |
+| `provenance.sigstore.json` | Sigstore attestation bundle whose subjects are the archives, installers, `SHA256SUMS` and `SHA256SUMS.minisig` | Origin: this repository's `release.yml` built them from the tagged commit |
+
+The `publish` job signs through `scripts/sign-checksums.sh`. Setup the maintainer owns:
+
+- **Secrets** (repository Actions secrets, read only by the `Sign SHA256SUMS` step):
+  `MINISIGN_SECRET_KEY` (the whole contents of the minisign secret key file) and
+  `MINISIGN_PASSWORD` (its password; set it to an empty value for a key made with
+  `minisign -G -W`). If either is absent the job fails and nothing is published.
+- **Public key**: `.github/minisign.pub`. It is a placeholder until the maintainer commits the real
+  one (the `.pub` file `minisign -G` writes); the job fails on the placeholder. The same key is
+  compiled into the binary for `branch-tally update`.
+- **minisign** is installed by `scripts/ci-install-minisign.sh` from the upstream release archive,
+  pinned by version and sha256 like gitleaks. Bump both together, checking the new archive against
+  upstream's `.minisig` and key.
+- The job verifies its own signature against the committed public key and checks the trusted
+  comment before it uploads anything. A secret key that doesn't match the committed public key
+  fails there.
+- Losing or leaking the key means a new key pair and a new binary that embeds it: rotation is a
+  release.
+
+To verify a download by hand:
 
 ```bash
-sha256sum --check --ignore-missing SHA256SUMS          # shasum -a 256 -c on macOS
+minisign -Vm SHA256SUMS -p minisign.pub      # the key from .github/minisign.pub; checks SHA256SUMS.minisig
+sha256sum --check --ignore-missing SHA256SUMS   # shasum -a 256 -c on macOS
 gh attestation verify branch-tally-v0.1.0-<target>.tar.gz --repo IAmSkweetis/branch-tally
 ```
 
-The attestation proves the archive was built by this repository's `release.yml` from the tagged
-commit.
+The first command's output includes `Trusted comment: branch-tally <tag> SHA256SUMS`: check the tag
+is the one you downloaded. The checksum then ties each archive to the signed file. The attestation
+independently proves the archive was built by this repository's `release.yml` from the tagged
+commit. F-05 (#97, no approval gate and mutable tags) is separate: a signature made by a
+compromised pipeline still verifies.
 
 ## Related pages
 
