@@ -1,5 +1,7 @@
 # Overview
 
+![branch-tally logo](images/branch-tally-logo.svg)
+
 **What did this branch or pull request cost in AI-agent tokens?**
 
 branch-tally answers that question. It reads the transcripts an AI coding agent writes on your
