@@ -93,7 +93,10 @@ Choices the parser makes where the format is silent. Fixtures for each are in
   directory; every other file, however deeply nested, has no `parent_session` and takes
   `sessionId` from the record, else its file stem. Symlinked directories are not followed.
   Fixture: `read-order`. (Resolves the divergence raised on 2026-11-09.)
-- **Raw stamps.** `gitBranch`, `cwd` and `timestamp` are copied untouched.
+- **Raw stamps.** `gitBranch` and `cwd` are copied untouched. `timestamp` is copied untouched too,
+  but only when it is strict RFC 3339 (`Timestamp`, #95): anything else (a `|`, a link, an `@name`,
+  HTML, control characters, a bad date) leaves the record with no timestamp and is counted in
+  `ReadStats::malformed_timestamps`. The record is kept.
 
 ## Worktree subagents: what `gitBranch` actually says
 

@@ -118,7 +118,10 @@ pub fn project_markdown(report: &ProjectReport) -> String {
         "| Branch | Last call | Calls | Tokens | Cost |\n| --- | --- | ---: | ---: | ---: |\n",
     );
     for r in &report.rows {
-        let date = r.last_call.as_deref().map_or("undated".to_owned(), day);
+        let date = r
+            .last_call
+            .as_ref()
+            .map_or("undated".to_owned(), |t| day(t.as_str()));
         let _ = writeln!(
             o,
             "| {} | {date} | {} | {} | {} |",
@@ -310,7 +313,10 @@ pub fn project_json(report: &ProjectReport) -> String {
     } else {
         o.push_str("  \"branches\": [\n");
         for (i, r) in report.rows.iter().enumerate() {
-            let last = r.last_call.as_deref().map_or("null".to_owned(), string);
+            let last = r
+                .last_call
+                .as_ref()
+                .map_or("null".to_owned(), |t| string(t.as_str()));
             let usd = if row_unpriced(r) {
                 "null".to_owned()
             } else {
@@ -609,7 +615,7 @@ mod tests {
     fn row(branch: &str, last: Option<&str>, calls: u64, tokens: u64, usd: f64) -> BranchRow {
         BranchRow {
             branch: branch.to_owned(),
-            last_call: last.map(str::to_owned),
+            last_call: last.and_then(|t| t.parse().ok()),
             usage: usage(calls, tokens),
             cost: cost(usd, 0),
             ..BranchRow::default()

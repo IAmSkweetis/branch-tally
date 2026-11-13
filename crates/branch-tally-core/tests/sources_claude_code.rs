@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use branch_tally_core::model::{AgentId, Dispatch, Harness, Origin, Record, SessionId};
+use branch_tally_core::model::{AgentId, Dispatch, Harness, Origin, Record, SessionId, Timestamp};
 use branch_tally_core::sources::claude_code::ClaudeCode;
 use branch_tally_core::sources::{
     ReadStats, RepoIdentity, RootKind, Source, SourceError, TranscriptRoot,
@@ -196,7 +196,10 @@ fn subagent_records_take_the_parent_session_from_the_directory() {
     // Raw stamp, never rewritten.
     assert_eq!(sub.git_branch.as_deref(), Some("worktree-agent-a1"));
     assert_eq!(sub.cwd.as_deref(), Some(r"C:\repo"));
-    assert_eq!(sub.ts.as_deref(), Some("2026-01-01T00:00:00.000Z"));
+    assert_eq!(
+        sub.ts.as_ref().map(Timestamp::as_str),
+        Some("2026-01-01T00:00:00.000Z")
+    );
     assert_eq!(sub.model.as_deref(), Some("claude-test-1"));
 }
 
@@ -213,6 +216,7 @@ fn malformed_keyless_and_non_usage_lines_are_counted_correctly() {
             synthetic: 0,
             duplicates_removed: 1,
             fallback_key_used: 1,
+            malformed_timestamps: 0,
         }
     );
     // The uuid fallback supplies the dedupe key.
@@ -294,6 +298,52 @@ fn invalid_utf8_and_unterminated_last_lines_are_handled() {
     assert_eq!(records[0].usage.cache_write_5m, 0);
 }
 
+#[test]
+fn a_hostile_or_malformed_timestamp_is_dropped_from_the_record_and_counted() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("C--repo");
+    std::fs::create_dir_all(&root).unwrap();
+    let line = |id: &str, ts: Option<&str>| {
+        let ts = ts.map_or(String::new(), |t| format!(r#""timestamp":"{t}","#));
+        format!(
+            r#"{{"requestId":"{id}","sessionId":"s",{ts}"message":{{"model":"m","usage":{{"input_tokens":1,"output_tokens":2}}}}}}"#
+        )
+    };
+    let lines = [
+        line("ok", Some("2026-01-01T00:00:00.000Z")),
+        line("pipe", Some("2026-01-01T00:00:00Z|")),
+        line("link", Some("[a](//x.co)")),
+        line("mention", Some("@user")),
+        line("html", Some("<img src=x>")),
+        line("ctrl", Some(r"2026-01-01T00:00:00\u001b[31mZ")),
+        line("empty", Some("")),
+        line("missing", None),
+    ];
+    std::fs::write(root.join("s.jsonl"), lines.join("\n")).unwrap();
+
+    let roots = ClaudeCode
+        .discover(dir.path(), &RepoIdentity::new(r"C:\repo"))
+        .unwrap();
+    let mut records = Vec::new();
+    let stats = ClaudeCode.read(&roots, &mut |r| records.push(r)).unwrap();
+
+    assert_eq!(
+        stats.records_emitted, 8,
+        "no record is dropped for its timestamp"
+    );
+    assert_eq!(
+        stats.malformed_timestamps, 6,
+        "a missing timestamp is not malformed"
+    );
+    assert_eq!(stats.skipped_total(), 0);
+    let dated: Vec<&str> = records
+        .iter()
+        .filter(|r| r.ts.is_some())
+        .map(|r| r.request_id.as_str())
+        .collect();
+    assert_eq!(dated, ["ok"]);
+}
+
 // --- Attribution scenarios (#2, #6, #7). The source reports raw facts; these tests pin the
 // facts that make each scenario what it is. Every record's input tokens are distinct, so a
 // mis-assigned record changes a per-branch total.
@@ -339,7 +389,10 @@ fn session_that_starts_on_main_then_cuts_a_work_branch() {
     assert!(records.iter().all(|r| r.session_id.as_str() == "s1"));
     // Timestamps are the only ordering signal and must survive untouched.
     assert_eq!(
-        by_request(&records, "req_3").ts.as_deref(),
+        by_request(&records, "req_3")
+            .ts
+            .as_ref()
+            .map(Timestamp::as_str),
         Some("2026-01-01T00:02:00.000Z")
     );
 }

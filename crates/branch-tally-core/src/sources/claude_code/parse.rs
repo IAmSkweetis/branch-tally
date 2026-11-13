@@ -12,7 +12,7 @@ use std::path::Path;
 use serde::Deserialize;
 
 use crate::model::{
-    AgentId, Attribution, Dispatch, Harness, Origin, Record, RequestId, SessionId, Usage,
+    AgentId, Attribution, Dispatch, Harness, Origin, Record, RequestId, SessionId, Timestamp, Usage,
 };
 use crate::sources::{ReadStats, SourceError};
 
@@ -176,7 +176,16 @@ fn to_record(
     record.agent_id = non_empty(line.agent_id).map(AgentId::new);
     record.parent_session = ctx.parent_session.map(SessionId::new);
     record.origin = Some(ctx.origin.clone());
-    record.ts = line.timestamp;
+    // Checked once, here. A timestamp that is not strict RFC 3339 is counted and left off the
+    // record: its text is never carried further.
+    record.ts = match line.timestamp.as_deref().map(str::parse::<Timestamp>) {
+        Some(Ok(ts)) => Some(ts),
+        Some(Err(_)) => {
+            stats.malformed_timestamps += 1;
+            None
+        }
+        None => None,
+    };
     record.model = message.model;
     record.cwd = line.cwd;
     record.git_branch = line.git_branch;

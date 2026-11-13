@@ -493,7 +493,7 @@ fn two_branches_claiming_each_others_requests_both_report_correctly_from_one_led
 
 fn stamped(session: &str, request: &str, branch: &str, ts: &str, output: u64) -> Record {
     let mut r = rec(session, request, branch, output);
-    r.ts = Some(ts.to_owned());
+    r.ts = ts.parse().ok();
     r
 }
 

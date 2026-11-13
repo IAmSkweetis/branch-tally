@@ -9,7 +9,7 @@ use branch_tally_core::git::{FakeGit, Worktree};
 use branch_tally_core::ledger::{self, Clock, Identity, Ledger};
 use branch_tally_core::model::{
     AttributedRecord, BranchBasis, Harness, Mode, PriceTableSource, ProjectReport, Record,
-    RequestId, SelectedRecord, Selection, SessionId, Usage,
+    RequestId, SelectedRecord, Selection, SessionId, Timestamp, Usage,
 };
 use branch_tally_core::pricing::PriceTable;
 use branch_tally_core::report::{Options, run_from_ledger};
@@ -41,7 +41,7 @@ fn sel(id: &str, model: &str, ts: Option<&str>, basis: BranchBasis) -> SelectedR
         },
     );
     r.model = Some(model.to_owned());
-    r.ts = ts.map(str::to_owned);
+    r.ts = ts.and_then(|t| t.parse().ok());
     SelectedRecord {
         attributed: AttributedRecord {
             record: r,
@@ -109,7 +109,10 @@ fn groups_rows_by_recorded_for_and_dates_each_by_its_latest_ts() {
     assert_eq!(report.rows.len(), 2);
     let a = report.rows.iter().find(|r| r.branch == "feat/a").unwrap();
     assert_eq!(a.usage.calls, 2);
-    assert_eq!(a.last_call.as_deref(), Some("2026-01-05T00:00:00Z"));
+    assert_eq!(
+        a.last_call.as_ref().map(Timestamp::as_str),
+        Some("2026-01-05T00:00:00Z")
+    );
     assert!((a.cost.known - 6.0).abs() < 1e-9);
     assert!(!a.is_floor());
 }
@@ -321,7 +324,7 @@ fn last_call_is_the_latest_instant_across_mixed_offsets() {
     );
     let report = build(&f);
     assert_eq!(
-        report.rows[0].last_call.as_deref(),
+        report.rows[0].last_call.as_ref().map(Timestamp::as_str),
         Some("2026-01-02T00:00:00Z")
     );
 }
@@ -371,7 +374,10 @@ fn unparsable_ts_never_wins_and_an_all_unparsable_branch_is_undated() {
         .iter()
         .find(|r| r.branch == "feat/mixed")
         .unwrap();
-    assert_eq!(mixed.last_call.as_deref(), Some("2026-01-02T00:00:00Z"));
+    assert_eq!(
+        mixed.last_call.as_ref().map(Timestamp::as_str),
+        Some("2026-01-02T00:00:00Z")
+    );
     assert_eq!(mixed.usage.calls, 2, "the unparsable call is still counted");
     let junk = report
         .rows

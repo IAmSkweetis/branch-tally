@@ -35,7 +35,7 @@ fn rec(request: &str, branch: Option<&str>, ts: &str) -> Record {
     r.model = Some("m".to_owned());
     r.git_branch = branch.map(str::to_owned);
     r.origin = Some(Origin::Main);
-    r.ts = Some(ts.to_owned());
+    r.ts = ts.parse().ok();
     r
 }
 
