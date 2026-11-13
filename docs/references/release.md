@@ -176,10 +176,10 @@ runs on a **pull request** that changes `build.yml`, `release.yml`, `scripts/pac
 `.github/minisign.pub`, `cliff.toml`, `Cargo.lock` or `rust-toolchain.toml`. It builds the full
 matrix with the dummy version `v0.0.0` and uploads nothing to any release. A `signing proof` job
 runs only on pull requests: it installs minisign, signs a dummy `SHA256SUMS` with a throwaway key
-generated in the job and verifies it, and (while the committed public key is still the placeholder)
-checks the script refuses that placeholder. It needs no secret and cannot touch the real key. The
-lockfile is on the list because a dependency can break one target only: `ring` (rustls's crypto,
-added in #53) compiles C, and nothing outside the release build compiles for musl.
+generated in the job and verifies it, and checks the script refuses a placeholder public key. It
+needs no secret and cannot touch the real key. The lockfile is on the list because a dependency can
+break one target only: `ring` (rustls's crypto, added in #53) compiles C, and nothing outside the
+release build compiles for musl.
 
 ## Installing
 
@@ -329,9 +329,9 @@ The `publish` job signs through `scripts/sign-checksums.sh`. Setup the maintaine
   `MINISIGN_SECRET_KEY` (the whole contents of the minisign secret key file) and
   `MINISIGN_PASSWORD` (its password; set it to an empty value for a key made with
   `minisign -G -W`). If either is absent the job fails and nothing is published.
-- **Public key**: `.github/minisign.pub`. It is a placeholder until the maintainer commits the real
-  one (the `.pub` file `minisign -G` writes); the job fails on the placeholder. The same key is
-  compiled into the binary for `branch-tally update`.
+- **Public key**: `.github/minisign.pub`, the maintainer's (the `.pub` file `minisign -G` writes).
+  The job fails on a placeholder, and `just test-scripts` fails if the committed file stops being a
+  real key. The same key is compiled into the binary for `branch-tally update`.
 - **minisign** is installed by `scripts/ci-install-minisign.sh` from the upstream release archive,
   pinned by version and sha256 like gitleaks. Bump both together, checking the new archive against
   upstream's `.minisig` and key.
