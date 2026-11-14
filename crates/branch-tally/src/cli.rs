@@ -269,23 +269,25 @@ pub(crate) struct ReportArgs {
     #[arg(long, conflicts_with = "json")]
     pub(crate) md: bool,
 
-    /// Emit JSON instead of Markdown (same as --format json).
-    #[arg(long)]
+    /// Emit JSON instead of Markdown (same as --format json). Cannot be combined with --pr:
+    /// the PR body is always Markdown.
+    #[arg(long, conflicts_with = "pr")]
     pub(crate) json: bool,
 
-    /// Splice the table into PR N (default: this branch's open PR).
+    /// Splice the Markdown table into PR N (default: this branch's open PR). Cannot be combined
+    /// with --json or --format json; a config-file `format = "json"` yields to --pr (with a note).
     #[arg(long, num_args = 0..=1, default_missing_value = "", value_name = "N")]
     pub(crate) pr: Option<String>,
 
-    /// With --pr, print the body without editing.
-    #[arg(long)]
+    /// With --pr, print the body without editing. Requires --pr.
+    #[arg(long, requires = "pr")]
     pub(crate) dry_run: bool,
 
-    /// Omit the estimated-cost column.
+    /// Omit estimated costs: the cost column in Markdown, the cost fields in JSON.
     #[arg(long, conflicts_with = "cost")]
     pub(crate) no_cost: bool,
 
-    /// Show the estimated-cost column (the default); undoes `cost = false` in the config file.
+    /// Show estimated costs (the default); undoes `cost = false` in the config file.
     #[arg(long)]
     pub(crate) cost: bool,
 
@@ -321,8 +323,9 @@ pub(crate) struct ReportArgs {
     #[arg(long, requires = "from_ledger")]
     pub(crate) with_live: bool,
 
-    /// The ledger file (default: .tally/ledger.jsonl at the root of the current checkout).
-    #[arg(long, value_name = "PATH")]
+    /// With --from-ledger, the ledger file (default: .tally/ledger.jsonl at the root of the
+    /// current checkout). Requires --from-ledger.
+    #[arg(long, value_name = "PATH", requires = "from_ledger")]
     pub(crate) ledger: Option<PathBuf>,
 
     /// With --from-ledger, proceed even if the ledger has conflicting lines for one request (the latest line wins).
