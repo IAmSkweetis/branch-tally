@@ -75,5 +75,8 @@ a tool the user already has.
 - An air-gapped mirror can't resolve "latest" for `update`. Pin `--version` there.
 - Binaries released before this change check only `SHA256SUMS` when they update, so the first
   update to a signed release is still same-origin. Every update after it is verified.
-- F-05 (#97: no approval gate before publishing, mutable tags) is separate. A signature made by a
-  compromised pipeline still verifies.
+- A signature made by a compromised pipeline still verifies. F-05 (#97) closes that separately:
+  the `publish` job, the only reader of the signing secrets, runs in a protected `release`
+  environment that needs the maintainer's approval, and immutable releases plus a `v*` tag ruleset
+  stop a published release or its tag being changed. See
+  [release.md](../references/release.md#approving-a-release).

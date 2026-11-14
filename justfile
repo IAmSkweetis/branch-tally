@@ -138,6 +138,10 @@ scrub *args: (_require "uv" "install uv: https://docs.astral.sh/uv/getting-start
 goldens *args: (_require "uv" "install uv: https://docs.astral.sh/uv/getting-started/installation/") (_require "git" "install git")
     uv run scripts/make_goldens.py {{ args }}
 
+# Apply the repository settings the release gate depends on (#97), or just compare them with --check. Applying changes the live repository, so it is for the maintainer to run: just repo-settings [--check]
+repo-settings *args: (_require "uv" "install uv: https://docs.astral.sh/uv/getting-started/installation/") (_require "gh" "install the GitHub CLI: https://cli.github.com/")
+    uv run scripts/repo_settings.py {{ args }}
+
 # This repository's own PR token report, from the installed release binary: just token-report --pr
 token-report *args: (_require "branch-tally" "install the latest release: https://github.com/IAmSkweetis/branch-tally/releases/latest")
     branch-tally report {{ args }}
