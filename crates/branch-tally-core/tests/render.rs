@@ -268,7 +268,7 @@ fn json_states_the_price_table_and_names_unpriced_models() {
         unpriced_models: 1,
         ..priced(1, "2026-11-09", PriceTableSource::Override)
     };
-    let v: serde_json::Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
     assert_eq!(v["totalCostIsFloor"], true);
     assert_eq!(v["unpricedModels"], serde_json::json!(["zz"]));
     assert_eq!(v["priceTable"]["asOf"], "2026-11-09");
@@ -380,13 +380,13 @@ fn json_matches_python_dumps_with_indent_2() {
     }
   }
 }"#;
-    assert_eq!(json(&s, &c), expected);
+    assert_eq!(json(&s, &c, true), expected);
 }
 
 #[test]
 fn json_of_an_empty_summary_uses_empty_containers_and_float_zero() {
     assert_eq!(
-        json(&Summary::default(), &Costs::default()),
+        json(&Summary::default(), &Costs::default(), true),
         "{\n  \"branch\": \"\",\n  \"mode\": \"claim\",\n  \"totalCalls\": 0,\n  \
          \"totalCostUSD\": 0.0,\n  \"totalCostIsFloor\": false,\n  \"unpricedModels\": [],\n  \
          \"priceTable\": {\n    \"asOf\": null,\n    \"source\": \"bundled\"\n  },\n  \
@@ -401,7 +401,7 @@ fn json_strict_mode_and_ascii_escaping() {
         mode: Mode::Strict,
         ..Summary::default()
     };
-    let out = json(&s, &Costs::default());
+    let out = json(&s, &Costs::default(), true);
     assert!(out.contains("\"mode\": \"strict\""));
     // Python: ensure_ascii, lowercase hex, astral chars as surrogate pairs, DEL left raw.
     assert!(
@@ -421,7 +421,7 @@ fn json_costs_are_rounded_to_four_places_and_printed_like_python_repr() {
             unpriced_models: 0,
             ..Costs::default()
         };
-        json(&s, &c)
+        json(&s, &c, true)
     };
     // (input, python round(x, 4) repr)
     let cases = [
@@ -468,7 +468,7 @@ fn json_reproduces_reference_claim_goldens() {
                 continue; // a branch with no records: the reference prints no report
             }
             let (summary, costs) = from_payload(payload);
-            let mut ours: Value = serde_json::from_str(&json(&summary, &costs)).unwrap();
+            let mut ours: Value = serde_json::from_str(&json(&summary, &costs, true)).unwrap();
             // Deliberate divergences from the reference, #5: the floor flag and the price table
             // are new keys. Each must be present; every other key must match exactly.
             let object = ours.as_object_mut().unwrap();
@@ -742,7 +742,7 @@ fn markdown_escapes_pipes_in_subagent_cells() {
 fn json_has_a_subagents_object_with_rows_and_totals() {
     use serde_json::Value;
     let (s, c) = with_subagents_unlinked((3, 1_500), (2, 900));
-    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    let v: Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
     let sub = &v["subagents"];
     assert_eq!(sub["unlinkedInTotalCalls"], 2);
     assert_eq!(sub["unlinkedInTotalTokens"], 900);
@@ -770,7 +770,7 @@ fn json_has_a_subagents_object_with_rows_and_totals() {
 fn json_omits_subagents_when_there_is_nothing_to_report() {
     use serde_json::Value;
     let (s, c) = sample();
-    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    let v: Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
     assert!(v.get("subagents").is_none());
 }
 
@@ -779,7 +779,7 @@ fn json_keeps_subagents_for_unattributed_only() {
     use serde_json::Value;
     let (mut s, c) = sample();
     s.subagents.unattributed_calls = 2;
-    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    let v: Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
     assert_eq!(v["subagents"]["unattributedCalls"], 2);
     assert_eq!(v["subagents"]["rows"].as_array().unwrap().len(), 0);
 }
@@ -806,7 +806,7 @@ fn unknown_workspace_row_is_labelled_in_markdown_and_unambiguous_in_json() {
         "{md}"
     );
     assert!(!md.contains("| main checkout | `Explore`"), "{md}");
-    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    let v: Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
     let rows = v["subagents"]["rows"].as_array().unwrap();
     assert_eq!(rows[0]["workspaceKind"], "unknown");
     assert_eq!(rows[0]["isWorktree"], false);
@@ -870,7 +870,7 @@ fn markdown_without_a_model_split_shows_dashes_not_zero_usage() {
 fn json_subagent_rows_carry_usage_split_and_cost() {
     use serde_json::Value;
     let (s, c) = with_subagents((0, 0));
-    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    let v: Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
     let rows = v["subagents"]["rows"].as_array().unwrap();
     let r = &rows[0];
     assert_eq!(r["input"], 1_000);
@@ -902,7 +902,7 @@ fn json_subagent_section_cost_is_null_when_unpriced_and_split_null_without_model
     use serde_json::Value;
     let (mut s, c) = sample();
     s.subagents.rows = vec![sub_row(Workspace::Main, "Old", 3, 99, &["o1"])];
-    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    let v: Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
     assert!(v["subagents"]["costUSD"].is_null());
     assert_eq!(v["subagents"]["costIsFloor"], false);
     let r = &v["subagents"]["rows"][0];
@@ -963,7 +963,7 @@ fn a_subagent_with_two_models_is_two_rows_each_with_its_own_model_and_cost() {
         "{md}"
     );
     assert!(md.contains("from 1 dispatched subagent(s)"), "{md}");
-    let v: serde_json::Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
     let rows = v["subagents"]["rows"].as_array().unwrap();
     assert_eq!(rows[0]["model"], "claude-a");
     assert_eq!(rows[1]["model"], "claude-b");
@@ -975,7 +975,7 @@ fn a_row_from_before_the_model_field_shows_a_dash_and_null_in_json() {
     let (mut s, c) = sample();
     s.subagents.rows = vec![sub_row(Workspace::Main, "old", 1, 1, &["x"])];
     assert!(markdown(&s, &c, false).contains("| main checkout | `old` | \u{2014} | 1 |"));
-    let v: serde_json::Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
     assert!(v["subagents"]["rows"][0]["model"].is_null());
 }
 
@@ -1052,14 +1052,14 @@ fn timeline_mode_is_named_and_ambiguity_makes_tokens_and_cost_a_floor() {
 fn json_carries_heuristics_and_floor_only_when_used() {
     use serde_json::Value;
     let (mut s, c) = sample();
-    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    let v: Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
     assert!(v.get("heuristics").is_none());
     s.footnote.heuristics = HeuristicBreakdown {
         session_claim: hc(2, 1_500),
         ambiguous: hc(1, 9),
         ..HeuristicBreakdown::default()
     };
-    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    let v: Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
     assert_eq!(v["heuristics"]["sessionClaim"]["calls"], 2);
     assert_eq!(v["heuristics"]["sessionClaim"]["tokens"], 1_500);
     assert_eq!(v["heuristics"]["timelineCarried"]["calls"], 0);
@@ -1128,14 +1128,14 @@ fn json_states_the_work_branch_rule_only_when_there_is_one() {
     use branch_tally_core::model::{DefaultBranchSource as Src, WorkBranchRule as Rule};
     use serde_json::Value;
     let (s, c) = sample();
-    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    let v: Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
     assert!(v.get("workBranch").is_none());
 
     let (s, c) = timeline_summary(Some(Rule::ExcludesDefault {
         branch: "develop".to_owned(),
         source: Src::AssumedMain,
     }));
-    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    let v: Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
     assert_eq!(v["workBranch"]["kind"], "excludesDefault");
     assert_eq!(v["workBranch"]["defaultBranch"], "develop");
     assert_eq!(v["workBranch"]["source"], "assumed");
@@ -1143,7 +1143,7 @@ fn json_states_the_work_branch_rule_only_when_there_is_one() {
     let (s, c) = timeline_summary(Some(Rule::Custom {
         pattern: "^f\"x".to_owned(),
     }));
-    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    let v: Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
     assert_eq!(v["workBranch"]["kind"], "custom");
     assert_eq!(v["workBranch"]["pattern"], "^f\"x");
 }
@@ -1191,7 +1191,7 @@ fn redacted_markdown_without_cost_is_pinned() {
 #[test]
 fn redacted_json_is_pinned() {
     let (s, c) = redacted_sample();
-    insta::assert_snapshot!("json_redacted", json(&s, &c));
+    insta::assert_snapshot!("json_redacted", json(&s, &c, true));
 }
 
 #[test]
@@ -1206,13 +1206,13 @@ fn redacted_output_says_so_and_prints_dates_whole() {
         // An empty date stays empty, as the clock span does today.
         assert!(md.contains("|  \u{2192}  |"), "{md}");
     }
-    assert!(json(&s, &c).contains("\n  \"redacted\": true,\n"));
+    assert!(json(&s, &c, true).contains("\n  \"redacted\": true,\n"));
 }
 
 #[test]
 fn unredacted_json_has_no_redacted_key() {
     let (s, c) = sample();
-    assert!(!json(&s, &c).contains("redacted"));
+    assert!(!json(&s, &c, true).contains("redacted"));
 }
 
 #[test]
@@ -1426,7 +1426,7 @@ fn json_carries_captured_only_when_used() {
         session_claim: hc(2, 10),
         ..HeuristicBreakdown::default()
     };
-    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    let v: Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
     assert!(
         v["heuristics"].get("captured").is_none(),
         "zero stays absent"
@@ -1435,7 +1435,7 @@ fn json_carries_captured_only_when_used() {
         captured: hc(4, 800),
         ..HeuristicBreakdown::default()
     };
-    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    let v: Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
     assert_eq!(v["heuristics"]["captured"]["calls"], 4);
     assert_eq!(v["heuristics"]["captured"]["tokens"], 800);
 }
@@ -1461,13 +1461,13 @@ fn markdown_reports_unstamped_calls_in_the_footer_only_when_there_are_some() {
 fn json_has_a_top_level_unstamped_key_only_when_there_are_some() {
     use serde_json::Value;
     let (mut s, c) = sample();
-    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    let v: Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
     assert!(v.get("unstamped").is_none());
     s.unstamped = Unstamped {
         calls: 2,
         tokens: 2_221,
     };
-    let v: Value = serde_json::from_str(&json(&s, &c)).unwrap();
+    let v: Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
     assert_eq!(v["unstamped"]["calls"], 2);
     assert_eq!(v["unstamped"]["tokens"], 2_221);
 }
@@ -1582,12 +1582,77 @@ fn markdown_does_not_wrap_or_panic_on_saturated_cache_writes() {
 #[test]
 fn json_carries_totals_overflowed_only_when_true() {
     let (s, c) = overflowed();
-    let j = json(&s, &c);
+    let j = json(&s, &c, true);
     assert!(j.contains("  \"totalsOverflowed\": true,\n"), "{j}");
     assert!(j.contains("  \"totalCostIsFloor\": true,\n"), "{j}");
     let (mut s, c) = overflowed();
     s.footnote.totals_overflowed = false;
-    let j = json(&s, &c);
+    let j = json(&s, &c, true);
     assert!(!j.contains("totalsOverflowed"), "{j}");
     assert!(j.contains("  \"totalCostIsFloor\": false,\n"), "{j}");
+}
+
+/// Every object key in `v`, at any depth.
+fn all_keys(v: &serde_json::Value, out: &mut Vec<String>) {
+    match v {
+        serde_json::Value::Object(m) => {
+            for (k, x) in m {
+                out.push(k.clone());
+                all_keys(x, out);
+            }
+        }
+        serde_json::Value::Array(a) => a.iter().for_each(|x| all_keys(x, out)),
+        _ => {}
+    }
+}
+
+fn is_cost_key(k: &str) -> bool {
+    let k = k.to_ascii_lowercase();
+    k.contains("cost") || k.contains("unpriced") || k.contains("pricetable")
+}
+
+#[test]
+fn json_without_cost_drops_every_cost_derived_key_and_stays_valid() {
+    use serde_json::Value;
+    // Subagent rows (priced, floor, unpriced, no entry) plus an unpriced model.
+    let (s, c) = with_subagents_unlinked((3, 1_500), (2, 900));
+    assert!(c.by_model.iter().any(|(_, p)| p.is_none()));
+
+    let mut with = Vec::new();
+    let on: Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
+    all_keys(&on, &mut with);
+    assert!(
+        with.iter().any(|k| is_cost_key(k)),
+        "cost-on keeps cost keys"
+    );
+
+    let out = json(&s, &c, false);
+    let off: Value = serde_json::from_str(&out).expect("valid JSON without cost");
+    let mut keys = Vec::new();
+    all_keys(&off, &mut keys);
+    let leaked: Vec<_> = keys.iter().filter(|k| is_cost_key(k)).collect();
+    assert!(leaked.is_empty(), "cost keys leaked: {leaked:?}");
+    // The rest of the report is intact.
+    assert_eq!(off["totalCalls"], on["totalCalls"]);
+    assert_eq!(off["subagents"]["rows"].as_array().unwrap().len(), 4);
+    assert_eq!(off["subagents"]["tokens"], 807_000);
+    assert_eq!(
+        off["models"]["claude-a"]["thinking"],
+        on["models"]["claude-a"]["thinking"]
+    );
+    assert!(off["models"]["claude-b"].is_object());
+    assert!(off["sessions"].is_array());
+}
+
+#[test]
+fn json_without_cost_is_valid_for_empty_and_subagent_free_reports() {
+    use serde_json::Value;
+    let (s, c) = sample();
+    let v: Value = serde_json::from_str(&json(&s, &c, false)).unwrap();
+    assert!(v.get("subagents").is_none());
+    let e: Value =
+        serde_json::from_str(&json(&Summary::default(), &Costs::default(), false)).unwrap();
+    let mut keys = Vec::new();
+    all_keys(&e, &mut keys);
+    assert!(keys.iter().all(|k| !is_cost_key(k)), "{keys:?}");
 }

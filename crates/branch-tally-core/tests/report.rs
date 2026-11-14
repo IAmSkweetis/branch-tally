@@ -487,7 +487,7 @@ fn unstamped_calls_are_counted_repository_wide_whichever_branch_is_reported() {
             (1, 1_115),
             "{branch}"
         );
-        let json = branch_tally_core::render::json(&r.summary, &r.costs);
+        let json = branch_tally_core::render::json(&r.summary, &r.costs, true);
         assert!(json.contains("\"unstamped\""), "{branch}: {json}");
     }
     // Strict has no claim, so both `(none)` calls (the reference's bucket) are unplaced.
@@ -502,7 +502,9 @@ fn unstamped_calls_are_counted_repository_wide_whichever_branch_is_reported() {
     // A fixture with every call stamped reports none, and omits the key.
     let none = fixture_report("subagent", "feat/x", Mode::Claim, &[]).unwrap();
     assert_eq!(none.summary.unstamped.calls, 0);
-    assert!(!branch_tally_core::render::json(&none.summary, &none.costs).contains("unstamped"));
+    assert!(
+        !branch_tally_core::render::json(&none.summary, &none.costs, true).contains("unstamped")
+    );
 }
 
 #[test]
@@ -515,7 +517,7 @@ fn removed_worktrees_roll_up_to_the_dispatcher_branch() {
     assert_eq!(sub.dispatched(), 3);
     assert!(sub.rows.iter().all(|x| x.workspace.is_worktree()));
     assert_eq!((sub.unattributed_calls, sub.unattributed_tokens), (0, 0));
-    let json = branch_tally_core::render::json(&r.summary, &r.costs);
+    let json = branch_tally_core::render::json(&r.summary, &r.costs, true);
     assert!(json.contains("\"subagents\""), "{json}");
 }
 

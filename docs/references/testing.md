@@ -188,10 +188,11 @@ expected behaviour directly, next to the same issue number. `malformed-and-keyle
   `null` for a row with no per-model split) and the Markdown report has a `### Subagent usage`
   section (a `Model` column after `Subagent`, usage columns like the per-model table, an `Est. cost`
   column that shows a dash, "at least $X" or "$X", and `est. cost` on the totals line; `--no-cost`
-  drops both) between the footnote and the attribution details. Both are omitted when empty, so
-  `--strict` and reports without dispatched subagents are unchanged. The unattributed count spans
-  all attributed records, not only the branch, and the Markdown line says so. `rows[]`, `calls`,
-  `tokens`, `dispatched`, `workspaces` and `worktrees` count only verified roll-ups
+  drops both; `render::json(.., cost: false)` likewise drops every cost-derived JSON key, #71)
+  between the footnote and the attribution details. Both are omitted when empty, so `--strict` and
+  reports without dispatched subagents are unchanged. The unattributed count spans all attributed
+  records, not only the branch, and the Markdown line says so. `rows[]`, `calls`, `tokens`,
+  `dispatched`, `workspaces` and `worktrees` count only verified roll-ups
   (`BranchBasis::DispatcherRolledUp`). Unlinked records stay in the branch total through the session
   claim; `unlinkedInTotal*` say how many (the Markdown line ends "N call(s) (T tokens) of them are
   included in this report's total via session claim", or "none of them ..."). Every `Source` must
@@ -205,9 +206,9 @@ expected behaviour directly, next to the same issue number. `malformed-and-keyle
   `subagent-renamed-branch` and `subagent-switches-branch` (calls stamped elsewhere roll up to the
   dispatcher), and `chore/x-part`, `chore/d1-data` and `chore/d2-data` (their records belong to the
   dispatcher, so claim mode finds none). A seventh, `main` in `unstamped-main` (issue `#37`), is
-  there because Rust doesn't recover unstamped main-checkout calls onto the main checkout's
-  current branch. `DIVERGENCES`, the raw-stamp comparison, stays empty: strict mode never recovers,
-  so #37 can't show there.
+  there because Rust doesn't recover unstamped main-checkout calls onto the main checkout's current
+  branch. `DIVERGENCES`, the raw-stamp comparison, stays empty: strict mode never recovers, so #37
+  can't show there.
 - Output divergence #7 (attribution heuristics): the JSON report has a top-level `heuristics`
   object (`sessionClaim`, `worktreeRecovery`, `originRecovery`, `dispatcherRollUp`,
   `timelineForward`, `timelineCarried`, `ambiguous`, each `{calls, tokens}`, plus `isFloor`) that

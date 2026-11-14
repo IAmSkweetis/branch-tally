@@ -199,7 +199,7 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), Failure> {
     if settings.format.value == Format::Json {
         stdout(&format!(
             "{}\n",
-            render::json(&report.summary, &report.costs)
+            render::json(&report.summary, &report.costs, true)
         ));
         return Ok(());
     }
