@@ -151,7 +151,9 @@ branch-tally report --from-ledger --with-live
 
 `--from-ledger` reports only from the ledger's lines recorded for the requested branch. It works
 on a machine with no transcripts at all, such as a fresh clone. Every other `report` option still
-applies: `--json`, `--pr`, `--redact` and the rest.
+applies: `--json`, `--pr`, `--redact` and the rest, with the same rules as a live report. For
+example, `--json` with `--pr` is a command-line error (exit 2), because the PR body is always
+Markdown. See [Conflicting flags](cli.md#conflicting-flags).
 
 `--with-live` also reads this machine's live transcripts and combines them with the ledger. When a
 call appears in both, the ledger's line is used, so nothing is counted twice. Use it when part of
@@ -225,7 +227,7 @@ there only when that checkout has a `.tally/` directory: see
 checkout, `--ledger` is required: without it, `record` and `report --from-ledger` fail (exit 1)
 rather than write a stray ledger.
 
-`--ledger` only has an effect on `report` together with `--from-ledger`.
+On `report`, `--ledger` needs `--from-ledger`: without it the command line is wrong (exit 2).
 
 ### Symbolic links are refused
 
