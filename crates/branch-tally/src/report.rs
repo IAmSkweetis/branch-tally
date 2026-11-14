@@ -24,7 +24,7 @@ use branch_tally_core::text::replace_control_chars;
 use clap::CommandFactory;
 use clap::error::ErrorKind;
 
-use crate::cli::{Cli, RecordArgs, ReportArgs, WorkBranchPattern, parse_work_branch};
+use crate::cli::{Cli, FormatArg, RecordArgs, ReportArgs, WorkBranchPattern, parse_work_branch};
 use crate::config::SystemEnv;
 use crate::prices;
 use crate::pyrepr::repr;
@@ -107,8 +107,22 @@ pub(crate) fn gate_ledger_conflicts(conflicts: u64, allow: bool) -> Result<(), F
     })
 }
 
+/// `--format json --pr` is a usage error (exit 2). clap cannot condition a conflict on a value,
+/// so this one is raised by hand; `--json --pr` is declared on the argument itself.
+fn reject_format_json_with_pr(args: &ReportArgs) {
+    if args.pr.is_some() && matches!(args.format, Some(FormatArg::Json)) {
+        Cli::command()
+            .error(
+                ErrorKind::ArgumentConflict,
+                "--pr cannot be used with --format json: the PR body is always Markdown",
+            )
+            .exit();
+    }
+}
+
 /// Runs the command. `Err` carries the one-line message for stderr and the exit code.
 pub(crate) fn run(args: &ReportArgs) -> Result<(), Failure> {
+    reject_format_json_with_pr(args);
     let projects = projects_root()?;
     let Resolved {
         settings,
@@ -196,10 +210,12 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), Failure> {
         stderr("note: git worktree list was unavailable, so worktree recovery was skipped");
     }
 
-    if settings.format.value == Format::Json {
+    if args.pr.is_some() && settings.format.value == Format::Json {
+        stderr("note: config format = \"json\" was overridden by --pr; the PR body is Markdown");
+    } else if settings.format.value == Format::Json {
         stdout(&format!(
             "{}\n",
-            render::json(&report.summary, &report.costs, true)
+            render::json(&report.summary, &report.costs, settings.cost.value)
         ));
         return Ok(());
     }
