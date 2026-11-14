@@ -1,9 +1,11 @@
 name: Release
 
-# Every commit that lands on main and passes CI is released: tag, draft GitHub release with
-# git-cliff's notes, a six-target build, then publish with SHA256SUMS and build-provenance
-# attestations, with SHA256SUMS signed by minisign. A manual dispatch does the same for the current
-# head of main, optionally naming the version. See docs/references/release.md.
+# Every commit that lands on main and passes CI is released once the maintainer approves it: tag,
+# draft GitHub release with git-cliff's notes and a six-target build run unattended, then the
+# `publish` job waits for approval in the protected `release` environment (#97) before it signs
+# SHA256SUMS with minisign, attests the build and publishes. A published release is immutable. A
+# manual dispatch does the same for the current head of main, optionally naming the version. See
+# docs/references/release.md.
 on:
   # zizmor: ignore[dangerous-triggers] -- workflow_run is the only way to start after CI finishes
   # on main. It is safe here because the jobs run only for a successful `push` run of this
@@ -199,12 +201,20 @@ jobs:
     uses: $/.github/workflows/build.yml
     with:
       version: ${{ needs.version.outputs.version }}
+      sha: ${{ needs.version.outputs.sha }}
 
   publish:
     name: Attach and publish
     needs: [version, build]
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # The gate (#97): this job waits here until the maintainer approves it. Nothing is signed,
+    # uploaded or published before then, and the signing secrets are read only after it. The
+    # environment is protected by scripts/repo_settings.py (required reviewer, `main` only, no admin
+    # bypass). The url makes the approved deployment link to the release it publishes.
+    environment:
+      name: release
+      url: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.version.outputs.version }}
     permissions:
       contents: write # upload the assets and publish the draft
       id-token: write # sign the attestations
@@ -297,6 +307,11 @@ jobs:
           fi
           cp "$BUNDLE" dist/provenance.sigstore.json
 
+      # Assets go on the draft, before it is published: a published release is immutable (#97), so
+      # nothing can be added or replaced afterwards. --clobber stays only so a re-run of this job
+      # after a partly failed upload can replace what the first attempt left on the still-draft
+      # release. It cannot touch a published one: against an immutable release the upload fails
+      # loudly, which is what we want.
       - name: Upload to the draft release
         run: gh release upload "$VERSION" dist/* --repo "$GITHUB_REPOSITORY" --clobber
 
