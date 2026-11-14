@@ -142,7 +142,9 @@ jobs:
           name: archive-${{ matrix.target }}
           path: dist/branch-tally-*
           if-no-files-found: error
-          retention-days: 14
+          # Outlives the release environment's 30-day approval window (#97), with a margin: publish
+          # downloads these after approval, and an expired artifact can't be rebuilt by a re-run.
+          retention-days: 35
 
   # The release's signing step, proven on a pull request with no secret: a throwaway key made in
   # this job signs a dummy SHA256SUMS and the script verifies it, so a broken script or a

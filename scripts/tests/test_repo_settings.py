@@ -315,6 +315,63 @@ def job_block(text: str, job: str) -> str:
     return m.group(0)
 
 
+def run_bodies(text: str) -> list[str]:
+    """The shell text of every `run:` step: the inline value, or a `|`/`>` block's body.
+
+    A block ends at the first non-blank line indented no deeper than the `run` key itself. That is
+    the key's column, not the dash's, so a sibling key such as `env:` is never read as script.
+    """
+    lines = text.splitlines()
+    bodies = []
+    for i, line in enumerate(lines):
+        m = re.match(r"^(\s*(?:-\s+)?)run:\s*(.*)$", line)
+        if not m:
+            continue
+        key_col, value = len(m.group(1)), m.group(2)
+        if not re.match(r"^[|>][-+0-9]*\s*$", value):
+            bodies.append(value)
+            continue
+        body = []
+        for nxt in lines[i + 1:]:
+            if nxt.strip() and len(nxt) - len(nxt.lstrip()) <= key_col:
+                break
+            body.append(nxt)
+        bodies.append("\n".join(body))
+    return bodies
+
+
+class RunBodies(unittest.TestCase):
+    SAMPLE = (
+        "    steps:\n"
+        "      - name: Block\n"
+        "        run: |\n"
+        "          set -eu\n"
+        "          echo \"${{ inputs.version }}\"\n"
+        "        env:\n"
+        "          TAG: ${{ inputs.version }}\n"
+        "      - run: >\n"
+        "          echo folded ${{ github.ref }}\n"
+        "      - run: echo inline\n"
+        "      - name: After\n"
+        "        shell: bash\n"
+    )
+
+    def test_reads_the_body_of_a_block_scalar(self):
+        bodies = run_bodies(self.SAMPLE)
+        self.assertIn('echo "${{ inputs.version }}"', bodies[0])
+        self.assertIn("set -eu", bodies[0])
+
+    def test_stops_at_a_sibling_key(self):
+        self.assertNotIn("TAG:", run_bodies(self.SAMPLE)[0])
+
+    def test_reads_a_dash_run_block_and_an_inline_run(self):
+        bodies = run_bodies(self.SAMPLE)
+        self.assertEqual(len(bodies), 3)
+        self.assertIn("${{ github.ref }}", bodies[1])
+        self.assertNotIn("name: After", bodies[1])
+        self.assertEqual(bodies[2].strip(), "echo inline")
+
+
 class Workflows(unittest.TestCase):
     def setUp(self):
         wf = REPO / ".github" / "workflows"
@@ -349,8 +406,17 @@ class Workflows(unittest.TestCase):
 
     def test_no_expression_inside_run(self):
         for text in (self.release, self.build):
-            for m in re.finditer(r"(?m)^\s*run:\s*(.*)$", text):
-                self.assertNotIn("${{", m.group(1))
+            bodies = run_bodies(text)
+            self.assertTrue(bodies)
+            for body in bodies:
+                self.assertNotIn("${{", body)
+
+    def test_archives_outlive_the_approval_window(self):
+        # A pending `release` approval times out after 30 days; publish needs the archives then.
+        days = [int(d) for d in re.findall(r"retention-days:\s*(\d+)", self.build)]
+        self.assertTrue(days)
+        for d in days:
+            self.assertGreaterEqual(d, 35)
 
 
 if __name__ == "__main__":

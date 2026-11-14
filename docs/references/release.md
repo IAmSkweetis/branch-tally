@@ -221,8 +221,9 @@ mint a new version.
   release builds with the fixed workflow, and the failed one stays a draft with its tag.
 - The `release` job is safe to re-run: an existing tag on the same commit and an existing release
   are left alone.
-- Archives are kept as run artifacts for 14 days. A re-run of only the `publish` job after that
-  fails for lack of archives; re-run the whole workflow instead.
+- Archives are kept as run artifacts for 35 days, longer than the `release` environment's 30-day
+  approval window, so an approval given on any day still finds them. A re-run of only the
+  `publish` job after that fails for lack of archives; re-run the whole workflow instead.
 - A failed draft is never deleted for you. Delete it by hand once superseded.
 
 ## Targets
