@@ -62,11 +62,11 @@ Reports the token usage and estimated cost for `BRANCH` (default: the current br
 | `--work-branch <REGEX>` | see below | Timeline mode only: a regex naming the work branches. |
 | `--format <FORMAT>` | `md` | Output format: `md` or `json`. See [Output formats](#output-formats). |
 | `--md` | | Same as `--format md`. |
-| `--json` | | Same as `--format json`. |
-| `--pr [<N>]` | | Splice the table into pull request `N`, or this branch's open PR when `N` is omitted. See [Updating a pull request](#updating-a-pull-request). |
-| `--dry-run` | | With `--pr`, print the new PR body without editing the PR. |
-| `--cost` | on | Show the estimated-cost column. Undoes `cost = false` in the config file. |
-| `--no-cost` | | Omit the estimated-cost column from the Markdown table. |
+| `--json` | | Same as `--format json`. Can't be combined with `--pr`. |
+| `--pr [<N>]` | | Splice the Markdown table into pull request `N`, or this branch's open PR when `N` is omitted. Can't be combined with `--json` or `--format json`. See [Updating a pull request](#updating-a-pull-request). |
+| `--dry-run` | | Needs `--pr`. Print the new PR body without editing the PR. |
+| `--cost` | on | Show estimated costs. Undoes `cost = false` in the config file. |
+| `--no-cost` | | Omit estimated costs: the cost column in Markdown, the cost keys in JSON. See [Output formats](#output-formats). |
 | `--redact` | off | Hide identifiers in the output. See [Redaction](#redaction). |
 | `--no-redact` | | Show identifiers. Undoes `redact = true` in the config file. |
 | `--keep-names` | | With redaction, keep real agent and skill names; ids and times are still hidden. |
@@ -74,7 +74,7 @@ Reports the token usage and estimated cost for `BRANCH` (default: the current br
 | `--config <PATH>` | user config path | Read this config file instead of the default location. It must exist. |
 | `--from-ledger` | | Report from the [ledger](ledger.md) instead of the live transcripts. Works with no transcripts. |
 | `--with-live` | | With `--from-ledger`, also read this machine's live transcripts. The ledger wins where both have a call, so nothing is counted twice. |
-| `--ledger <PATH>` | `.tally/ledger.jsonl` | The ledger file, used with `--from-ledger`. The default is at the root of the current checkout. |
+| `--ledger <PATH>` | `.tally/ledger.jsonl` | Needs `--from-ledger`. The ledger file to report from. The default is at the root of the current checkout. |
 | `--allow-ledger-conflicts` | off | Needs `--from-ledger`. Carry on when the ledger has conflicting lines for one request, using the latest line for each. Without it such a ledger stops the run with exit 3. See [Conflicting ledger lines](ledger.md#conflicting-ledger-lines). |
 
 Each flag that has a [config file](config.md) key overrides it for one run. Precedence is flag,
@@ -89,19 +89,22 @@ These are command-line errors (exit 2):
 - `--strict` with `--timeline`, and `--md` with `--json`;
 - both halves of an on/off pair: `--cost` with `--no-cost`, `--redact` with `--no-redact`,
   `--keep-names` with `--redact-names`;
-- `--with-live` or `--allow-ledger-conflicts` without `--from-ledger`;
+- `--pr` with `--json` or `--format json`, because the PR body is always Markdown;
+- `--dry-run` without `--pr`;
+- `--ledger`, `--with-live` or `--allow-ledger-conflicts` without `--from-ledger`. On `record`
+  and `project`, `--ledger` needs nothing else;
 - `--work-branch` when the effective mode is not timeline. The mode can come from `--mode
   timeline`, `--timeline` or the config file's `mode = "timeline"`. A `work-branch` set only in
   the config file is ignored outside timeline mode rather than being an error.
 
-A few flags are accepted but have no effect in some combinations:
+A config file setting gives way to a flag rather than being an error. With `format = "json"` in
+the config file, `--pr` still writes the Markdown table, and stderr says so:
 
-- `--dry-run` without `--pr` does nothing.
-- `--ledger` without `--from-ledger` does nothing.
-- `--pr` with JSON output (`--json`, `--format json` or `format = "json"` in the config file)
-  prints the JSON and does not touch the PR. `--pr` only works with Markdown.
-- `--no-cost` affects the Markdown table only. JSON output always includes costs.
-- `--keep-names` and `--redact-names` do nothing unless redaction is on.
+```text
+note: config format = "json" was overridden by --pr; the PR body is Markdown
+```
+
+`--keep-names` and `--redact-names` are accepted but do nothing unless redaction is on.
 
 ### Attribution modes
 
@@ -204,7 +207,7 @@ and `<!-- token-report:end -->` markers. It has, in order:
    model with its workspace, plus how many subagent calls had no dispatch link;
 8. a collapsed **Breakdown by skill / agent** table.
 
-With `--no-cost`, the cost columns are left out.
+With `--no-cost`, or `cost = false` in the config file, the cost columns are left out.
 
 #### Overflowed totals
 
@@ -265,6 +268,13 @@ contributors control. The Markdown report shows them as text, never as formattin
 | `sessions` | One object per session: `id`, `origin` (`"main"` or the worktree), `first` and `last` timestamps, `calls`, `tokens` and `agents`. |
 | `models` | One object per model id: `calls`, `input`, `cacheWrite5m`, `cacheWrite1h`, `cacheRead`, `output`, `thinking` and `costUSD` (`null` when unpriced). |
 
+With `--no-cost`, or `cost = false` in the config file, every cost key is left out:
+`totalCostUSD`, `totalCostIsFloor`, `unpricedModels` and `priceTable` at the top level, `costUSD`
+in each model, and `costUSD` and `costIsFloor` in `subagents` and in each of its rows. Every
+other key is unchanged, including the token figures and `heuristics.isFloor`, and the output is
+still valid JSON. `--cost` puts the cost keys back when the config file turned them off. A model
+with no price still gets its `warning: no price for …` line on stderr.
+
 An abridged example, from a scrubbed test fixture:
 
 ```json
@@ -310,7 +320,10 @@ An abridged example, from a scrubbed test fixture:
 ### Updating a pull request
 
 `--pr` puts the Markdown report into a pull request's description. It runs the
-[GitHub CLI](https://cli.github.com/), so `gh` must be installed and signed in.
+[GitHub CLI](https://cli.github.com/), so `gh` must be installed and signed in. The PR body is
+always Markdown: `--pr` with `--json` or `--format json` is a command-line error (exit 2), and a
+`format = "json"` in the config file gives way to `--pr` with a note on stderr. `--dry-run` needs
+`--pr`.
 
 ```sh
 branch-tally report --pr --dry-run   # print the new PR body, change nothing
@@ -370,6 +383,7 @@ identifiers.
 | `note: skipped N capture line(s) in .tally/captures.jsonl: …` | Hook capture lines that were malformed, written by an unsupported version, or of an unknown kind. Counted, not hidden. Printed by `report` and `record`. |
 | `note: git worktree list was unavailable, so worktree recovery was skipped` | `git worktree list` failed, so subagent calls in worktrees could not be recovered. |
 | `note: using the repository price override (.tally/prices.toml); prices are not the bundled or cached table` | Costs come from the repository's own price table, not from branch-tally's. Printed in every output format; stdout is unchanged. See [Which price table is used](#which-price-table-is-used). |
+| `note: config format = "json" was overridden by --pr; the PR body is Markdown` | The config file sets `format = "json"` and `--pr` was given, so the Markdown table was written (or, with `--dry-run`, printed) instead of JSON. See [Updating a pull request](#updating-a-pull-request). |
 | The ledger notes | See [Report from the ledger](ledger.md#report-from-the-ledger). |
 
 Recorded text in these messages, such as a model id or a branch, has its control characters
