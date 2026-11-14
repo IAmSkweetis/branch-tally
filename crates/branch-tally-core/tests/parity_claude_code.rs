@@ -530,7 +530,7 @@ fn rust_payload(dir: &Path, manifest: &Value, branch: &str, strict: bool) -> Val
             without_heuristics_divergence(
                 without_unstamped_divergence(
                     without_price_divergences(
-                        serde_json::from_str(&render::json(&r.summary, &r.costs)).unwrap(),
+                        serde_json::from_str(&render::json(&r.summary, &r.costs, true)).unwrap(),
                     ),
                     dir,
                     strict,
