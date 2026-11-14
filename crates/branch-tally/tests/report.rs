@@ -423,8 +423,13 @@ fn config_json_yields_to_pr_with_a_stderr_note() {
     let mut cmd = world.command(&world.repo, &["report", "feat/x", "--pr", "5", "--dry-run"]);
     cmd.env("PATH", empty.path());
     let out = cmd.output().expect("run");
-    assert!(stderr(&out).contains(OVERRIDE_NOTE), "{}", stderr(&out));
-    assert!(!stdout(&out).trim_start().starts_with('{'));
+    let err = stderr(&out);
+    assert!(err.contains(OVERRIDE_NOTE), "{err}");
+    // The run got past the note to the PR step and failed there: a runtime error (1), never a
+    // usage error (2), and the error is the missing gh rather than some earlier failure.
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    assert!(err.contains("could not run `gh`"), "{err}");
+    assert!(stdout(&out).is_empty(), "{}", stdout(&out));
 }
 
 #[cfg(unix)]
