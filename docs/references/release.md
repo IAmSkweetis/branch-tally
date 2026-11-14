@@ -4,9 +4,10 @@ How a version of branch-tally gets from `main` to users.
 
 > **Status:** GitHub Releases ship six prebuilt binaries with release notes, a minisign-signed
 > `SHA256SUMS` and build provenance attestations (#10, #76), plus one-line shell and PowerShell
-> installers (#46), proven on clean Linux, macOS and Windows runners after every release. Not built
-> yet, each a follow-up issue: publishing to crates.io and `cargo binstall`, Homebrew, npm, and the
-> GitHub Action's floating major tag (`v1`).
+> installers (#46), published only after the maintainer approves them (#97), proven on clean Linux,
+> macOS and Windows runners after every release. Not built yet, each a follow-up issue: publishing
+> to crates.io and `cargo binstall`, Homebrew, npm, and the GitHub Action's floating major tag
+> (`v1`).
 
 ## Principles (decided)
 
@@ -15,9 +16,13 @@ How a version of branch-tally gets from `main` to users.
 - **A release is a tag**, `vMAJOR.MINOR.PATCH`, on a commit already on `main`. Every published
   artifact is built by CI from that tag. Nothing is built or published from a laptop.
   `cargo publish` is denied in `.claude/settings.json` for that reason.
-- **Every merge to `main` releases.** There is no release PR and no batching, so a docs-only or
-  tooling-only merge is a patch release. The trunk is always releasable, and the releases page
-  always reflects it.
+- **Every merge to `main` is released, once the maintainer approves it.** There is no release PR
+  and no batching, so a docs-only or tooling-only merge is a patch release. The tag, the draft and
+  the six builds run unattended, but the `publish` job waits for approval in the protected
+  `release` environment ([Approving a release](#approving-a-release)), so a green commit alone
+  never reaches users (#97). The trunk is always releasable, and the releases page reflects it.
+- **A published release is immutable.** Immutable releases are on, and a tag ruleset blocks
+  updating or deleting `v*` tags, so a published release's assets and tag can't be swapped later.
 - **The version comes from the commit history.** Squash-merged PR titles are Conventional Commits,
   so the next version follows mechanically from what merged since the last tag:
 
@@ -42,7 +47,8 @@ How a version of branch-tally gets from `main` to users.
 
 Two workflows share the work:
 
-- **`release.yml`** decides the version, tags, drafts the GitHub release and publishes it.
+- **`release.yml`** decides the version, tags, drafts the GitHub release and, after approval,
+  publishes it.
 - **`build.yml`** is reusable (`workflow_call`). It builds, smoke-tests and packages the six
   targets, and `release.yml` calls it.
 
@@ -72,8 +78,8 @@ Every release builds. There is no label or input to turn that off.
 | -------- | --- | ---- | ---------- |
 | release | `version` | Checks the commit is releasable, works out the version, writes the release notes (also to the run summary) | A dispatch is off `main` or the commit has no green CI push run, no commits since the last tag (dispatch), a malformed version, or the tag exists |
 | release | `release` | Creates the tag on the exact commit through the API, then a **draft** GitHub release with the notes | The tag exists on a different commit |
-| build | `build` (x6) | Installs the pinned toolchain and the target, builds with `--locked`, smoke-tests the binary, packages it | Compilation fails, `--version` is not `branch-tally X.Y.Z`, `report` fails on the fixtures, or packaging fails |
-| release | `publish` | Downloads the six archives, fetches `install.sh` and `install.ps1` from the tagged commit, writes `SHA256SUMS`, signs it with minisign (`SHA256SUMS.minisig`) and verifies the signature against the committed public key, attests the archives, installers, `SHA256SUMS` and `SHA256SUMS.minisig` (bundle shipped as `provenance.sigstore.json`), uploads everything to the draft, then publishes it as **latest** | Fewer than six archives, an installer missing at the tagged commit, a missing signing secret, the placeholder public key, a signature that does not verify, or an upload or attestation error |
+| build | `build` (x6) | Checks out the vetted commit (the `sha` input, never the tag name) and checks the tag still resolves to it, installs the pinned toolchain and the target, builds with `--locked`, smoke-tests the binary, packages it | The tag is gone or now resolves to another commit, compilation fails, `--version` is not `branch-tally X.Y.Z`, `report` fails on the fixtures, or packaging fails |
+| release | `publish` | **Waits for approval in the `release` environment**, then downloads the six archives, fetches `install.sh` and `install.ps1` from the tagged commit, writes `SHA256SUMS`, signs it with minisign (`SHA256SUMS.minisig`) and verifies the signature against the committed public key, attests the archives, installers, `SHA256SUMS` and `SHA256SUMS.minisig` (bundle shipped as `provenance.sigstore.json`), uploads everything to the draft, then publishes it as **latest** | Fewer than six archives, an installer missing at the tagged commit, a missing signing secret, the placeholder public key, a signature that does not verify, an upload or attestation error, or the approval is rejected or times out |
 | install-check | `resolve`, `check` (x6), `signature` | After a successful `Release` run, resolves the released tag and runs the real one-liners on a clean runner of each target, including with `--require-attestation` through `gh` and through `cosign`; `signature` verifies `SHA256SUMS.minisig` with minisign ([Installing](#installing)) | The installed binary's `--version` is not the released tag, the default directory was not used, the latest release has no installer, a just-published release lacks `SHA256SUMS`, `SHA256SUMS.minisig` or `provenance.sigstore.json`, provenance does not verify by either route, or the signature does not verify against `.github/minisign.pub` at the tag with trusted comment `branch-tally <tag> SHA256SUMS` |
 
 The order is deliberate. The tag exists before the build, so a failed build leaves a draft release
@@ -90,11 +96,82 @@ check of a tag from before signing (no `SHA256SUMS.minisig` or `provenance.sigst
 them with a notice, while a release the `Release` run just published without those assets is an
 error.
 
+### Approving a release
+
+The `publish` job declares `environment: release`. When a run reaches it, GitHub pauses it and
+notifies the required reviewer (the maintainer). Until it is approved nothing is signed, uploaded
+or published, and the `MINISIGN_*` secrets are not read. To approve:
+
+open the run (Actions, then `Release`), choose **Review deployments**, tick `release`, and
+**Approve and deploy**.
+
+Rejecting the deployment fails the job. A run left unreviewed fails after 30 days.
+
+- **Self-review is allowed** (`prevent_self_review` is false), because the maintainer is the only
+  admin and the only reviewer. The gate is a deliberate second decision, taken after seeing which
+  commit and version are about to ship, not a second person.
+- **Admins can't bypass the environment** (`can_admins_bypass` is false), and deployments are
+  limited to `main`.
+- **The tag exists before approval**, because the build needs it. A rejected or abandoned release
+  leaves its tag (which the tag ruleset now stops anyone deleting) and a draft. Delete the draft by
+  hand; the next release bumps from that tag. To remove the tag too, disable the `release-tags`
+  ruleset first and re-enable it afterwards.
+- **A waiting run holds the release concurrency group**, so later releases queue behind it until
+  it is approved or rejected. That is intended: approve or reject promptly.
+- **Re-running `publish` after it published** fails at the upload, because a published release is
+  immutable. That is the point. `--clobber` on the upload exists only so a re-run after a *partly
+  failed* upload can replace assets on the still-draft release.
+
+### Repository settings
+
+The settings the gate depends on live in the repository's settings, not in git, so
+`scripts/repo_settings.py` records and applies them. It uses the `gh` CLI, so it needs `gh` logged
+in as a repository admin, and it takes the repository from `gh repo view`.
+
+```bash
+just repo-settings --check   # read-only: GETs the live settings, lists every drift, exits 1 if any
+just repo-settings           # applies what differs, then re-checks. Changes the live repository
+```
+
+It is idempotent: apply only calls `PUT`/`POST`/`DELETE` for a setting that differs, so a rerun
+changes nothing, and an existing ruleset of the same name is updated, not duplicated. It sets:
+
+| Setting | Value |
+| ------- | ----- |
+| Immutable releases | on |
+| Ruleset `release-tags` | target `tag`, `refs/tags/v*`, rules `update` and `deletion`, no bypass actors. Creation stays allowed, because `release.yml` creates tags with `GITHUB_TOKEN` |
+| Environment `release` | required reviewer `IAmSkweetis` (`--reviewer` to change), self-review allowed, no admin bypass, deployments from `main` only |
+| Actions permissions | `selected` (GitHub-owned actions, plus an explicit list of the non-GitHub ones), SHA pinning required |
+| Fork pull requests | approval required from all outside contributors |
+
+The allowed non-GitHub actions are `PATTERNS_ALLOWED` in the script (`astral-sh/setup-uv`,
+`dorny/paths-filter`, `sigstore/cosign-installer`, `taiki-e/install-action`). A test fails when a
+workflow uses an action that is not on it, so a new action means adding it there and re-running the
+script before the workflow merges, or the run is refused. It is a script and not a workflow because
+it needs admin rights that no workflow token has, and an agent never runs it: the maintainer reads
+it, runs it, then runs `--check` to confirm.
+
+### Keeping the maintainer's credentials safe (guidance, not enforced)
+
+The approval gate is only as strong as the account that can approve. Nothing below is enforced.
+
+- Keep long-lived, repository-scoped tokens off machines where agents run. A token such as the one
+  `gh` stores on a development machine could take a change from commit to shipped binary if the
+  gate were not there, and could still change repository settings.
+- Prefer fine-grained personal access tokens, scoped to one repository with the fewest permissions
+  and a short expiry, over classic tokens.
+- Protect the account with hardware-backed two-factor authentication (a security key or passkey).
+- The `MINISIGN_SECRET_KEY` and `MINISIGN_PASSWORD` secrets can be moved from repository secrets to
+  `release` **environment** secrets, so only the approved `publish` job can read them. The script
+  can't do this: a secret's value can't be read back. Add them under Settings, Environments,
+  `release`, then delete the repository-level copies.
+
 ### Superseded runs
 
 Releases run one at a time (`concurrency: group: release`, never cancelling). While one runs, a
 newer CI-passed commit can queue behind it, and a still-newer one replaces the queued run. That is
-fine: the next release includes the replaced commit. When a run starts and its commit is already
+fine: the next release includes the replaced commit. (A run waiting for approval counts as
+running.) When a run starts and its commit is already
 contained in the latest `v*` tag, it exits with a notice instead of failing, since a newer run
 released past it.
 
@@ -430,8 +507,9 @@ gh attestation verify SHA256SUMS \
 The first command's output includes `Trusted comment: branch-tally <tag> SHA256SUMS`: check the tag
 is the one you downloaded. The checksum then ties each archive to the signed file. The attestation
 independently proves the archive was built by this repository's `release.yml` from the tagged
-commit. F-05 (#97, no approval gate and mutable tags) is separate: a signature made by a
-compromised pipeline still verifies.
+commit. A signature made by a compromised pipeline still verifies, so F-05 (#97) is addressed
+separately: publishing needs approval, and releases and tags are immutable once published
+([Approving a release](#approving-a-release)).
 
 ## Related pages
 
