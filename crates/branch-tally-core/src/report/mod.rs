@@ -66,6 +66,31 @@ pub struct LedgerReport {
     pub full_set: FullSetCounts,
     /// Live read stats when `live_included`.
     pub live_read_stats: Option<ReadStats>,
+    /// Whether live records could be matched against the ledger's redacted lines.
+    pub live_redaction: LiveRedactionMatch,
+}
+
+/// Whether live transcripts could be matched against a redacted ledger (decision 0005).
+///
+/// Anything other than [`NotNeeded`](Self::NotNeeded) or [`Matched`](Self::Matched) means some
+/// live calls could not be recognised in their redacted lines, so they may be **counted twice**
+/// (the total may be an overcount, not a floor) and the repository-wide counts may be inflated.
+/// The report must say so (Governance II).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveRedactionMatch {
+    /// No live side, or the ledger holds no redacted lines.
+    NotNeeded,
+    /// The local salt matches every redacted line's fingerprint.
+    Matched,
+    /// The ledger has redacted lines and there is no `.tally/salt` here.
+    NoSalt,
+    /// `.tally/salt` exists but could not be read as a salt.
+    SaltUnreadable,
+    /// The local salt's fingerprint is on none of the redacted lines.
+    FingerprintMismatch,
+    /// The salt matches some redacted lines; others carry a different fingerprint and cannot be
+    /// matched.
+    PartiallyMatched,
 }
 
 /// What [`record`] did.
@@ -579,6 +604,127 @@ pub fn run(
     Ok(report)
 }
 
+/// A ledger-only selection: the repository-wide unattributed counts are unknown, not zero.
+fn ledger_only_picked(ledger_records: Vec<crate::model::SelectedRecord>) -> Picked {
+    let attributed: Vec<_> = ledger_records
+        .iter()
+        .map(|r| r.attributed.clone())
+        .collect();
+    let ambiguous = crate::summary::count_ambiguous(&attributed, &ledger_records);
+    Picked {
+        attributed,
+        selected: ledger_records,
+        unattributed: (0, 0),
+        unstamped: crate::model::Unstamped::default(),
+        ambiguous,
+        work_rule: None,
+    }
+}
+
+/// The live selected records, with each one a redacted ledger line holds replaced by its hashed
+/// form so the union sees one call. A call is matched by its raw id when an unredacted line holds
+/// it, else by its hashed id when a redacted line does; one held in neither form is unchanged.
+fn match_live_selected(
+    redactor: Option<&crate::ledger::KeyedRedact>,
+    ledger: &crate::ledger::Ledger,
+    live: Vec<crate::model::SelectedRecord>,
+    main: &Path,
+) -> Vec<crate::model::SelectedRecord> {
+    let Some(redactor) = redactor else {
+        return live;
+    };
+    let held: std::collections::HashSet<_> = ledger
+        .entries()
+        .iter()
+        .map(|e| e.request_id.clone())
+        .collect();
+    live.into_iter()
+        .map(|rec| {
+            let id = &rec.attributed.record.request_id;
+            if !held.contains(id) && held.contains(&redactor.salt().request_id(id)) {
+                redactor.redact_selected(rec, Some(main))
+            } else {
+                rec
+            }
+        })
+        .collect()
+}
+
+/// The repository-wide attributed set: every live call, plus the ledger entries live no longer
+/// holds. With a redactor, a ledger entry is the same call as its live twin under the hashed id,
+/// and a live call in a session the report holds only in hashed form is compared in hashed form,
+/// so the ambiguity count does not miss it. A session held raw keeps its raw form.
+fn full_attributed_set(
+    redactor: Option<&crate::ledger::KeyedRedact>,
+    live: Vec<crate::model::AttributedRecord>,
+    records: &[crate::model::SelectedRecord],
+    main: &Path,
+) -> Vec<crate::model::AttributedRecord> {
+    let mut live_ids: std::collections::HashSet<_> =
+        live.iter().map(|a| a.record.request_id.clone()).collect();
+    let mut all = live;
+    if let Some(redactor) = redactor {
+        live_ids.extend(
+            all.iter()
+                .map(|a| redactor.salt().request_id(&a.record.request_id)),
+        );
+        let sessions: std::collections::HashSet<_> = records
+            .iter()
+            .map(|r| r.attributed.record.session_id.clone())
+            .collect();
+        for a in &mut all {
+            let raw = &a.record.session_id;
+            if !sessions.contains(raw) && sessions.contains(&redactor.salt().session_id(raw)) {
+                let wrapped = crate::model::SelectedRecord {
+                    attributed: a.clone(),
+                    kept_by: crate::model::Selection::Exact,
+                };
+                *a = redactor.redact_selected(wrapped, Some(main)).attributed;
+            }
+        }
+    }
+    all.extend(
+        records
+            .iter()
+            .filter(|r| !live_ids.contains(&r.attributed.record.request_id))
+            .map(|r| r.attributed.clone()),
+    );
+    all
+}
+
+/// The redactor to match live calls against redacted ledger lines, and how well it matches.
+///
+/// Never guesses: without a readable salt whose fingerprint is on a redacted line, there is no
+/// redactor and the condition is reported. Names are not hashed here, since the union keys on
+/// request ids alone.
+fn live_redactor(
+    main_checkout: &Path,
+    stats: &crate::ledger::ReadStats,
+) -> (Option<crate::ledger::KeyedRedact>, LiveRedactionMatch) {
+    use crate::ledger::{KeyedRedact, Salt, TallyDir};
+    if stats.redacted_lines == 0 {
+        return (None, LiveRedactionMatch::NotNeeded);
+    }
+    let salt = match TallyDir::open(main_checkout).and_then(|t| match t {
+        Some(t) => Salt::load(&t),
+        None => Ok(None),
+    }) {
+        Ok(Some(salt)) => salt,
+        Ok(None) => return (None, LiveRedactionMatch::NoSalt),
+        Err(_) => return (None, LiveRedactionMatch::SaltUnreadable),
+    };
+    let fingerprint = salt.fingerprint();
+    if !stats.redaction_fingerprints.contains(&fingerprint) {
+        return (None, LiveRedactionMatch::FingerprintMismatch);
+    }
+    let matching = if stats.redaction_fingerprints.len() > 1 {
+        LiveRedactionMatch::PartiallyMatched
+    } else {
+        LiveRedactionMatch::Matched
+    };
+    (Some(KeyedRedact::new(salt, false)), matching)
+}
+
 /// Selects `branch`'s records exactly as [`run`] would, then appends the ones the ledger at
 /// `ledger_path` does not already hold, through `redact`, stamped by `clock`. Idempotent.
 ///
@@ -787,6 +933,7 @@ pub fn run_from_ledger_at(
         live_included: source.is_some(),
         full_set: FullSetCounts::Unavailable,
         live_read_stats: None,
+        live_redaction: LiveRedactionMatch::NotNeeded,
     };
     let mut unavailable = None;
     let mut capture_stats = crate::ledger::CaptureReadStats::default();
@@ -805,21 +952,27 @@ pub fn run_from_ledger_at(
         );
         unavailable = live.unavailable;
         capture_stats = live.captures.stats().clone();
+        // Against redacted lines, live calls are matched in hashed form (decision 0005).
+        let (redactor, matching) = live_redactor(&main_checkout, &read.stats().clone());
+        info.live_redaction = matching;
+        let live_selected = match_live_selected(
+            redactor.as_ref(),
+            &ledger,
+            live_sel.selected,
+            &main_checkout,
+        );
         // The ledger's copy wins on overlap.
-        let union = crate::ledger::union(&ledger, &live_sel.selected, Some(&main_checkout));
+        let union = crate::ledger::union(&ledger, &live_selected, Some(&main_checkout));
         let records = union.records;
         info.ledger_only = union.ledger_only;
         info.live_only = union.live_only;
         info.in_both = union.in_both;
         // Repository-wide counts: the live full set, plus ledger entries live no longer holds.
-        let mut all = live_sel.attributed;
-        let live_ids: std::collections::HashSet<_> =
-            all.iter().map(|a| a.record.request_id.clone()).collect();
-        all.extend(
-            records
-                .iter()
-                .filter(|r| !live_ids.contains(&r.attributed.record.request_id))
-                .map(|r| r.attributed.clone()),
+        let all = full_attributed_set(
+            redactor.as_ref(),
+            live_sel.attributed,
+            &records,
+            &main_checkout,
         );
         info.full_set = FullSetCounts::FromLive;
         info.live_read_stats = Some(live.stats);
@@ -834,20 +987,7 @@ pub fn run_from_ledger_at(
         };
         (sel, live.stats)
     } else {
-        let attributed: Vec<_> = ledger_records
-            .iter()
-            .map(|r| r.attributed.clone())
-            .collect();
-        let ambiguous = crate::summary::count_ambiguous(&attributed, &ledger_records);
-        let sel = Picked {
-            attributed,
-            selected: ledger_records,
-            unattributed: (0, 0),
-            unstamped: crate::model::Unstamped::default(),
-            ambiguous,
-            work_rule: None,
-        };
-        (sel, ReadStats::default())
+        (ledger_only_picked(ledger_records), ReadStats::default())
     };
     if sel.selected.is_empty() {
         return Err(ReportError::NoRecords { branch, read_stats });
