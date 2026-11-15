@@ -143,7 +143,8 @@ pub(crate) struct UpdateArgs {
     #[arg(long, value_name = "vX.Y.Z")]
     pub(crate) version: Option<String>,
 
-    /// Do not ask for confirmation.
+    /// Do not ask for confirmation. Not honoured when `BRANCH_TALLY_INSTALL_BASE_URL` names
+    /// a non-default release source: that always asks, and refuses without a terminal.
     #[arg(long)]
     pub(crate) yes: bool,
 
