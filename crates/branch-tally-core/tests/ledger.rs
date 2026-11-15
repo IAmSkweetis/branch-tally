@@ -960,5 +960,26 @@ mod keyed_redaction {
             now: &now,
         });
         assert!(report.is_clean(), "{:?}", report.violations);
+
+        // The same call recorded again later has the same hashed key as the base's line, so
+        // check sees a duplicate key. That only holds while the hash is deterministic.
+        let extra = dir.path().join("x.jsonl");
+        append_to(&extra, &[call("a", 1)], &r, "2026-03-03T00:00:00Z");
+        let mut head_bytes = std::fs::read(&head).unwrap();
+        head_bytes.extend(std::fs::read(&extra).unwrap());
+        let report = check(&CheckInput {
+            base_ledger: Some(&base_bytes),
+            head_ledger: Some(&head_bytes),
+            base_captures: None,
+            head_captures: None,
+            head_branch: "feat/x",
+            base_branch: "main",
+            now: &now,
+        });
+        assert_eq!(report.violations.len(), 1, "{:?}", report.violations);
+        assert_eq!(
+            report.violations[0].rule,
+            branch_tally_core::ledger::Rule::DuplicateKey
+        );
     }
 }
