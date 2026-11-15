@@ -25,6 +25,11 @@ toml = { version = "1.2.1", default-features = false, features = ["std", "parse"
 # bundled webpki roots: no OpenSSL, no system trust store, same behaviour on all six targets.
 # gzip, cookies, json, charset and the proxy extras stay off (we deserialize with serde_json).
 ureq = { version = "3.5.1", default-features = false, features = ["rustls"] }
+# Dev-only (issue #98): the loopback TLS server the `prices update` tests run against, so the
+# shipped binary can stay https-only with no trust hook. rustls is already in the lockfile as ureq's
+# TLS stack, and `ring`, `std` and `tls12` are the features ureq turns on, so this adds no crate and
+# changes nothing the release binary links. Only crates that list it under [dev-dependencies] use it.
+rustls = { version = "0.23.46", default-features = false, features = ["std", "ring", "tls12"] }
 # issue #7: the `--work-branch <regex>` flag (binary crate only; core takes a predicate). regex-lite
 # is rust-lang's zero-dependency regex engine by the `regex` maintainers, MIT OR Apache-2.0, built
 # for small binaries (no Unicode tables, no aho-corasick/memchr/regex-automata). Branch names are
