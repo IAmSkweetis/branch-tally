@@ -949,8 +949,8 @@ release source: https://mirror.example/releases (from BRANCH_TALLY_INSTALL_BASE_
 
 Control characters and Unicode bidirectional-text controls in the URL are replaced with `�`
 (U+FFFD) in that line, so the value can't send escape sequences to your terminal or disguise
-itself. A `user:password@` in the URL is left out of that line, so a credential in the mirror URL
-is never printed.
+itself. A `user:password@` in the URL is left out of that line. The rest of the URL, including its
+path and query, is printed as written, so don't put a token there if stderr is logged.
 
 A mirror also changes confirmation. `update` asks `Update branch-tally vA -> vB? [y/N]` even when
 `--yes` is given, so a release source that comes from the environment is always confirmed by a
