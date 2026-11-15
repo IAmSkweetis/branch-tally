@@ -308,8 +308,10 @@ redact = false
 # names (false).
 redact-names = true
 
-# `record` redacts identifiers in the ledger it writes (session ids, branch names, paths): true or
-# false. Turning it off writes them in the clear.
+# `record` hashes request, session and agent ids, subagent ids and worktree names, plus
+# worktree-agent-<id> branch names, in the committed ledger, under a per-repository salt: true or
+# false. Other branch names stay readable and the ledger never holds paths. Off writes ids in the
+# clear.
 ledger-redact = true
 
 # With ledger-redact = true: also hash agent and skill names (true), or keep them readable (false).
