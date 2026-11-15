@@ -504,9 +504,13 @@ review, not that review's own round. The PR body says so beneath the table (`Rec
 review: usage from later rounds is not included, so this is a floor.`), so the number isn't read
 as complete. The skill also shows how to tell the reviewer's real state from the `skipping` check.
 
-Body edits don't cancel checks: `tally-check` doesn't run on `edited`, and `pr-checks` runs an
-`edited` event in its own group, where only a title change runs `pr-title` (a base-branch change
-runs the rest). Both ledger files merge with `merge=union` (`.gitattributes`).
+Body edits don't cancel checks: `tally-check` doesn't run on `edited`, and `pr-title` is its own
+workflow (`pr-title.yml`) that runs on `edited` with no cancelling concurrency, so a body edit
+never cancels the push's run and the title is re-checked on every edit. `pr-checks` doesn't run
+on `edited` at all, and no job is skipped by an `if`: a skipped required job counts as passing, so
+a newer skipped run could mask an earlier failure. After retargeting a PR to another base, push or
+re-run the checks, because no edit re-checks `branch-name`, `commit-messages` or
+`dependency-review`. Both ledger files merge with `merge=union` (`.gitattributes`).
 `just token-report --pr` still works and reads the live transcripts directly. The
 [ledger chapter](../manual/src/ledger.md) describes the files.
 

@@ -6,44 +6,26 @@ name: PR checks
 # are exempt from the branch rule because the bot names them; its commits and titles still pass,
 # through the prefixes set in .github/dependabot.yml.
 
-# `edited` fires for a title, a body or a base-branch change, and the token report rewrites the body.
-# A body-only edit must not cancel the run for the push before it, and the workflow-level
-# concurrency group cancels before any job-level `if` is evaluated. So an `edited` run gets its own
-# group (unique per run, never cancelling and never cancelled), and only pushes share the per-PR
-# group that cancels. The jobs then skip unless what they check changed: pr-title on a title
-# edit, the rest on a base-branch change. A skipped required job reports as passed, and the
-# checks for the head SHA are already there from the push.
+# `pr-title` lives in its own workflow (pr-title.yml) because it must re-run when the title is
+# edited, and a body edit (the token report rewrites it) must not cancel this workflow's run for the
+# push. The checks below read only the branch and its commits, so they run on pushes, not edits.
+# After retargeting a PR to another base, push or re-run them: no event re-checks them for you.
+# Every job always runs for real, because a skipped required job counts as passing and a newer
+# skipped run could mask an earlier failure.
 
 on:
   pull_request:
-    types: [opened, edited, synchronize, reopened]
+    types: [opened, synchronize, reopened]
 
 permissions: {}
 
 concurrency:
-  group: pr-checks-${{ github.event.pull_request.number }}${{ github.event.action == 'edited' && format('-edited-{0}', github.run_id) || '' }}
-  cancel-in-progress: ${{ github.event.action != 'edited' }}
+  group: pr-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
-  pr-title:
-    name: pr-title
-    if: github.event.action != 'edited' || github.event.changes.title
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: PR title is a Conventional Commit
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: sh scripts/check-commit-subject.sh "$PR_TITLE"
-
   branch-name:
     name: branch-name
-    if: github.event.action != 'edited' || github.event.changes.base
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -59,7 +41,6 @@ jobs:
 
   commit-messages:
     name: commit-messages
-    if: github.event.action != 'edited' || github.event.changes.base
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -89,7 +70,6 @@ jobs:
 
   dependency-review:
     name: dependency-review
-    if: github.event.action != 'edited' || github.event.changes.base
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
