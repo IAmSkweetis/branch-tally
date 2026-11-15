@@ -105,6 +105,92 @@ pub(crate) enum LedgerCommand {
     /// warning. Violations are listed on stderr (file, line, rule; never line text) and the
     /// exit status is 1.
     Check(LedgerCheckArgs),
+
+    /// Rewrite the ledger's unredacted lines with the keyed hash (the one exception to append-only).
+    ///
+    /// Hashes the session, agent and request ids (and agent and skill names with
+    /// `--ledger-redact-names`) of every line that parses and carries no `redaction` mark, using
+    /// the repository salt (`.tally/salt`, created if missing), so the lines collapse into their
+    /// redacted twins. Already redacted lines and lines that do not parse are left byte for byte
+    /// as they are. Runs even with `ledger-redact = false`, because you asked for it. The ledger
+    /// is replaced only after the rewrite succeeds.
+    Redact(LedgerRedactArgs),
+}
+
+/// The `--ledger-redact` family, shared by `record` and `ledger redact`.
+#[derive(Debug, Args, Default)]
+#[expect(clippy::struct_excessive_bools, reason = "one bool per CLI flag")]
+pub(crate) struct LedgerRedactFlags {
+    /// Hash ids in the ledger with the per-repository salt (the default).
+    #[arg(long, conflicts_with = "no_ledger_redact")]
+    pub(crate) ledger_redact: bool,
+
+    /// Write raw ids to the ledger; undoes `ledger-redact = true` (the default) in the config file.
+    #[arg(long)]
+    pub(crate) no_ledger_redact: bool,
+
+    /// With ledger redaction, also hash agent and skill names.
+    #[arg(long, conflicts_with = "no_ledger_redact_names")]
+    pub(crate) ledger_redact_names: bool,
+
+    /// Keep agent and skill names in the ledger (the default).
+    #[arg(long)]
+    pub(crate) no_ledger_redact_names: bool,
+}
+
+impl LedgerRedactFlags {
+    /// `--ledger-redact` or `--no-ledger-redact`, or `None` when neither was given.
+    pub(crate) fn redact(&self) -> Option<bool> {
+        match (self.ledger_redact, self.no_ledger_redact) {
+            (true, _) => Some(true),
+            (_, true) => Some(false),
+            _ => None,
+        }
+    }
+
+    /// `--ledger-redact-names` or `--no-ledger-redact-names`, or `None` when neither was given.
+    pub(crate) fn names(&self) -> Option<bool> {
+        match (self.ledger_redact_names, self.no_ledger_redact_names) {
+            (true, _) => Some(true),
+            (_, true) => Some(false),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct LedgerRedactArgs {
+    /// Repository path (default: cwd).
+    #[arg(long, default_value = ".", value_name = "PATH")]
+    pub(crate) repo: PathBuf,
+
+    /// The ledger file (default: .tally/ledger.jsonl at the root of the current checkout). The
+    /// salt is still `.tally/salt` in the main checkout.
+    #[arg(long, value_name = "PATH")]
+    pub(crate) ledger: Option<PathBuf>,
+
+    /// Read this config file instead of the default location (it must exist).
+    #[arg(long, value_name = "PATH")]
+    pub(crate) config: Option<PathBuf>,
+
+    /// Hash agent and skill names too.
+    #[arg(long, conflicts_with = "no_ledger_redact_names")]
+    pub(crate) ledger_redact_names: bool,
+
+    /// Keep agent and skill names (the default).
+    #[arg(long)]
+    pub(crate) no_ledger_redact_names: bool,
+}
+
+impl LedgerRedactArgs {
+    pub(crate) fn names_flag(&self) -> Option<bool> {
+        LedgerRedactFlags {
+            ledger_redact_names: self.ledger_redact_names,
+            no_ledger_redact_names: self.no_ledger_redact_names,
+            ..LedgerRedactFlags::default()
+        }
+        .names()
+    }
 }
 
 #[derive(Debug, Args)]
@@ -424,6 +510,9 @@ pub(crate) struct RecordArgs {
     /// The ledger file (default: .tally/ledger.jsonl at the root of the current checkout).
     #[arg(long, value_name = "PATH")]
     pub(crate) ledger: Option<PathBuf>,
+
+    #[command(flatten)]
+    pub(crate) redaction: LedgerRedactFlags,
 }
 
 impl RecordArgs {

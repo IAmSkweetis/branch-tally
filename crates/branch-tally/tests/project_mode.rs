@@ -16,7 +16,7 @@ fn project_row_uses_the_config_mode_like_report_from_ledger() {
     let world = World::scenario("main-then-branch");
     let ledger = world.home.join("scratch").join("ledger.jsonl");
     let ledger = ledger.to_str().unwrap();
-    let out = world.run(&["record", BRANCH, "--ledger", ledger]);
+    let out = world.run(&["record", BRANCH, "--no-ledger-redact", "--ledger", ledger]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     let config = world.home.join("scratch").join("strict.toml");
     fs::write(&config, "mode = \"strict\"\n").unwrap();

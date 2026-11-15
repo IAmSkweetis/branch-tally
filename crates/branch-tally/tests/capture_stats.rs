@@ -64,7 +64,13 @@ fn record_notes_bad_capture_lines() {
     let world = World::scenario("main-then-branch");
     seed_captures(&world, &bad_body());
     let ledger = world.home.join("scratch").join("ledger.jsonl");
-    let out = world.run(&["record", BRANCH, "--ledger", ledger.to_str().unwrap()]);
+    let out = world.run(&[
+        "record",
+        BRANCH,
+        "--no-ledger-redact",
+        "--ledger",
+        ledger.to_str().unwrap(),
+    ]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     check(&stderr(&out));
 }
@@ -74,7 +80,7 @@ fn from_ledger_with_live_notes_bad_capture_lines() {
     let world = World::scenario("main-then-branch");
     let ledger = world.home.join("scratch").join("ledger.jsonl");
     let path = ledger.to_str().unwrap();
-    let rec = world.run(&["record", BRANCH, "--ledger", path]);
+    let rec = world.run(&["record", BRANCH, "--no-ledger-redact", "--ledger", path]);
     assert_eq!(rec.status.code(), Some(0), "{}", stderr(&rec));
     seed_captures(&world, &bad_body());
     let out = world.run(&[

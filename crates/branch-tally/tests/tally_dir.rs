@@ -186,7 +186,7 @@ fn an_explicit_ledger_symlink_still_works() {
     let alias = world.home.join("alias-ledger.jsonl");
     link(&real, &alias);
     let path = alias.to_str().unwrap();
-    let rec = world.run(&["record", BRANCH, "--ledger", path]);
+    let rec = world.run(&["record", BRANCH, "--no-ledger-redact", "--ledger", path]);
     assert_eq!(rec.status.code(), Some(0), "{}", stderr(&rec));
     assert_eq!(fs::read_to_string(&real).unwrap().lines().count(), 5);
     let rep = world.run(&["report", BRANCH, "--from-ledger", "--ledger", path]);
