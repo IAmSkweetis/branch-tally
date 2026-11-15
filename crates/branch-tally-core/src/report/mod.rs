@@ -163,6 +163,17 @@ pub enum ReportError {
     /// salt, and there is none.
     #[error("ledger redaction needs a .tally/ directory in the main checkout to hold its salt")]
     NoSaltHome,
+    /// A ledger-only report of a `worktree-agent-<id>` branch whose ledger holds redacted lines,
+    /// with no salt matching them: the hashed spelling can't be computed, so those lines can't be
+    /// selected. Refused rather than reported short (Governance II).
+    #[error(
+        "can't select {branch} from a redacted ledger without its salt: agent branches are stored \
+         hashed. Restore the matching .tally/salt"
+    )]
+    AgentBranchNeedsSalt {
+        /// The requested agent branch.
+        branch: String,
+    },
     /// A ledger-only report was asked for and there is no ledger file.
     #[error("no ledger at {}", .path.display())]
     LedgerMissing {
@@ -876,35 +887,58 @@ fn live_redactor(
     if stats.redacted_lines == 0 {
         return (None, LiveRedactionMatch::NotNeeded);
     }
-    // The first `.tally/` holding a salt wins: the ledger's own, then the main checkout's. Only
-    // loaded, never created.
-    let mut found = None;
+    // The first `.tally/` whose salt is on the ledger's lines wins: the ledger's own, then the
+    // main checkout's. An explicit ledger is hashed with the main checkout's salt even when its own
+    // `.tally/` holds another, so the fingerprint, not the order, decides. Only loaded, never
+    // created.
+    let (mut found, mut unreadable, mut mismatched) = (None, false, false);
     for home in homes {
         match TallyDir::open(home).and_then(|t| match t {
             Some(t) => Salt::load(&t),
             None => Ok(None),
         }) {
-            Ok(Some(salt)) => {
+            Ok(Some(salt)) if stats.redaction_fingerprints.contains(&salt.fingerprint()) => {
                 found = Some(salt);
                 break;
             }
+            Ok(Some(_)) => mismatched = true,
             Ok(None) => {}
-            Err(_) => return (None, LiveRedactionMatch::SaltUnreadable),
+            Err(_) => unreadable = true,
         }
     }
     let Some(salt) = found else {
-        return (None, LiveRedactionMatch::NoSalt);
+        let why = if unreadable {
+            LiveRedactionMatch::SaltUnreadable
+        } else if mismatched {
+            LiveRedactionMatch::FingerprintMismatch
+        } else {
+            LiveRedactionMatch::NoSalt
+        };
+        return (None, why);
     };
-    let fingerprint = salt.fingerprint();
-    if !stats.redaction_fingerprints.contains(&fingerprint) {
-        return (None, LiveRedactionMatch::FingerprintMismatch);
-    }
     let matching = if stats.redaction_fingerprints.len() > 1 {
         LiveRedactionMatch::PartiallyMatched
     } else {
         LiveRedactionMatch::Matched
     };
     (Some(KeyedRedact::new(salt, false)), matching)
+}
+
+/// Without the salt an agent branch's hashed spelling is unknown, so its redacted lines can't be
+/// selected. With live transcripts the gap is noted as a live-match failure; ledger-only it would
+/// be a short total presented as complete, so it is refused (Governance II).
+fn refuse_unselectable_agent_branch(
+    branch: &str,
+    live: bool,
+    salted: bool,
+    stats: &crate::ledger::ReadStats,
+) -> Result<(), ReportError> {
+    if !live && !salted && stats.redacted_lines > 0 && crate::ledger::is_agent_branch(branch) {
+        return Err(ReportError::AgentBranchNeedsSalt {
+            branch: branch.to_owned(),
+        });
+    }
+    Ok(())
 }
 
 /// Selects `branch`'s records exactly as [`run`] would, then appends the ones the ledger at
@@ -1166,6 +1200,7 @@ pub fn run_from_ledger_at(
     };
     let homes = salt_homes(ledger_root.as_deref(), &ledger_path, &main_checkout);
     let (redactor, matching) = live_redactor(&homes, read.stats());
+    refuse_unselectable_agent_branch(&branch, source.is_some(), redactor.is_some(), read.stats())?;
     // Exactly the entries `record` wrote for this branch; the ledger keys on (request, branch).
     let ledger = BranchLedger::new(&read, &branch, redactor.as_ref());
     let ledger_records = ledger.records(&main_checkout);

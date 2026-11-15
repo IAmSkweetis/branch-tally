@@ -201,6 +201,9 @@ then says so in every output, as well as in a note on stderr:
 - The SVG adds the footer line `total may count some calls twice (overcount, not a floor)`.
 
 None of these makes a figure a floor: `totalCostIsFloor` and the chart's "at least" are unchanged.
+When the report is also a floor, for example because a model is unpriced, the Markdown statement
+ends by saying its "at least" figures are not a guaranteed lower bound, instead of "This is an
+overcount, not a floor".
 
 ## The cost-over-time chart
 

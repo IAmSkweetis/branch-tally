@@ -201,10 +201,10 @@ fn keyed_plan(
     input: &Input<'_>,
     between: &dyn Fn(),
 ) -> Result<Plan, LedgerError> {
-    let held = match Salt::load(tally)? {
+    let held = match Salt::load_settled(tally)? {
         Some(salt) => Some(salt),
         None => match main_tally {
-            Some(m) => Salt::load(m)?,
+            Some(m) => Salt::load_settled(m)?,
             None => None,
         },
     };

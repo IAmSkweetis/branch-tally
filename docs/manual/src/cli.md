@@ -201,7 +201,8 @@ and `<!-- token-report:end -->` markers. It has, in order:
 5. a bold "Total may count some calls twice" statement, when a report from the ledger may count a
    call twice: the ledger mixes redacted and unredacted lines or several salts, or live calls
    could not be matched to its redacted lines. It names the cause and says "This is an overcount,
-   not a floor". See [Mixed ledgers](ledger-redaction.md#mixed-ledgers);
+   not a floor", or, when the report is also a floor, that its "at least" figures are not a
+   guaranteed lower bound. See [Mixed ledgers](ledger-redaction.md#mixed-ledgers);
 6. a footnote: the branch and mode, session and subagent counts, the heuristics used, the
    work-branch rule in timeline mode, `totals overflowed, unreliable` when they did, whether
    identifiers were redacted, the price table's date and source, unpriced models, and a reminder

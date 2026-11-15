@@ -28,6 +28,7 @@ mod tally_dir;
 use std::path::{Path, PathBuf};
 
 pub use keyed_append::{append_keyed_default, append_keyed_explicit};
+pub(crate) use redaction::is_agent_branch;
 pub use redaction::{
     KeyedRedact, RedactOutcome, SALT_FILE, Salt, redact_ledger, redact_ledger_default,
 };

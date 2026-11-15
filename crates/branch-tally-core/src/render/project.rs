@@ -122,7 +122,7 @@ pub fn project_markdown(report: &ProjectReport) -> String {
         );
     }
     if let Some(risk) = &report.double_count {
-        o.push_str(&double_count_text(risk));
+        o.push_str(&double_count_text(risk, report.is_floor()));
         o.push_str("\n\n");
     }
     o.push_str(

@@ -118,6 +118,24 @@ impl Salt {
             })
     }
 
+    /// As [`Salt::load`], but re-reads a file that reads as malformed for a moment: the window in
+    /// which a racing creator has made the file but not yet written its bytes. Never creates it.
+    ///
+    /// # Errors
+    /// As [`Salt::load`], once the retry budget is spent.
+    pub(crate) fn load_settled(tally: &TallyDir) -> Result<Option<Self>, LedgerError> {
+        let mut retries = 0_u32;
+        loop {
+            match Self::load(tally) {
+                Err(LedgerError::MalformedSalt { .. }) if retries < SALT_READ_RETRIES => {
+                    retries += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(u64::from(retries)));
+                }
+                other => return other,
+            }
+        }
+    }
+
     /// Reads `.tally/salt`, creating it exclusively when missing. When two runs race, exactly
     /// one creates it and the other reads the winner's. A malformed file is an error and is
     /// never replaced.
@@ -334,6 +352,14 @@ impl Redact for KeyedRedact {
 
 /// The branch Claude Code gives an agent's worktree, followed by the agent id.
 const AGENT_BRANCH_PREFIX: &str = "worktree-agent-";
+
+/// Whether `branch` is an agent worktree's branch, `worktree-agent-<id>`: the one branch name a
+/// redacted line stores hashed.
+pub(crate) fn is_agent_branch(branch: &str) -> bool {
+    branch
+        .strip_prefix(AGENT_BRANCH_PREFIX)
+        .is_some_and(|id| !id.is_empty())
+}
 
 /// Whether `text` is what [`Salt::hash`] writes: 32 lowercase hex characters.
 fn is_hash(text: &str) -> bool {

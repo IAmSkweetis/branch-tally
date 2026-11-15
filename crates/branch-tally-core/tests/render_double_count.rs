@@ -56,6 +56,22 @@ fn mixed_ledger_is_stated_with_counts_and_the_fix() {
 }
 
 #[test]
+fn redact_advice_is_qualified_only_when_lines_sit_under_more_than_one_salt() {
+    const CAVEAT: &str = "can't reconcile lines already hashed under a different salt";
+    let two = md(DoubleCountRisk::new(Some(mixed()), None));
+    assert!(two.contains(CAVEAT), "{two}");
+    let one = md(DoubleCountRisk::new(
+        Some(MixedLedger {
+            distinct_salts: 1,
+            ..mixed()
+        }),
+        None,
+    ));
+    assert!(one.contains("`branch-tally ledger redact`"), "{one}");
+    assert!(!one.contains(CAVEAT), "{one}");
+}
+
+#[test]
 fn live_failures_each_have_their_own_cause() {
     let cases = [
         (LiveMatchFailure::NoSalt, "there is no local salt"),
@@ -188,4 +204,36 @@ fn project_svg_footer_notes_the_overcount_only_when_set() {
     let svg = project_svg(&project(risk));
     assert!(svg.contains("may count some calls twice"), "{svg}");
     assert!(!project_svg(&project(None)).contains("twice"));
+}
+
+const NO_BOUND: &str = "the \"at least\" figures here are not a guaranteed lower bound";
+
+#[test]
+fn a_floor_and_a_double_count_together_claim_no_bound() {
+    let risk = DoubleCountRisk::new(Some(mixed()), None);
+    let mut summary = with_risk(risk);
+    summary.footnote.totals_overflowed = true;
+    let both = markdown(&summary, &fully_priced(), true);
+    assert!(both.contains(NO_BOUND), "{both}");
+    assert!(
+        !both.contains("This is an overcount, not a floor."),
+        "{both}"
+    );
+    // The double count alone is still an overcount.
+    let alone = md(risk);
+    assert!(
+        alone.contains("This is an overcount, not a floor."),
+        "{alone}"
+    );
+    assert!(!alone.contains(NO_BOUND), "{alone}");
+    // The project report, floored by an unpriced model.
+    let mut p = project(risk);
+    p.totals.unpriced_models = vec!["unknown-model".to_owned()];
+    let proj = project_markdown(&p);
+    assert!(proj.contains("at least"), "{proj}");
+    assert!(proj.contains(NO_BOUND), "{proj}");
+    assert!(
+        !proj.contains("This is an overcount, not a floor."),
+        "{proj}"
+    );
 }

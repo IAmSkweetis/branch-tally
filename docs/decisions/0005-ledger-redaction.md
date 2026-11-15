@@ -62,7 +62,10 @@ closed by #94: `capture` and `record` write only where `.tally/` exists (0002's 
   ids would break the promise. Create `.tally/` or pass `--no-ledger-redact`.
 - **Live union.** When `report --from-ledger` unions live transcripts into a redacted ledger, the
   live records pass through the same keyed hash before the union, so one call is never counted
-  twice under two spellings.
+  twice under two spellings. The salt used is the first of the ledger's own `.tally/` and the
+  main checkout's whose fingerprint is on the ledger's lines, so an explicit ledger hashed with the
+  main checkout's salt still matches. Without such a salt, a ledger-only report of a
+  `worktree-agent-<id>` branch is an error rather than a total missing the hashed lines.
 - **Mixing is counted and noted.** A ledger holding unredacted lines and redacted lines, or lines
   redacted under more than one salt fingerprint, is read normally. The report says how many lines
   of each kind it saw, and that a call recorded once in each form may be counted twice

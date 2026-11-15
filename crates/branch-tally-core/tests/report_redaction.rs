@@ -582,3 +582,83 @@ fn keyed_record_to_an_explicit_ledger_needs_the_main_checkouts_tally_dir() {
     assert!(repo.persisted_salt().is_some());
     assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 3);
 }
+
+#[test]
+fn an_explicit_ledger_in_another_tally_dir_matches_the_main_checkouts_salt() {
+    // `record --ledger B/.tally/ledger.jsonl` hashes with the main checkout's salt; B's own
+    // `.tally/` holds a different one. Reporting must find the salt on the lines, not B's.
+    let repo = Repo::new();
+    let other = Repo::new();
+    let src = source(&repo);
+    let ledger = other.ledger();
+    record(
+        &repo.git(),
+        &src,
+        Path::new("/projects"),
+        &repo.root(),
+        Some("feat/x"),
+        &Options::default(),
+        &ledger,
+        RecordRedaction::Keyed { names: false },
+        &FixedClock,
+    )
+    .unwrap();
+    std::fs::write(
+        other.root().join(".tally").join("salt"),
+        format!("{}\n", Salt::from_bytes([7; 32]).to_hex()),
+    )
+    .unwrap();
+    let report = run_from_ledger_at(
+        &repo.git(),
+        Some(&src),
+        Path::new("/projects"),
+        &repo.root(),
+        Some("feat/x"),
+        &Options::default(),
+        &LedgerTarget::Explicit(&ledger),
+        PriceTable::bundled(),
+    )
+    .unwrap();
+    let info = report.ledger.unwrap();
+    assert_eq!(info.live_redaction, LiveRedactionMatch::Matched);
+    assert_eq!(
+        (info.live_only, info.in_both),
+        (0, 3),
+        "a call was counted twice"
+    );
+}
+
+#[test]
+fn a_ledger_only_agent_branch_report_without_the_salt_is_refused_not_short() {
+    let repo = Repo::new();
+    let branch = "worktree-agent-abc123";
+    let src = FakeSource(
+        vec![
+            rec_on(branch, "s1", "req-a", 1),
+            rec_on(branch, "s1", "req-b", 2),
+        ],
+        Vec::new(),
+    );
+    repo.record_on(branch, &src, RecordRedaction::Keyed { names: false });
+    // One raw line too, so a silent miss would still report a (short) total.
+    let raw = FakeSource(vec![src.0[0].clone()], Vec::new());
+    repo.record_on(branch, &raw, RecordRedaction::Off);
+    std::fs::remove_file(repo.root().join(".tally").join("salt")).unwrap();
+    let ledger = repo.ledger();
+    let err = run_from_ledger_at(
+        &repo.git(),
+        None,
+        Path::new("/projects"),
+        &repo.root(),
+        Some(branch),
+        &Options::default(),
+        &LedgerTarget::Explicit(&ledger),
+        PriceTable::bundled(),
+    )
+    .map(|r| r.summary.total.calls)
+    .unwrap_err();
+    assert!(
+        matches!(&err, ReportError::AgentBranchNeedsSalt { branch: b } if b == branch),
+        "{err:?}"
+    );
+}

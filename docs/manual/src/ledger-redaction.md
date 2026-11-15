@@ -52,10 +52,15 @@ build or a hand edit, is repaired by [`ledger redact`](#rewriting-older-lines) a
 [mixed-ledger](#mixed-ledgers) note go by the field alone.
 
 A report asked for an agent branch by its real name, such as `worktree-agent-a1`, hashes the name
-with the local salt and finds the ledger's lines under both forms. Without a readable local salt it
-finds only lines that hold the name as it is. When the ledger holds one call under both spellings,
-it is counted once, and a note on stderr says how many lines that was (see the ledger notes under
-[Report from the ledger](ledger.md#report-from-the-ledger)).
+with the local salt and finds the ledger's lines under both forms. Without a local salt that matches
+the ledger's redacted lines, a report from the ledger alone fails with
+`can't select worktree-agent-… from a redacted ledger without its salt` rather than print a short
+total. With live transcripts it finds only lines that hold the name as it is, and the report notes
+that live calls could not be matched. When the ledger holds the same stored request id under both
+spellings, it is counted once, and a note on stderr says how many lines that was (see the ledger
+notes under [Report from the ledger](ledger.md#report-from-the-ledger)). A raw line and a redacted
+line for the same call have different request ids, so they are not collapsed: see
+[Mixed ledgers](#mixed-ledgers).
 
 Hashing changes no number. Models, token counts and times are kept, and branches are either kept
 or hashed the same way every time, so a report from a redacted ledger has the same totals as one
@@ -232,7 +237,10 @@ note: 1 unparseable line(s) were left as-is and may still hold raw ids
   line `record` writes for the same call, so the two collapse into one in a report.
 - A line that carries a `redaction` field but still holds a raw id, or a raw
   `worktree-agent-<id>` in `branch` or `recorded_for`, is repaired and counted as `restamped`.
-  Hashed ids on such a line are not hashed twice.
+  When its request, session and agent ids are all hashes, only the branch is repaired and the ids
+  are kept. When it mixes hashed and raw ids, every id is hashed, so the ones already hashed
+  change and the line no longer matches other copies of the same call. Such a line comes only
+  from a bug or a hand edit: inspect partially redacted lines before running the command.
 - A raw agent branch on a line stamped with a **different** salt can't be repaired: hashing it with
   the current salt would mix two salts on one line. Those lines are left as they are, and a note on
   stderr counts them.
@@ -292,6 +300,10 @@ When the ledger has no unredacted lines, only lines under more than one salt, th
 **Total may count some calls twice**: the ledger holds 2 unredacted and 2 redacted line(s) under 1 salt(s), so a call recorded in both forms is counted twice; run `branch-tally ledger redact` to collapse them. This is an overcount, not a floor.
 ```
 
+When the ledger has unredacted lines and more than one salt, the advice adds
+", though it can't reconcile lines already hashed under a different salt": `ledger redact` hashes
+with the local salt only and leaves other salts' lines as they are.
+
 When the ledger has no unredacted lines, only lines under several salts, the statement names that
 cause instead and suggests no command:
 
@@ -299,7 +311,16 @@ cause instead and suggests no command:
 **Total may count some calls twice**: the ledger holds 6 redacted line(s) hashed under 2 different salts (for example, two machines each created one), so a call recorded under each is counted twice. This is an overcount, not a floor.
 ```
 
-The JSON report has a top-level `doubleCount` object:
+When the report is also a floor, because a model is unpriced, some calls could not be attributed
+with certainty or a total overflowed, its "at least" figures are no longer a guaranteed lower bound.
+The statement then ends with this sentence instead of "This is an overcount, not a floor.":
+
+```text
+Some figures are also incomplete, so the "at least" figures here are not a guaranteed lower bound: the true total may be higher or lower.
+```
+
+The JSON report has a top-level `doubleCount` object. With `totalCostIsFloor` also `true`, read the
+total the same way: not a bound in either direction.
 
 ```json
 "doubleCount": { "mixedLedger": { "unredactedLines": 2, "redactedLines": 2, "distinctSalts": 1 } },
@@ -313,8 +334,9 @@ chart. See [Project Cost Over Time](project.md#a-total-that-may-count-calls-twic
 
 `report --from-ledger --with-live` hashes this machine's live calls with the local salt before
 combining them with the ledger, so a call in both is counted once. The local salt is the one in the
-ledger's own `.tally/`, or else the main checkout's. When it can't do that, it says why on stderr,
-and the total and the repository-wide counts may count a call twice:
+ledger's own `.tally/` or the main checkout's, whichever matches the ledger's redacted lines. When
+it can't do that, it says why on stderr, and the total and the repository-wide counts may count a
+call twice:
 
 ```text
 note: live calls could not be matched against the redacted ledger lines (<why>); the total and the repository-wide counts may count a call twice
