@@ -108,8 +108,8 @@ pub(crate) enum LedgerCommand {
 
     /// Rewrite the ledger's unredacted lines with the keyed hash (the one exception to append-only).
     ///
-    /// Hashes the session, agent and request ids (and agent and skill names with
-    /// `--ledger-redact-names`) of every line that parses and carries no `redaction` mark, using
+    /// Hashes the session, agent and request ids, worktree names and `worktree-agent-<id>` branch
+    /// names (and agent and skill names with `--ledger-redact-names`) of every line that parses and carries no `redaction` mark, using
     /// the repository salt (`.tally/salt`, created if missing), so the lines collapse into their
     /// redacted twins. Already redacted lines and lines that do not parse are left byte for byte
     /// as they are. Runs even with `ledger-redact = false`, because you asked for it. The ledger

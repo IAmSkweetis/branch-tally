@@ -221,7 +221,7 @@ fn ledger_redact_then_record_keeps_totals_and_notes_nothing() {
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert_eq!(
         stdout(&out),
-        "redacted 3 line(s), 0 already redacted, 0 unparseable left as-is\n"
+        "redacted 3 line(s), 0 restamped, 0 already redacted, 0 unparseable left as-is\n"
     );
     assert!(salt_of(&world).is_file());
     assert_no_raw_ids(&ledger_of(&world));
@@ -251,7 +251,7 @@ fn ledger_redact_is_idempotent_and_honours_an_explicit_ledger() {
     let second = world.run(&["ledger", "redact"]);
     assert_eq!(
         stdout(&second),
-        "redacted 0 line(s), 3 already redacted, 0 unparseable left as-is\n"
+        "redacted 0 line(s), 0 restamped, 3 already redacted, 0 unparseable left as-is\n"
     );
 }
 
@@ -267,7 +267,7 @@ fn ledger_redact_runs_with_ledger_redact_off_and_leaves_unparseable_lines() {
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert_eq!(
         stdout(&out),
-        "redacted 3 line(s), 0 already redacted, 1 unparseable left as-is\n"
+        "redacted 3 line(s), 0 restamped, 0 already redacted, 1 unparseable left as-is\n"
     );
     assert!(
         fs::read_to_string(ledger_of(&world))
@@ -357,4 +357,153 @@ fn live_matching_failures_are_noted_and_a_match_is_silent() {
         assert!(!stderr(&ledger_only).contains(NO_MATCH), "{case}");
         fs::write(&salt, &good).unwrap();
     }
+}
+
+/// A real linked worktree of the world's repository, with its own `.tally/` when asked.
+fn linked_worktree(world: &World, with_tally: bool) -> PathBuf {
+    let wt = world.home.join("linked-wt");
+    let out = std::process::Command::new("git")
+        .args(["worktree", "add", "-q", "-b", "chore/wt"])
+        .arg(&wt)
+        .current_dir(&world.repo)
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+        )
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git worktree add failed");
+    let wt = common::canon(&wt);
+    if with_tally {
+        fs::create_dir(wt.join(".tally")).unwrap();
+    }
+    wt
+}
+
+#[test]
+fn a_worktree_with_its_own_tally_dir_hashes_and_keeps_its_salt_there() {
+    let world = World::scenario(SCENARIO);
+    let wt = linked_worktree(&world, true);
+    let out = world.run_in(&wt, &["record", BRANCH]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let ledger = wt.join(".tally").join("ledger.jsonl");
+    assert!(wt.join(".tally").join("salt").is_file());
+    assert!(!world.repo.join(".tally").exists(), "main was touched");
+    for e in lines(&ledger) {
+        assert!(e["redaction"].is_string(), "raw line written: {e}");
+    }
+    assert_no_raw_ids(&ledger);
+}
+
+#[test]
+fn a_worktree_without_a_salt_copies_the_main_checkouts_salt() {
+    let world = opted_in();
+    record(&world, &[]);
+    let wt = linked_worktree(&world, true);
+    let out = world.run_in(&wt, &["record", BRANCH]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        fs::read_to_string(wt.join(".tally").join("salt")).unwrap(),
+        fs::read_to_string(salt_of(&world)).unwrap()
+    );
+    let main_lines = lines(&ledger_of(&world));
+    let wt_lines = lines(&wt.join(".tally").join("ledger.jsonl"));
+    assert_eq!(main_lines[0]["request_id"], wt_lines[0]["request_id"]);
+}
+
+#[test]
+fn nothing_written_means_no_salt_anywhere() {
+    // Main has `.tally/` but the worktree does not: the default ledger is the worktree's, so
+    // nothing is written and main must not gain a salt.
+    let world = opted_in();
+    let wt = linked_worktree(&world, false);
+    let out = world.run_in(&wt, &["record", BRANCH]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(stdout(&out).starts_with("no .tally/ directory"));
+    assert!(!salt_of(&world).exists());
+    assert!(!wt.join(".tally").exists());
+    let redact = world.run_in(&wt, &["ledger", "redact"]);
+    assert_eq!(redact.status.code(), Some(0), "{}", stderr(&redact));
+    assert!(!salt_of(&world).exists());
+}
+
+#[test]
+fn ledger_redact_in_a_worktree_uses_the_worktrees_salt() {
+    let world = World::scenario(SCENARIO);
+    let wt = linked_worktree(&world, true);
+    let out = world.run_in(&wt, &["record", BRANCH, "--no-ledger-redact"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let out = world.run_in(&wt, &["ledger", "redact"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(wt.join(".tally").join("salt").is_file());
+    assert!(!world.repo.join(".tally").exists());
+    assert_no_raw_ids(&wt.join(".tally").join("ledger.jsonl"));
+}
+
+#[test]
+fn ledger_redact_with_an_explicit_ledger_and_no_tally_dir_has_its_own_text() {
+    let world = World::scenario(SCENARIO);
+    let ledger = world.home.join("scratch").join("ledger.jsonl");
+    let out = world.run(&["ledger", "redact", "--ledger", ledger.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = stderr(&out);
+    assert!(err.contains("ledger redact needs a .tally/"), "{err}");
+    assert!(!err.contains("--no-ledger-redact"), "{err}");
+}
+
+#[test]
+fn ledger_redact_help_names_worktree_names() {
+    let world = World::scenario(SCENARIO);
+    let out = world.run(&["ledger", "redact", "--help"]);
+    let help = stdout(&out);
+    assert!(help.contains("worktree-agent-"), "{help}");
+    assert!(help.contains("worktree names"), "{help}");
+}
+
+#[test]
+fn ledger_redact_warns_about_unparseable_lines_and_names_backfill() {
+    let world = opted_in();
+    record(&world, &[]);
+    let mut text = fs::read_to_string(ledger_of(&world)).unwrap();
+    text.push_str("not json\n");
+    fs::write(ledger_of(&world), text).unwrap();
+    let out = world.run(&["ledger", "redact", "--ledger-redact-names"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let err = stderr(&out);
+    assert!(
+        err.contains("1 unparseable line(s) were left as-is and may still hold raw ids"),
+        "{err}"
+    );
+    assert!(
+        err.contains("already redacted without names are not re-hashed"),
+        "{err}"
+    );
+    let plain = world.run(&["ledger", "redact"]);
+    assert!(
+        !stderr(&plain).contains("already redacted without names"),
+        "{}",
+        stderr(&plain)
+    );
+}
+
+#[test]
+fn config_show_lists_the_ledger_redact_keys_with_their_sources() {
+    let world = World::scenario(SCENARIO);
+    let defaults = stdout(&world.run(&["config", "show"]));
+    assert!(
+        defaults.contains("ledger-redact = true (default)"),
+        "{defaults}"
+    );
+    assert!(
+        defaults.contains("ledger-redact-names = false (default)"),
+        "{defaults}"
+    );
+    world.write_default_config("ledger-redact = false\nledger-redact-names = true\n");
+    let set = stdout(&world.run(&["config", "show"]));
+    assert!(set.contains("ledger-redact = false (config file)"), "{set}");
+    assert!(
+        set.contains("ledger-redact-names = true (config file)"),
+        "{set}"
+    );
 }
