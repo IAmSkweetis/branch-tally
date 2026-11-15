@@ -68,6 +68,10 @@ pub struct LedgerReport {
     pub live_read_stats: Option<ReadStats>,
     /// Whether live records could be matched against the ledger's redacted lines.
     pub live_redaction: LiveRedactionMatch,
+    /// Lines collapsed because one call was held under both spellings of an agent branch (raw and
+    /// hashed) with the same request id: the kept line is the latest `recorded_at`, then the
+    /// smallest serialized line. Counted here so the caller can say so; never hidden.
+    pub collapsed_lines: u64,
 }
 
 /// Whether live transcripts could be matched against a redacted ledger (decision 0005).
@@ -608,9 +612,21 @@ pub fn run(
 /// stored under its hashed name on redacted lines, so the raw name and the hashed name are both
 /// read: a ledger that spells it both ways is the mixed case, counted and noted, not hidden.
 struct BranchLedger {
-    ledgers: Vec<crate::ledger::Ledger>,
+    entries: Vec<crate::ledger::LedgerEntry>,
     /// `(hashed, requested)`: a record's branch, hashed on a redacted line, reads as requested.
     alias: Option<(String, String)>,
+    /// Lines dropped because the same request id was held under both branch spellings.
+    collapsed: u64,
+}
+
+/// Which of two lines for one request id to keep, by the ledger's own conflict rule: the latest
+/// `recorded_at` (a missing one is oldest), then the smallest serialized line.
+fn newer_line(a: &crate::ledger::LedgerEntry, b: &crate::ledger::LedgerEntry) -> bool {
+    let line = |e: &crate::ledger::LedgerEntry| serde_json::to_string(e).unwrap_or_default();
+    match a.recorded_at.cmp(&b.recorded_at) {
+        std::cmp::Ordering::Equal => line(a) < line(b),
+        later => later == std::cmp::Ordering::Greater,
+    }
 }
 
 impl BranchLedger {
@@ -619,23 +635,44 @@ impl BranchLedger {
         branch: &str,
         redactor: Option<&crate::ledger::KeyedRedact>,
     ) -> Self {
-        let mut ledgers = vec![read.for_branch(branch)];
+        let mut halves = vec![read.for_branch(branch)];
         let mut alias = None;
         if let Some(red) = redactor {
             let hashed = red.redact_branch(branch);
             if hashed != branch {
-                ledgers.push(read.for_branch(&hashed));
+                halves.push(read.for_branch(&hashed));
                 alias = Some((hashed, branch.to_owned()));
             }
         }
-        Self { ledgers, alias }
+        // One call under both spellings is one call: keep one line per request id, in first-seen
+        // order, and count the rest.
+        let mut entries: Vec<crate::ledger::LedgerEntry> = Vec::new();
+        let mut at: std::collections::HashMap<crate::model::RequestId, usize> =
+            std::collections::HashMap::new();
+        let mut collapsed = 0;
+        for entry in halves.iter().flat_map(crate::ledger::Ledger::entries) {
+            if let Some(&i) = at.get(&entry.request_id) {
+                collapsed += 1;
+                if newer_line(entry, &entries[i]) {
+                    entries[i] = entry.clone();
+                }
+            } else {
+                at.insert(entry.request_id.clone(), entries.len());
+                entries.push(entry.clone());
+            }
+        }
+        Self {
+            entries,
+            alias,
+            collapsed,
+        }
     }
 
     fn records(&self, main: &Path) -> Vec<crate::model::SelectedRecord> {
         let mut out: Vec<_> = self
-            .ledgers
+            .entries
             .iter()
-            .flat_map(|l| l.to_selected(Some(main)))
+            .map(|e| e.to_selected(Some(main)))
             .collect();
         if let Some((hashed, requested)) = &self.alias {
             for r in &mut out {
@@ -648,16 +685,13 @@ impl BranchLedger {
     }
 
     fn held(&self) -> std::collections::HashSet<crate::model::RequestId> {
-        self.ledgers
-            .iter()
-            .flat_map(|l| l.entries().iter().map(|e| e.request_id.clone()))
-            .collect()
+        self.entries.iter().map(|e| e.request_id.clone()).collect()
     }
 
     fn modes(&self) -> Vec<Mode> {
         [Mode::Strict, Mode::Claim, Mode::Timeline]
             .into_iter()
-            .filter(|m| self.ledgers.iter().any(|l| l.modes().contains(m)))
+            .filter(|m| self.entries.iter().any(|e| e.mode == *m))
             .collect()
     }
 
@@ -1063,6 +1097,7 @@ pub fn run_from_ledger_at(
         live_included: source.is_some(),
         full_set: FullSetCounts::Unavailable,
         live_read_stats: None,
+        collapsed_lines: ledger.collapsed,
         live_redaction: if source.is_some() {
             matching
         } else {
