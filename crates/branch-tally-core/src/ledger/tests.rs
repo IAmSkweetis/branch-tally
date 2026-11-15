@@ -660,3 +660,5 @@ fn an_entry_with_an_agent_id_reads_back_as_a_sidechain_and_one_without_does_not(
     let back = LedgerEntry::from_selected(&main_session, "b", Mode::Claim, None).to_selected(None);
     assert!(!back.attributed.record.is_sidechain);
 }
+
+mod keyed;

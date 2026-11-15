@@ -1,0 +1,353 @@
+//! Keyed-hash redaction of the committed ledger (decision 0005, #67).
+//!
+//! A [`Salt`] lives in `.tally/salt` in the main checkout; [`KeyedRedact`] replaces each
+//! identifier with `HMAC-SHA256(salt, value)` as 32 lowercase hex characters and stamps the line
+//! with the salt's fingerprint. The salt is committed on purpose, so it is not a secret.
+
+use std::path::Path;
+
+use ring::{digest, hmac};
+
+use super::tally_dir::{hex, random_bytes};
+use super::{LedgerEntry, LedgerError, Redact, TallyDir, line_text, parse_line};
+use crate::model::{AgentId, RequestId, SelectedRecord, SessionId, SubagentTags};
+
+/// The salt's file name inside `.tally/`.
+pub const SALT_FILE: &str = "salt";
+
+/// A per-repository salt: 32 random bytes.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Salt([u8; 32]);
+
+impl std::fmt::Debug for Salt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Salt({})", self.fingerprint())
+    }
+}
+
+impl Salt {
+    /// A salt from raw bytes.
+    #[must_use]
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    /// Parses the file form: 64 lowercase hex characters, optionally followed by one line end.
+    /// `None` for anything else.
+    #[must_use]
+    pub fn parse(text: &[u8]) -> Option<Self> {
+        let text = text.strip_suffix(b"\n").unwrap_or(text);
+        let text = text.strip_suffix(b"\r").unwrap_or(text);
+        if text.len() != 64 {
+            return None;
+        }
+        let nibble = |b: u8| match b {
+            b'0'..=b'9' => Some(b - b'0'),
+            b'a'..=b'f' => Some(b - b'a' + 10),
+            _ => None,
+        };
+        let mut bytes = [0_u8; 32];
+        let (pairs, _) = text.as_chunks::<2>();
+        for (out, [hi, lo]) in bytes.iter_mut().zip(pairs) {
+            *out = nibble(*hi)? << 4 | nibble(*lo)?;
+        }
+        Some(Self(bytes))
+    }
+
+    /// A fresh salt from the system random number generator.
+    ///
+    /// # Errors
+    /// [`std::io::Error`] when the generator fails.
+    pub fn generate() -> std::io::Result<Self> {
+        random_bytes().map(Self)
+    }
+
+    /// The file form, 64 lowercase hex characters.
+    #[must_use]
+    pub fn to_hex(&self) -> String {
+        hex(&self.0)
+    }
+
+    /// The first 16 hex characters of SHA-256 over the salt bytes: what a redacted line carries
+    /// in `redaction`.
+    #[must_use]
+    pub fn fingerprint(&self) -> String {
+        let sum = digest::digest(&digest::SHA256, &self.0);
+        hex(&sum.as_ref()[..8])
+    }
+
+    /// `HMAC-SHA256(salt, value)`, lowercase hex truncated to 32 characters.
+    #[must_use]
+    pub fn hash(&self, value: &str) -> String {
+        let key = hmac::Key::new(hmac::HMAC_SHA256, &self.0);
+        let tag = hmac::sign(&key, value.as_bytes());
+        hex(&tag.as_ref()[..16])
+    }
+
+    /// A request id, hashed.
+    #[must_use]
+    pub fn request_id(&self, id: &RequestId) -> RequestId {
+        RequestId::new(self.hash(id.as_str()))
+    }
+
+    /// A session id, hashed.
+    #[must_use]
+    pub fn session_id(&self, id: &SessionId) -> SessionId {
+        SessionId::new(self.hash(id.as_str()))
+    }
+
+    /// An agent id, hashed.
+    #[must_use]
+    pub fn agent_id(&self, id: &AgentId) -> AgentId {
+        AgentId::new(self.hash(id.as_str()))
+    }
+
+    /// Reads `.tally/salt`. `Ok(None)` when it does not exist. Never creates it.
+    ///
+    /// # Errors
+    /// [`LedgerError::Refused`] for a link or non-regular file, [`LedgerError::MalformedSalt`]
+    /// when the file is not a salt, [`LedgerError::Read`] otherwise.
+    pub fn load(tally: &TallyDir) -> Result<Option<Self>, LedgerError> {
+        let Some(bytes) = tally.read(SALT_FILE)? else {
+            return Ok(None);
+        };
+        Self::parse(&bytes)
+            .map(Some)
+            .ok_or_else(|| LedgerError::MalformedSalt {
+                path: tally.file_path(SALT_FILE),
+            })
+    }
+
+    /// Reads `.tally/salt`, creating it exclusively when missing. When two runs race, exactly
+    /// one creates it and the other reads the winner's. A malformed file is an error and is
+    /// never replaced.
+    ///
+    /// # Errors
+    /// As [`Salt::load`], plus [`LedgerError::Write`] when it cannot be created.
+    pub fn load_or_create(tally: &TallyDir) -> Result<Self, LedgerError> {
+        // A creator that lost the race may see the winner's file before its bytes land, which
+        // reads as malformed for a moment. Retry briefly before believing it.
+        let mut retries = 0_u32;
+        loop {
+            match Self::load(tally) {
+                Ok(Some(salt)) => return Ok(salt),
+                Ok(None) => {
+                    let salt = Self::generate().map_err(|source| LedgerError::Write {
+                        path: tally.file_path(SALT_FILE),
+                        source,
+                    })?;
+                    let text = format!("{}\n", salt.to_hex());
+                    if tally.create_new(SALT_FILE, text.as_bytes())? {
+                        return Ok(salt);
+                    }
+                }
+                Err(LedgerError::MalformedSalt { .. }) if retries < SALT_READ_RETRIES => {
+                    retries += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(u64::from(retries)));
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+}
+
+/// How many times a salt that reads as malformed is re-read before it is reported.
+const SALT_READ_RETRIES: u32 = 10;
+
+/// Redacts ledger entries with a [`Salt`]: ids always, agent and skill names when `names` is on.
+#[derive(Debug, Clone)]
+pub struct KeyedRedact {
+    salt: Salt,
+    names: bool,
+}
+
+impl KeyedRedact {
+    /// A redactor for `salt`. `names` also hashes agent and skill names.
+    #[must_use]
+    pub fn new(salt: Salt, names: bool) -> Self {
+        Self { salt, names }
+    }
+
+    /// The salt.
+    #[must_use]
+    pub fn salt(&self) -> &Salt {
+        &self.salt
+    }
+
+    /// A live record with the same fields hashed as a ledger entry's, so a union with a redacted
+    /// ledger counts one call once.
+    #[must_use]
+    pub fn redact_selected(&self, record: SelectedRecord) -> SelectedRecord {
+        let mut record = record;
+        let r = &mut record.attributed.record;
+        r.request_id = self.salt.request_id(&r.request_id);
+        r.session_id = self.salt.session_id(&r.session_id);
+        r.agent_id = r.agent_id.as_ref().map(|id| self.salt.agent_id(id));
+        if self.names {
+            r.attribution.skill = r.attribution.skill.as_deref().map(|n| self.salt.hash(n));
+            r.attribution.agent = r.attribution.agent.as_deref().map(|n| self.salt.hash(n));
+        }
+        record.attributed.subagent = record.attributed.subagent.map(|t| self.tags(t));
+        record
+    }
+
+    /// The tags with their agent id hashed. The `subagent` label is the agent id when no name was
+    /// stamped, so that case is an id and is hashed regardless of `names`.
+    fn tags(&self, tags: SubagentTags) -> SubagentTags {
+        let label_is_id = tags.subagent == tags.agent_id.as_str();
+        SubagentTags {
+            subagent: if label_is_id || self.names {
+                self.salt.hash(&tags.subagent)
+            } else {
+                tags.subagent
+            },
+            agent_id: self.salt.agent_id(&tags.agent_id),
+            workspace: tags.workspace,
+        }
+    }
+}
+
+impl Redact for KeyedRedact {
+    fn redact(&self, entry: LedgerEntry) -> LedgerEntry {
+        if entry.redaction.is_some() {
+            return entry;
+        }
+        let mut entry = entry;
+        entry.request_id = self.salt.request_id(&entry.request_id);
+        entry.session_id = self.salt.session_id(&entry.session_id);
+        entry.agent_id = entry.agent_id.as_ref().map(|id| self.salt.agent_id(id));
+        if self.names {
+            entry.skill = entry.skill.as_deref().map(|n| self.salt.hash(n));
+            entry.agent = entry.agent.as_deref().map(|n| self.salt.hash(n));
+        }
+        entry.subagent = entry.subagent.map(|t| self.tags(t));
+        entry.redaction = Some(self.salt.fingerprint());
+        entry
+    }
+}
+
+/// What `ledger redact` did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RedactOutcome {
+    /// Non-blank lines seen.
+    pub lines: u64,
+    /// Unredacted lines rewritten.
+    pub rewritten: u64,
+    /// Lines that already carry `redaction`, left byte-identical.
+    pub already_redacted: u64,
+    /// Lines that do not parse (or whose `ts` is not RFC 3339), left byte-identical.
+    pub unparseable: u64,
+    /// `.tally/` does not exist: nothing was read or written.
+    pub tally_absent: bool,
+}
+
+/// Rewrites the unredacted lines of the explicit ledger at `path`.
+///
+/// # Errors
+/// [`LedgerError`] when the ledger cannot be read or replaced; the original is then untouched.
+pub fn redact_ledger(path: &Path, redactor: &KeyedRedact) -> Result<RedactOutcome, LedgerError> {
+    let real = match std::fs::canonicalize(path) {
+        Ok(p) => p,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(RedactOutcome::default()),
+        Err(source) => {
+            return Err(LedgerError::Read {
+                path: path.to_owned(),
+                source,
+            });
+        }
+    };
+    let existing = std::fs::read(&real).map_err(|source| LedgerError::Read {
+        path: path.to_owned(),
+        source,
+    })?;
+    let (bytes, outcome) = rewrite(&existing, redactor);
+    if outcome.rewritten > 0 {
+        replace_file(&real, &bytes).map_err(|source| LedgerError::Write {
+            path: path.to_owned(),
+            source,
+        })?;
+    }
+    Ok(outcome)
+}
+
+/// Writes `bytes` beside `target` under a random name, created exclusively, then renames it
+/// over `target`. The temporary file is removed on failure.
+fn replace_file(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let name = target
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("ledger");
+    let temp = target.with_file_name(format!("{name}.{}.tmp", hex(&random_bytes()?[..8])));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)?;
+    let done = file
+        .write_all(bytes)
+        .and_then(|()| file.sync_all())
+        .and_then(|()| std::fs::rename(&temp, target));
+    if done.is_err() {
+        drop(file);
+        let _ = std::fs::remove_file(&temp);
+    }
+    done
+}
+
+/// Redacts the lines of `existing` that parse and are unredacted; every other byte is kept.
+fn rewrite(existing: &[u8], redactor: &KeyedRedact) -> (Vec<u8>, RedactOutcome) {
+    let mut outcome = RedactOutcome::default();
+    let mut out: Vec<u8> = Vec::with_capacity(existing.len());
+    for (i, piece) in existing.split(|b| *b == b'\n').enumerate() {
+        if i > 0 {
+            out.push(b'\n');
+        }
+        let raw = piece.strip_suffix(b"\r").unwrap_or(piece);
+        if raw.iter().all(u8::is_ascii_whitespace) {
+            out.extend_from_slice(piece);
+            continue;
+        }
+        outcome.lines += 1;
+        match parse_line(raw) {
+            Ok((entry, false)) if entry.redaction.is_none() => {
+                outcome.rewritten += 1;
+                out.extend_from_slice(line_text(&redactor.redact(entry)).as_bytes());
+            }
+            Ok((_, false)) => {
+                outcome.already_redacted += 1;
+                out.extend_from_slice(piece);
+            }
+            _ => {
+                outcome.unparseable += 1;
+                out.extend_from_slice(piece);
+            }
+        }
+    }
+    (out, outcome)
+}
+
+/// Rewrites the unredacted lines of `.tally/ledger.jsonl` under the checkout `root`, through
+/// [`TallyDir`].
+///
+/// # Errors
+/// As [`redact_ledger`], plus [`LedgerError::Refused`].
+pub fn redact_ledger_default(
+    root: &Path,
+    redactor: &KeyedRedact,
+) -> Result<RedactOutcome, LedgerError> {
+    let Some(tally) = TallyDir::open(root)? else {
+        return Ok(RedactOutcome {
+            tally_absent: true,
+            ..RedactOutcome::default()
+        });
+    };
+    let Some(existing) = tally.read(super::LEDGER_FILE)? else {
+        return Ok(RedactOutcome::default());
+    };
+    let (bytes, outcome) = rewrite(&existing, redactor);
+    if outcome.rewritten > 0 {
+        tally.replace(super::LEDGER_FILE, &bytes)?;
+    }
+    Ok(outcome)
+}
