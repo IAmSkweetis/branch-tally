@@ -27,10 +27,14 @@ closed by #94: `capture` and `record` write only where `.tally/` exists (0002's 
   same output, so dedupe, the `(request_id, recorded_for)` key and the dispatcher roll-up, which
   links session ids to agent ids, keep working across runs, branches and machines.
 - **What is hashed.** `request_id`, `session_id` and `agent_id`, plus every session or agent id
-  inside `subagent` tags. Agent and skill names (`agent`, `skill`) are hashed only when a separate
-  names opt-in is on. Nothing else changes. `ts` and `recorded_at` keep full precision, so the
-  conflict rule ("latest `recorded_at` wins") is unchanged. Model, branches, basis, selection,
-  origin and usage are unchanged too, so **totals are identical** to an unredacted ledger.
+  inside `subagent` tags. **Worktree names** are hashed too, wherever the ledger stores one: in
+  `subagent` tags and in `origin`. Claude Code names agent worktrees `agent-<agentId>`, so an
+  unhashed worktree name would publish the agent id the line otherwise hides. A reader that has to
+  match a stored origin against local worktrees, such as the live union, hashes the local names with
+  the same salt before comparing. Agent and skill names (`agent`, `skill`) are hashed only when a
+  separate names opt-in is on. Nothing else changes. `ts` and `recorded_at` keep full precision, so
+  the conflict rule ("latest `recorded_at` wins") is unchanged. Model, branches, basis, selection
+  and usage are unchanged too, so **totals are identical** to an unredacted ledger.
 - **The salt.** 32 random bytes from `ring::rand::SystemRandom`, stored as hex in `.tally/salt` in
   the **main checkout** (like the captures file and `prices.toml`), so every worktree on a machine
   uses the same salt. The first redacted `record` creates it if it is missing, through the guarded
