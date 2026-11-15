@@ -262,6 +262,16 @@ impl KeyedRedact {
         }
     }
 
+    /// A line stamped under another salt, with hashed ids and a raw agent branch. Repairing it
+    /// would relabel old-salt hashes as this salt's, so it is left as it is.
+    fn is_foreign_repair(&self, entry: &LedgerEntry) -> bool {
+        entry
+            .redaction
+            .as_deref()
+            .is_some_and(|stamp| stamp != self.salt.fingerprint())
+            && ids_hashed(entry)
+    }
+
     /// The tags with their agent id hashed. The `subagent` label is the agent id when no name was
     /// stamped, so that case is an id and is hashed regardless of `names`.
     fn tags(&self, tags: SubagentTags) -> SubagentTags {
@@ -284,6 +294,9 @@ impl KeyedRedact {
 impl Redact for KeyedRedact {
     fn redact(&self, entry: LedgerEntry) -> LedgerEntry {
         if is_hashed_line(&entry) {
+            return entry;
+        }
+        if self.is_foreign_repair(&entry) {
             return entry;
         }
         let mut entry = entry;
@@ -369,6 +382,10 @@ pub struct RedactOutcome {
     /// Lines that carried a `redaction` stamp but raw ids, so the stamp was not believed: they
     /// were hashed and stamped again.
     pub restamped: u64,
+    /// Lines with hashed ids and a raw agent branch, stamped under a salt other than the current
+    /// one. Repairing them would relabel old-salt hashes as the current salt, so they are left
+    /// byte-identical and counted here.
+    pub foreign_salt_unrepaired: u64,
     /// `.tally/` does not exist: nothing was read or written.
     pub tally_absent: bool,
 }
@@ -479,6 +496,10 @@ fn rewrite(existing: &[u8], redactor: &KeyedRedact) -> (Vec<u8>, RedactOutcome) 
             Ok((entry, false)) if entry.redaction.is_none() => {
                 outcome.rewritten += 1;
                 out.extend_from_slice(line_text(&redactor.redact(entry)).as_bytes());
+            }
+            Ok((entry, false)) if !is_hashed_line(&entry) && redactor.is_foreign_repair(&entry) => {
+                outcome.foreign_salt_unrepaired += 1;
+                out.extend_from_slice(piece);
             }
             Ok((entry, false)) if !is_hashed_line(&entry) => {
                 outcome.restamped += 1;
