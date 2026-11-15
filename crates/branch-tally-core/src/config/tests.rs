@@ -435,3 +435,14 @@ fn unknown_key_error_lists_ledger_keys() {
             .contains("ledger-redact, ledger-redact-names")
     );
 }
+
+#[test]
+fn default_config_describes_ledger_redaction_accurately() {
+    assert!(!DEFAULT_CONFIG.contains("session ids, branch names, paths"));
+    assert!(DEFAULT_CONFIG.contains("per-repository salt"));
+    assert!(DEFAULT_CONFIG.contains("worktree-agent-<id>"));
+    assert!(DEFAULT_CONFIG.contains("never holds paths"));
+    assert!(
+        DEFAULT_CONFIG.contains("# With ledger-redact = true: also hash agent and skill names")
+    );
+}
