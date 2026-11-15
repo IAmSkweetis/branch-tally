@@ -487,6 +487,80 @@ fn ledger_redact_warns_about_unparseable_lines_and_names_backfill() {
     );
 }
 
+const AGENT_BRANCH: &str = "worktree-agent-a1";
+
+/// Records the agent branch redacted, then adds a copy of every line with the branch respelled
+/// raw, as a ledger written before branch hashing would hold it. Returns the respelled text.
+fn with_both_branch_spellings(world: &World) -> String {
+    let out = world.run(&["record", AGENT_BRANCH, "--strict"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let text = fs::read_to_string(ledger_of(world)).unwrap();
+    let first: Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+    let hashed = first["recorded_for"].as_str().unwrap().to_owned();
+    assert_ne!(hashed, AGENT_BRANCH, "the branch was not hashed");
+    text.replace(&hashed, AGENT_BRANCH)
+}
+
+#[test]
+fn a_call_under_both_branch_spellings_is_counted_once_and_noted() {
+    let world = opted_in();
+    let respelled = with_both_branch_spellings(&world);
+    let mut text = fs::read_to_string(ledger_of(&world)).unwrap();
+    text.push_str(&respelled);
+    fs::write(ledger_of(&world), text).unwrap();
+    let out = world.run(&[
+        "report",
+        AGENT_BRANCH,
+        "--strict",
+        "--from-ledger",
+        "--allow-ledger-conflicts",
+    ]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let err = stderr(&out);
+    assert!(
+        err.contains("ledger line(s) held the same call under both the raw and hashed spelling"),
+        "{err}"
+    );
+    assert!(err.contains("counted once"), "{err}");
+}
+
+#[test]
+fn ledger_redact_counts_lines_it_cannot_repair_without_their_salt() {
+    let world = opted_in();
+    let respelled = with_both_branch_spellings(&world);
+    fs::write(ledger_of(&world), respelled).unwrap();
+    fs::write(salt_of(&world), "cd".repeat(32) + "\n").unwrap();
+    let out = world.run(&["ledger", "redact"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let err = stderr(&out);
+    assert!(
+        err.contains("line(s) hashed under another salt still carry a raw agent branch name"),
+        "{err}"
+    );
+    assert!(err.contains("can't be repaired without that salt"), "{err}");
+    assert!(!err.contains(&"cd".repeat(8)), "{err}");
+}
+
+#[test]
+fn record_with_nothing_to_append_creates_no_salt_and_an_append_persists_it() {
+    let world = opted_in();
+    let out = world.run(&["record", "no/such-branch"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        stdout(&out),
+        "appended 0, skipped 0, branch no/such-branch\n"
+    );
+    assert!(!salt_of(&world).exists(), "a salt was created for nothing");
+    assert!(!ledger_of(&world).exists());
+
+    record(&world, &[]);
+    assert!(salt_of(&world).is_file());
+    let fingerprint = lines(&ledger_of(&world))[0]["redaction"].clone();
+    assert!(fingerprint.is_string());
+    let all = [stdout(&world.run(&["ledger", "redact"])), String::new()].concat();
+    assert!(!all.contains(fingerprint.as_str().unwrap()), "{all}");
+}
+
 #[test]
 fn config_show_lists_the_ledger_redact_keys_with_their_sources() {
     let world = World::scenario(SCENARIO);
