@@ -318,6 +318,47 @@ fn a_stamped_line_with_a_raw_agent_branch_is_repaired_without_rehashing_ids() {
     assert_eq!(r.redact(after.clone()), after);
 }
 
+fn raw_branch_line_under(salt: &Salt) -> LedgerEntry {
+    let mut e = KeyedRedact::new(salt.clone(), false).redact(full_entry());
+    e.branch = "worktree-agent-a17hexid".to_owned();
+    e.recorded_for = "worktree-agent-a17hexid".to_owned();
+    e
+}
+
+#[test]
+fn a_foreign_stamped_line_with_a_raw_agent_branch_is_left_unchanged_by_redact() {
+    let before = raw_branch_line_under(&other_salt());
+    let after = KeyedRedact::new(test_salt(), false).redact(before.clone());
+    assert_eq!(after, before);
+}
+
+#[test]
+fn the_backfill_leaves_a_foreign_stamped_raw_branch_line_byte_identical_and_counts_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = path(&dir);
+    let foreign = serde_json::to_string(&raw_branch_line_under(&other_salt())).unwrap();
+    let own = serde_json::to_string(&raw_branch_line_under(&test_salt())).unwrap();
+    write_lines(&p, &[foreign.clone(), own]);
+    let out = redact_ledger(&p, &KeyedRedact::new(test_salt(), false)).unwrap();
+    assert_eq!(
+        (
+            out.restamped,
+            out.foreign_salt_unrepaired,
+            out.already_redacted
+        ),
+        (1, 1, 0)
+    );
+    let text = std::fs::read_to_string(&p).unwrap();
+    assert_eq!(text.lines().next().unwrap(), foreign);
+    assert!(
+        text.lines()
+            .nth(1)
+            .unwrap()
+            .contains(&test_salt().hash("a17hexid")),
+        "the line under the current salt is repaired"
+    );
+}
+
 #[test]
 fn a_properly_stamped_agent_branch_is_never_hashed_twice() {
     let r = KeyedRedact::new(test_salt(), false);
