@@ -683,8 +683,9 @@ branch-tally ledger redact [--ledger <PATH>] [--repo <PATH>] [--config <PATH>]
 
 Rewrites the ledger's unredacted lines in place with the keyed hash that `record` uses by default,
 so they match the lines `record` writes now. It hashes the ids, worktree names and
-`worktree-agent-<id>` branch names of every line that parses and has no `redaction` field, and of
-every line whose `redaction` field sits over raw ids (counted as restamped). It uses the salt
+`worktree-agent-<id>` branch names of every line that parses and has no `redaction` field. It also
+repairs, and counts as restamped, a line whose `redaction` field sits over a raw id, or over a raw
+`worktree-agent-<id>` branch when that line was stamped with the current salt. It uses the salt
 beside the ledger, copied from the main checkout's or created when missing, as described in
 [The salt](ledger-redaction.md#the-salt). Lines genuinely redacted and lines that don't parse are
 left byte for byte as they are. It runs even with
@@ -710,6 +711,7 @@ note: 1 unparseable line(s) were left as-is and may still hold raw ids
 | Note (stderr) | Meaning |
 | ------------- | ------- |
 | `note: N unparseable line(s) were left as-is and may still hold raw ids` | Lines that don't parse, or whose `ts` is not strict RFC 3339, were not rewritten. |
+| `note: N line(s) hashed under another salt still carry a raw agent branch name and were left unchanged; they can't be repaired without that salt` | Lines stamped with a different salt still hold a raw `worktree-agent-<id>` branch. Repairing them needs that salt. |
 | `note: lines already redacted without names are not re-hashed; the names opt-in cannot be backfilled onto stamped lines` | With `--ledger-redact-names` (or `ledger-redact-names = true`), lines already redacted keep their agent and skill names. |
 
 Without a `.tally/` directory beside the default ledger it changes and creates nothing, and prints

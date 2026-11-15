@@ -45,14 +45,17 @@ The `redaction` field is a fingerprint of the salt the line was hashed with: the
 characters of a SHA-256 digest of it. It tells a reader that the line is redacted, and which salt
 was used. It does not give away the salt, which is in the repository anyway (see
 [The salt](#the-salt)). When redacting, the field alone is not believed: a line is left alone only
-when its request, session and agent ids are also hashes. A line that carries the field over raw
-ids, through a bug or a hand edit, is hashed again by
-[`ledger redact`](#rewriting-older-lines) and counted as `restamped`. The line counts in the
+when its request, session and agent ids are hashes and neither `branch` nor `recorded_for` is a raw
+`worktree-agent-<id>`. A line that carries the field over a raw value, through a bug, an earlier
+build or a hand edit, is repaired by [`ledger redact`](#rewriting-older-lines) and counted as
+`restamped`. The line counts in the
 [mixed-ledger](#mixed-ledgers) note go by the field alone.
 
 A report asked for an agent branch by its real name, such as `worktree-agent-a1`, hashes the name
 with the local salt and finds the ledger's lines under both forms. Without a readable local salt it
-finds only lines that hold the name as it is.
+finds only lines that hold the name as it is. When the ledger holds one call under both spellings,
+it is counted once, and a note on stderr says how many lines that was (see the ledger notes under
+[Report from the ledger](ledger.md#report-from-the-ledger)).
 
 Hashing changes no number. Models, token counts and times are kept, and branches are either kept
 or hashed the same way every time, so a report from a redacted ledger has the same totals as one
@@ -129,8 +132,10 @@ hex characters in a file named `salt` in the **same `.tally/` directory as the l
   its ledger. For an explicit `--ledger <path>`, it is `.tally/salt` in the main checkout.
 - **How it is created.** When that `.tally/` has no salt, `record` with redaction on copies the main
   checkout's `.tally/salt` if there is one, so every worktree on the machine hashes alike, and
-  otherwise creates a new one. `ledger redact` does the same. A `record` creates the salt even
-  when it appends no lines. Nothing is created in a checkout that has not
+  otherwise creates a new one, but only when it appends at least one line: a `record` with
+  nothing new to append creates no salt. `ledger redact` copies or creates the salt whenever it
+  runs in an opted-in checkout, even with nothing to rewrite, which is how the opt-in steps below
+  make one. Nothing is created in a checkout that has not
   [opted in](ledger.md#opt-the-repository-in): with no `.tally/`, `record` writes nothing at all,
   and with redaction on it never writes raw ids.
 - **Commit it.** Every clone must hash with the same salt, so the salt belongs in the repository
@@ -225,14 +230,19 @@ note: 1 unparseable line(s) were left as-is and may still hold raw ids
 - It hashes every line that parses and has no `redaction` field, with the salt beside the ledger,
   copying or creating it as described in [The salt](#the-salt). A rewritten line then matches the
   line `record` writes for the same call, so the two collapse into one in a report.
-- A line that carries a `redaction` field over raw ids is hashed too, and counted as `restamped`.
+- A line that carries a `redaction` field but still holds a raw id, or a raw
+  `worktree-agent-<id>` in `branch` or `recorded_for`, is repaired and counted as `restamped`.
+  Hashed ids on such a line are not hashed twice.
+- A raw agent branch on a line stamped with a **different** salt can't be repaired: hashing it with
+  the current salt would mix two salts on one line. Those lines are left as they are, and a note on
+  stderr counts them.
 - Lines that are genuinely redacted are left byte for byte as they are, whichever salt they were
   hashed with. Lines it can't parse are counted and left as they are, raw ids included, and a note
   on stderr says so. That includes a line whose `ts` is not strict RFC 3339 (see
   [Timestamps](cli.md#timestamps)).
 - `--ledger-redact-names` applies only to the lines it rewrites. Lines already redacted without
   hashed names keep their readable names. With the option on and redacted lines present, a note
-  on stderr says the names opt-in can't be backfilled onto them. Both notes are listed in the
+  on stderr says the names opt-in can't be backfilled onto them. Every note is listed in the
   [CLI reference](cli.md#branch-tally-ledger-redact).
 - It runs even when `ledger-redact` is off in your config, because you asked for it. It uses
   `ledger-redact-names` from the config file, or `--ledger-redact-names` /
@@ -279,7 +289,14 @@ When the ledger has no unredacted lines, only lines under more than one salt, th
 `--pr`. The Markdown report adds a statement after the session table, on one line:
 
 ```text
-**Total may count some calls twice**: the ledger mixes 2 unredacted and 2 redacted line(s) under 1 salt(s), so a call recorded in both forms is counted twice; run `branch-tally ledger redact` to collapse them. This is an overcount, not a floor.
+**Total may count some calls twice**: the ledger holds 2 unredacted and 2 redacted line(s) under 1 salt(s), so a call recorded in both forms is counted twice; run `branch-tally ledger redact` to collapse them. This is an overcount, not a floor.
+```
+
+When the ledger has no unredacted lines, only lines under several salts, the statement names that
+cause instead and suggests no command:
+
+```text
+**Total may count some calls twice**: the ledger holds 6 redacted line(s) hashed under 2 different salts (for example, two machines each created one), so a call recorded under each is counted twice. This is an overcount, not a floor.
 ```
 
 The JSON report has a top-level `doubleCount` object:
@@ -288,7 +305,9 @@ The JSON report has a top-level `doubleCount` object:
 "doubleCount": { "mixedLedger": { "unredactedLines": 2, "redactedLines": 2, "distinctSalts": 1 } },
 ```
 
-`project` prints only the stderr note. Its report and chart carry no statement.
+`project` carries the same warning: the statement before its branch table, `doubleCount` in its
+JSON, and the footer line `total may count some calls twice (overcount, not a floor)` in its SVG
+chart. See [Project Cost Over Time](project.md#a-total-that-may-count-calls-twice).
 
 ### Combining the ledger with live transcripts
 
