@@ -436,3 +436,28 @@ fn an_agent_branch_finds_its_redacted_and_unredacted_lines() {
     assert_eq!(both.summary.total.calls, 3);
     assert_eq!(both.summary.footnote.off_branch_tokens, 0);
 }
+
+#[test]
+fn one_hashed_call_under_both_branch_spellings_is_counted_once() {
+    let repo = Repo::new();
+    let branch = "worktree-agent-abc123";
+    let src = FakeSource(
+        vec![
+            rec_on(branch, "s1", "req-a", 1),
+            rec_on(branch, "s1", "req-b", 2),
+        ],
+        Vec::new(),
+    );
+    repo.record_on(branch, &src, &KeyedRedact::new(repo.salt(), false));
+    // Respell every line's branch as the raw name, as a ledger written before branch hashing
+    // would hold it: the same hashed request ids now sit under both spellings.
+    let text = std::fs::read_to_string(repo.ledger()).unwrap();
+    let first: serde_json::Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+    let hashed_branch = first["recorded_for"].as_str().unwrap().to_owned();
+    assert_ne!(hashed_branch, branch, "the fixture must hash the branch");
+    let respelled = text.replace(&hashed_branch, branch);
+    std::fs::write(repo.ledger(), format!("{text}{respelled}")).unwrap();
+    let report = repo.report_on(branch, None);
+    assert_eq!(report.summary.total.calls, 2, "a call was counted twice");
+    assert_eq!(report.ledger.unwrap().collapsed_lines, 2);
+}
