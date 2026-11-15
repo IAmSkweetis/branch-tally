@@ -35,12 +35,21 @@ closed by #94: `capture` and `record` write only where `.tally/` exists (0002's 
   separate names opt-in is on. Nothing else changes. `ts` and `recorded_at` keep full precision, so
   the conflict rule ("latest `recorded_at` wins") is unchanged. Model, branches, basis, selection
   and usage are unchanged too, so **totals are identical** to an unredacted ledger.
-- **The salt.** 32 random bytes from `ring::rand::SystemRandom`, stored as hex in `.tally/salt` in
-  the **main checkout** (like the captures file and `prices.toml`), so every worktree on a machine
-  uses the same salt. The first redacted `record` creates it if it is missing, through the guarded
+- **The salt.** 32 random bytes from `ring::rand::SystemRandom`, stored as hex in `salt` in the
+  **same `.tally/` as the ledger it hashes**: the git top level of the checkout `record` writes to,
+  so a linked worktree's salt is committed on the worktree's branch with its ledger. When that
+  `.tally/` has no salt, `record` copies the main checkout's salt if one exists, so every worktree
+  on a machine hashes alike, and otherwise creates one. All of it goes through the guarded
   `TallyDir` accessor: no links followed, a regular file only, created exclusively so two racing
-  runs can't both write it. It is committed with the ledger, so every clone uses the same salt.
-  A salt file that exists but is malformed is an error, never silently replaced.
+  runs can't both write it. It is committed with the ledger, so every clone uses the same salt. A
+  salt file that exists but is malformed is an error, never silently replaced, and the error says
+  to delete the file if it is empty or damaged. With redaction on and no `.tally/` to hold a salt,
+  `record` writes nothing unredacted: it errors when it would otherwise write, as below.
+- **Branch names that hold an agent id.** Claude Code's agent worktrees use the branch
+  `worktree-agent-<agentId>`, and records it can't link keep that stamp as their `branch`. With
+  redaction on, such a value in `branch` or `recorded_for` is written as
+  `worktree-agent-<hash(agentId)>`. Every other branch name stays readable. A report that selects
+  by such a branch hashes the requested name the same way before selecting.
 - **Marking.** A redacted line carries `redaction`, a short fingerprint of the salt (the first 16
   hex characters of SHA-256 over the salt bytes). An unredacted line has no such field. The
   marker lets a reader tell the modes apart, and tell two salts apart.
@@ -57,7 +66,10 @@ closed by #94: `capture` and `record` write only where `.tally/` exists (0002's 
 - **Mixing is counted and noted.** A ledger holding unredacted lines and redacted lines, or lines
   redacted under more than one salt fingerprint, is read normally. The report says how many lines
   of each kind it saw, and that a call recorded once in each form may be counted twice
-  (Governance II). It is never refused or hidden.
+  (Governance II). It is never refused or hidden. Because that warns of an overcount, not a floor,
+  it also reaches the published number: the rendered Markdown and JSON, and so the `--pr` body,
+  carry a footnote that the total may count some calls twice and why. The same applies when live
+  calls could not be matched against redacted lines. The run still succeeds.
 - **Backfill.** `branch-tally ledger redact` rewrites an existing ledger's unredacted lines with
   the current salt and settings, so they collapse into their redacted twins. It is the one
   deliberate exception to append-only. It is explicit, user-run, never automatic. It writes
