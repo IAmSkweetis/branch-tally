@@ -97,6 +97,22 @@ pub enum LiveRedactionMatch {
     PartiallyMatched,
 }
 
+/// How [`record`] and [`record_at`] redact the lines they append (decision 0005).
+///
+/// `Keyed` resolves the salt itself, after the target `.tally/` is opened and from that same
+/// directory, and creates one only when at least one line will actually be appended. The caller
+/// never holds a salt, so no line can be hashed under one that is not persisted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordRedaction {
+    /// Write ids as the harness recorded them.
+    Off,
+    /// Hash ids (and, with `names`, agent and skill names) under the target's salt.
+    Keyed {
+        /// Also hash agent and skill names.
+        names: bool,
+    },
+}
+
 /// What [`record`] did.
 #[derive(Debug)]
 pub struct Recorded {
@@ -143,6 +159,10 @@ pub enum ReportError {
     /// The ledger could not be read or written.
     #[error(transparent)]
     Ledger(#[from] crate::ledger::LedgerError),
+    /// Keyed redaction of an explicit `--ledger` needs the main checkout's `.tally/` to hold the
+    /// salt, and there is none.
+    #[error("ledger redaction needs a .tally/ directory in the main checkout to hold its salt")]
+    NoSaltHome,
     /// A ledger-only report was asked for and there is no ledger file.
     #[error("no ledger at {}", .path.display())]
     LedgerMissing {
@@ -908,7 +928,7 @@ pub fn record(
     branch: Option<&str>,
     options: &Options<'_>,
     ledger_path: &Path,
-    redact: &dyn crate::ledger::Redact,
+    redaction: RecordRedaction,
     clock: &dyn crate::ledger::Clock,
 ) -> Result<Recorded, ReportError> {
     record_at(
@@ -919,7 +939,7 @@ pub fn record(
         branch,
         options,
         &LedgerTarget::Explicit(ledger_path),
-        redact,
+        redaction,
         clock,
     )
 }
@@ -946,7 +966,7 @@ pub fn record_at(
     branch: Option<&str>,
     options: &Options<'_>,
     target: &LedgerTarget<'_>,
-    redact: &dyn crate::ledger::Redact,
+    redaction: RecordRedaction,
     clock: &dyn crate::ledger::Clock,
 ) -> Result<Recorded, ReportError> {
     let branch = branch_or_current(git, repo_dir, branch)?;
@@ -962,29 +982,19 @@ pub fn record_at(
         &branch,
         options,
     );
-    let outcome = match target {
-        // The ledger is per checkout: a linked worktree records on its own branch (decision
-        // 0002), so the root is the git top level, as `--ledger`'s default is. Outside a
-        // repository that is an error, never a fallback.
-        LedgerTarget::Default => crate::ledger::append_default(
-            &git.toplevel(repo_dir)?,
-            &sel.selected,
-            &branch,
-            options.mode,
-            Some(&live.main_checkout),
-            redact,
-            clock,
-        )?,
-        LedgerTarget::Explicit(path) => crate::ledger::append(
-            path,
-            &sel.selected,
-            &branch,
-            options.mode,
-            Some(&live.main_checkout),
-            redact,
-            clock,
-        )?,
-    };
+    let outcome = append_selected(
+        git,
+        repo_dir,
+        target,
+        redaction,
+        &Append {
+            records: &sel.selected,
+            branch: &branch,
+            mode: options.mode,
+            main: &live.main_checkout,
+        },
+        clock,
+    )?;
     Ok(Recorded {
         branch,
         outcome,
@@ -992,6 +1002,77 @@ pub fn record_at(
         read_stats: live.stats,
         worktrees_unavailable: live.unavailable,
         capture_stats: live.captures.stats().clone(),
+    })
+}
+
+/// What [`record_at`] appends.
+struct Append<'a> {
+    records: &'a [crate::model::SelectedRecord],
+    branch: &'a str,
+    mode: Mode,
+    main: &'a Path,
+}
+
+/// Appends to the target. The ledger is per checkout: a linked worktree records on its own
+/// branch (decision 0002), so the default root is the git top level, as `--ledger`'s default is.
+/// Outside a repository that is an error, never a fallback.
+///
+/// Keyed redaction never receives a salt: the ledger resolves it from the `.tally/` it opens, and
+/// only when a line will be appended. An explicit `--ledger` takes it from the main checkout's
+/// `.tally/` (decision 0005), which must exist.
+fn append_selected(
+    git: &dyn Git,
+    repo_dir: &Path,
+    target: &LedgerTarget<'_>,
+    redaction: RecordRedaction,
+    a: &Append<'_>,
+    clock: &dyn crate::ledger::Clock,
+) -> Result<crate::ledger::AppendOutcome, ReportError> {
+    use crate::ledger::{
+        TallyDir, append, append_default, append_keyed_default, append_keyed_explicit,
+    };
+    let main = Some(a.main);
+    Ok(match (target, redaction) {
+        (LedgerTarget::Default, RecordRedaction::Off) => append_default(
+            &git.toplevel(repo_dir)?,
+            a.records,
+            a.branch,
+            a.mode,
+            main,
+            &crate::ledger::Identity,
+            clock,
+        )?,
+        (LedgerTarget::Default, RecordRedaction::Keyed { names }) => {
+            let root = git.toplevel(repo_dir)?;
+            let same = root == a.main
+                || matches!(
+                    (std::fs::canonicalize(&root), std::fs::canonicalize(a.main)),
+                    (Ok(x), Ok(y)) if x == y
+                );
+            append_keyed_default(
+                &root,
+                (!same).then_some(a.main),
+                names,
+                a.records,
+                a.branch,
+                a.mode,
+                main,
+                clock,
+            )?
+        }
+        (LedgerTarget::Explicit(path), RecordRedaction::Off) => append(
+            path,
+            a.records,
+            a.branch,
+            a.mode,
+            main,
+            &crate::ledger::Identity,
+            clock,
+        )?,
+        (LedgerTarget::Explicit(path), RecordRedaction::Keyed { names }) => {
+            let home = TallyDir::open(a.main)?.ok_or(ReportError::NoSaltHome)?;
+            append_keyed_explicit(path, &home, names, a.records, a.branch, a.mode, main, clock)?
+        }
     })
 }
 

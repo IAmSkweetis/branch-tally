@@ -8,15 +8,15 @@ use std::path::{Path, PathBuf};
 use branch_tally_core::config::{self, Flags, Format};
 use branch_tally_core::git::{Git, SystemGit, normalize_path};
 use branch_tally_core::ledger::{
-    CAPTURES_PATH, CaptureReadStats, Identity, KeyedRedact, LedgerError, LedgerTarget, Redact,
-    Salt, SystemClock, TallyDir,
+    CAPTURES_PATH, CaptureReadStats, KeyedRedact, LedgerError, LedgerTarget, Salt, SystemClock,
+    TallyDir,
 };
 use branch_tally_core::model::Mode;
 use branch_tally_core::pr::{PrError, PrOutcome, SystemGh, update_pr};
 use branch_tally_core::redact::RedactOptions;
 use branch_tally_core::render;
 use branch_tally_core::report::{
-    FullSetCounts, LedgerReport, Options, Report, ReportError, WorkBranch,
+    FullSetCounts, LedgerReport, Options, RecordRedaction, Report, ReportError, WorkBranch,
 };
 use branch_tally_core::sources::claude_code::ClaudeCode;
 use branch_tally_core::sources::{ReadStats, Source, SourceError};
@@ -254,25 +254,13 @@ pub(crate) fn record(args: &RecordArgs) -> Result<(), String> {
         args.work_branch.as_ref(),
     )?;
     let matches = |branch: &str| args.work_branch.as_ref().is_some_and(|p| p.matches(branch));
-    // With redaction on there is always a keyed redactor: never `Identity`. The salt lives in the
-    // `.tally/` the ledger goes into. With no `.tally/` for the default ledger nothing is written,
-    // so a throwaway in-memory salt stands in and nothing is created anywhere.
-    let keyed = if settings.ledger_redact.value {
-        let names = settings.ledger_redact_names.value;
-        Some(match keyed_redactor(&cwd, args.ledger.is_some(), names)? {
-            Some(keyed) => keyed,
-            None if args.ledger.is_some() => return Err(NO_SALT_HOME.to_owned()),
-            None => KeyedRedact::new(
-                Salt::generate().map_err(|_| "cannot generate a salt".to_owned())?,
-                names,
-            ),
-        })
+    // With redaction on the ledger resolves the salt itself, from the `.tally/` it writes to.
+    let redaction = if settings.ledger_redact.value {
+        RecordRedaction::Keyed {
+            names: settings.ledger_redact_names.value,
+        }
     } else {
-        None
-    };
-    let redactor: &dyn Redact = match &keyed {
-        Some(keyed) => keyed,
-        None => &Identity,
+        RecordRedaction::Off
     };
     let recorded = branch_tally_core::report::record_at(
         &SystemGit,
@@ -282,7 +270,7 @@ pub(crate) fn record(args: &RecordArgs) -> Result<(), String> {
         args.branch.as_deref(),
         &options(settings.mode.value, pattern.as_ref(), &matches, None),
         &ledger_target(args.ledger.as_deref()),
-        redactor,
+        redaction,
         &SystemClock,
     )
     .map_err(|e| {
@@ -660,6 +648,7 @@ fn describe(error: &ReportError, from_ledger: bool) -> String {
         ReportError::Source(SourceError::ProjectsRootMissing { path }) => {
             format!("No Claude Code transcript directory at {}", path.display())
         }
+        ReportError::NoSaltHome => NO_SALT_HOME.to_owned(),
         other => other.to_string(),
     }
 }

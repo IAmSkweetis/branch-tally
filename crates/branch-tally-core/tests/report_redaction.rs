@@ -6,12 +6,15 @@
 use std::path::{Path, PathBuf};
 
 use branch_tally_core::git::{FakeGit, Worktree};
-use branch_tally_core::ledger::{Clock, Identity, KeyedRedact, LedgerTarget, Salt, TallyDir};
+use branch_tally_core::ledger::{Clock, LedgerTarget, Salt, TallyDir};
 use branch_tally_core::model::{
     AgentId, Dispatch, Harness, LiveMatchFailure, Origin, Record, RequestId, SessionId, Usage,
 };
 use branch_tally_core::pricing::PriceTable;
-use branch_tally_core::report::{LiveRedactionMatch, Options, Report, record, run_from_ledger_at};
+use branch_tally_core::report::{
+    LiveRedactionMatch, Options, RecordRedaction, Report, ReportError, record, record_at,
+    run_from_ledger_at,
+};
 use branch_tally_core::sources::{
     ReadStats, RepoIdentity, RootKind, Source, SourceError, TranscriptRoot,
 };
@@ -72,27 +75,25 @@ impl Repo {
         self.dir.path().join(".tally").join("ledger.jsonl")
     }
     fn git(&self) -> FakeGit {
-        FakeGit::new().with_worktrees(
-            self.root(),
-            vec![Worktree {
-                path: self.root(),
-                branch: "main".to_owned(),
-            }],
-        )
+        FakeGit::new()
+            .with_toplevel(self.root(), self.root())
+            .with_worktrees(
+                self.root(),
+                vec![Worktree {
+                    path: self.root(),
+                    branch: "main".to_owned(),
+                }],
+            )
     }
-    fn salt(&self) -> Salt {
-        let tally = TallyDir::open(&self.root()).unwrap().unwrap();
-        Salt::load_or_create(&tally).unwrap()
+    /// The salt persisted in this repository's `.tally/`, if any. Never creates one.
+    fn persisted_salt(&self) -> Option<Salt> {
+        let tally = TallyDir::open(&self.root()).unwrap()?;
+        Salt::load(&tally).unwrap()
     }
-    fn record(&self, source: &FakeSource, redact: &dyn branch_tally_core::ledger::Redact) -> u64 {
-        self.record_on("feat/x", source, redact)
+    fn record(&self, source: &FakeSource, redaction: RecordRedaction) -> u64 {
+        self.record_on("feat/x", source, redaction)
     }
-    fn record_on(
-        &self,
-        branch: &str,
-        source: &FakeSource,
-        redact: &dyn branch_tally_core::ledger::Redact,
-    ) -> u64 {
+    fn record_on(&self, branch: &str, source: &FakeSource, redaction: RecordRedaction) -> u64 {
         record(
             &self.git(),
             source,
@@ -101,7 +102,7 @@ impl Repo {
             Some(branch),
             &Options::default(),
             &self.ledger(),
-            redact,
+            redaction,
             &FixedClock,
         )
         .unwrap()
@@ -183,9 +184,9 @@ fn calls(r: &Report) -> String {
 fn recording_twice_under_keyed_redaction_appends_nothing_the_second_time() {
     let repo = Repo::new();
     let src = source(&repo);
-    let red = KeyedRedact::new(repo.salt(), false);
-    assert_eq!(repo.record(&src, &red), 3);
-    assert_eq!(repo.record(&src, &red), 0);
+    let red = RecordRedaction::Keyed { names: false };
+    assert_eq!(repo.record(&src, red), 3);
+    assert_eq!(repo.record(&src, red), 0);
     assert_eq!(
         std::fs::read_to_string(repo.ledger())
             .unwrap()
@@ -199,7 +200,7 @@ fn recording_twice_under_keyed_redaction_appends_nothing_the_second_time() {
 fn a_redacted_ledger_plus_the_same_live_calls_counts_each_once() {
     let repo = Repo::new();
     let src = source(&repo);
-    repo.record(&src, &KeyedRedact::new(repo.salt(), false));
+    repo.record(&src, RecordRedaction::Keyed { names: false });
     let alone = repo.report(None);
     let both = repo.report(Some(&src));
     assert_eq!(
@@ -218,8 +219,8 @@ fn a_mixed_ledger_plus_live_counts_each_distinct_call_once() {
     let src = source(&repo);
     // req-a unredacted, then all three redacted: req-a is the documented twice-recorded case.
     let first = FakeSource(vec![src.0[0].clone()], src.1.clone());
-    repo.record(&first, &Identity);
-    repo.record(&src, &KeyedRedact::new(repo.salt(), false));
+    repo.record(&first, RecordRedaction::Off);
+    repo.record(&src, RecordRedaction::Keyed { names: false });
     let ledger_alone = repo.report(None);
     let both = repo.report(Some(&src));
     assert_eq!(calls(&both), calls(&ledger_alone));
@@ -233,7 +234,7 @@ fn a_live_only_call_is_added_once_to_a_redacted_ledger() {
     let repo = Repo::new();
     let src = source(&repo);
     let two = FakeSource(src.0[..2].to_vec(), src.1.clone());
-    repo.record(&two, &KeyedRedact::new(repo.salt(), false));
+    repo.record(&two, RecordRedaction::Keyed { names: false });
     let info = repo.report(Some(&src)).ledger.unwrap();
     assert_eq!((info.live_only, info.in_both), (1, 2));
 }
@@ -242,7 +243,7 @@ fn a_live_only_call_is_added_once_to_a_redacted_ledger() {
 fn a_missing_salt_is_surfaced_and_not_guessed() {
     let repo = Repo::new();
     let src = source(&repo);
-    repo.record(&src, &KeyedRedact::new(repo.salt(), false));
+    repo.record(&src, RecordRedaction::Keyed { names: false });
     std::fs::remove_file(repo.root().join(".tally").join("salt")).unwrap();
     let info = repo.report(Some(&src)).ledger.unwrap();
     assert_eq!(info.live_redaction, LiveRedactionMatch::NoSalt);
@@ -253,7 +254,7 @@ fn a_missing_salt_is_surfaced_and_not_guessed() {
 fn a_salt_that_does_not_match_the_lines_is_surfaced() {
     let repo = Repo::new();
     let src = source(&repo);
-    repo.record(&src, &KeyedRedact::new(repo.salt(), false));
+    repo.record(&src, RecordRedaction::Keyed { names: false });
     let other = Salt::from_bytes([7; 32]);
     std::fs::write(
         repo.root().join(".tally").join("salt"),
@@ -268,7 +269,7 @@ fn a_salt_that_does_not_match_the_lines_is_surfaced() {
 fn an_unredacted_ledger_needs_no_salt() {
     let repo = Repo::new();
     let src = source(&repo);
-    repo.record(&src, &Identity);
+    repo.record(&src, RecordRedaction::Off);
     let info = repo.report(Some(&src)).ledger.unwrap();
     assert_eq!(info.live_redaction, LiveRedactionMatch::NotNeeded);
     assert_eq!(info.in_both, 3);
@@ -283,7 +284,7 @@ fn an_ambiguous_call_is_not_counted_twice_in_the_repository_wide_counts() {
     unlinked.parent_session = Some(SessionId::new("s1"));
     unlinked.is_sidechain = true;
     let src = FakeSource(vec![rec("s1", "req-a", 1), unlinked], Vec::new());
-    repo.record(&src, &KeyedRedact::new(repo.salt(), false));
+    repo.record(&src, RecordRedaction::Keyed { names: false });
     let alone = repo.report(None);
     let both = repo.report(Some(&src));
     let ambiguous = |r: &Report| r.summary.footnote.heuristics.ambiguous.calls;
@@ -301,8 +302,8 @@ fn the_footnote_flags_a_mixed_ledger_with_its_counts() {
     let repo = Repo::new();
     let src = source(&repo);
     let first = FakeSource(vec![src.0[0].clone()], src.1.clone());
-    repo.record(&first, &Identity);
-    repo.record(&src, &KeyedRedact::new(repo.salt(), false));
+    repo.record(&first, RecordRedaction::Off);
+    repo.record(&src, RecordRedaction::Keyed { names: false });
     let risk = repo
         .report(Some(&src))
         .summary
@@ -327,7 +328,7 @@ fn the_footnote_flags_a_mixed_ledger_with_its_counts() {
 fn the_footnote_flags_a_live_match_failure_and_is_silent_when_clean() {
     let repo = Repo::new();
     let src = source(&repo);
-    repo.record(&src, &KeyedRedact::new(repo.salt(), false));
+    repo.record(&src, RecordRedaction::Keyed { names: false });
     assert_eq!(
         repo.report(Some(&src)).summary.footnote.double_count,
         None,
@@ -344,7 +345,7 @@ fn the_footnote_flags_a_live_match_failure_and_is_silent_when_clean() {
     assert_eq!(risk.mixed_ledger, None);
 
     let plain = Repo::new();
-    plain.record(&source(&plain), &Identity);
+    plain.record(&source(&plain), RecordRedaction::Off);
     assert_eq!(
         plain
             .report(Some(&source(&plain)))
@@ -371,8 +372,7 @@ fn the_salt_is_read_from_the_tally_dir_that_holds_the_ledger() {
             }],
         );
     let src = source(&wt);
-    let red = KeyedRedact::new(wt.salt(), false);
-    branch_tally_core::report::record_at(
+    record_at(
         &git,
         &src,
         Path::new("/projects"),
@@ -380,7 +380,7 @@ fn the_salt_is_read_from_the_tally_dir_that_holds_the_ledger() {
         Some("feat/x"),
         &Options::default(),
         &LedgerTarget::Default,
-        &red,
+        RecordRedaction::Keyed { names: false },
         &FixedClock,
     )
     .unwrap();
@@ -419,7 +419,7 @@ fn an_agent_branch_finds_its_redacted_and_unredacted_lines() {
         ],
         Vec::new(),
     );
-    repo.record_on(branch, &src, &KeyedRedact::new(repo.salt(), false));
+    repo.record_on(branch, &src, RecordRedaction::Keyed { names: false });
     let redacted_only = repo.report_on(branch, None);
     assert_eq!(redacted_only.summary.total.calls, 2);
     assert_eq!(
@@ -428,7 +428,7 @@ fn an_agent_branch_finds_its_redacted_and_unredacted_lines() {
     );
     // One call also recorded raw: the same agent branch in both spellings, counted and noted.
     let raw = FakeSource(vec![src.0[0].clone()], Vec::new());
-    repo.record_on(branch, &raw, &Identity);
+    repo.record_on(branch, &raw, RecordRedaction::Off);
     let mixed = repo.report_on(branch, None);
     assert_eq!(mixed.summary.total.calls, 3);
     assert!(mixed.summary.footnote.double_count.is_some());
@@ -448,7 +448,7 @@ fn one_hashed_call_under_both_branch_spellings_is_counted_once() {
         ],
         Vec::new(),
     );
-    repo.record_on(branch, &src, &KeyedRedact::new(repo.salt(), false));
+    repo.record_on(branch, &src, RecordRedaction::Keyed { names: false });
     // Respell every line's branch as the raw name, as a ledger written before branch hashing
     // would hold it: the same hashed request ids now sit under both spellings.
     let text = std::fs::read_to_string(repo.ledger()).unwrap();
@@ -460,4 +460,125 @@ fn one_hashed_call_under_both_branch_spellings_is_counted_once() {
     let report = repo.report_on(branch, None);
     assert_eq!(report.summary.total.calls, 2, "a call was counted twice");
     assert_eq!(report.ledger.unwrap().collapsed_lines, 2);
+}
+
+/// A source with nothing for the branch, so `record` has nothing to append.
+fn empty_source() -> FakeSource {
+    FakeSource(Vec::new(), Vec::new())
+}
+
+fn record_default(
+    repo: &Repo,
+    src: &FakeSource,
+    redaction: RecordRedaction,
+) -> Result<branch_tally_core::report::Recorded, ReportError> {
+    record_at(
+        &repo.git(),
+        src,
+        Path::new("/projects"),
+        &repo.root(),
+        Some("feat/x"),
+        &Options::default(),
+        &LedgerTarget::Default,
+        redaction,
+        &FixedClock,
+    )
+}
+
+#[test]
+fn keyed_record_with_no_tally_dir_creates_no_salt_and_writes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = Repo { dir };
+    let out = record_default(
+        &repo,
+        &source(&repo),
+        RecordRedaction::Keyed { names: false },
+    )
+    .unwrap();
+    assert!(out.outcome.tally_absent);
+    assert_eq!(out.outcome.appended, 0);
+    assert!(
+        !repo.root().join(".tally").exists(),
+        "nothing may be created"
+    );
+}
+
+#[test]
+fn keyed_record_with_nothing_to_append_creates_no_salt() {
+    let repo = Repo::new();
+    let out = record_default(
+        &repo,
+        &empty_source(),
+        RecordRedaction::Keyed { names: false },
+    )
+    .unwrap();
+    assert_eq!(out.outcome.appended, 0);
+    assert!(
+        !repo.root().join(".tally").join("salt").exists(),
+        "a salt is made only when a line is appended"
+    );
+    // Once the lines are held, a second record appends nothing and leaves the salt alone.
+    let src = source(&repo);
+    record_default(&repo, &src, RecordRedaction::Keyed { names: false }).unwrap();
+    let salt = std::fs::read(repo.root().join(".tally").join("salt")).unwrap();
+    let again = record_default(&repo, &src, RecordRedaction::Keyed { names: false }).unwrap();
+    assert_eq!(again.outcome.appended, 0);
+    assert_eq!(
+        std::fs::read(repo.root().join(".tally").join("salt")).unwrap(),
+        salt
+    );
+}
+
+#[test]
+fn keyed_record_hashes_under_the_salt_it_persisted_in_the_target() {
+    let repo = Repo::new();
+    let out = record_default(
+        &repo,
+        &source(&repo),
+        RecordRedaction::Keyed { names: false },
+    )
+    .unwrap();
+    assert_eq!(out.outcome.appended, 3);
+    let salt = repo.persisted_salt().expect("the salt was persisted");
+    let text = std::fs::read_to_string(repo.ledger()).unwrap();
+    assert_eq!(text.lines().count(), 3);
+    for line in text.lines() {
+        assert!(line.contains(&salt.fingerprint()), "line not stamped");
+        assert!(!line.contains("req-"), "a raw request id was written");
+    }
+    // The persisted salt matches live calls, which needs the salt the lines were hashed by.
+    let both = repo.report(Some(&source(&repo)));
+    assert_eq!(
+        both.ledger.unwrap().live_redaction,
+        LiveRedactionMatch::Matched
+    );
+}
+
+#[test]
+fn keyed_record_to_an_explicit_ledger_needs_the_main_checkouts_tally_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = Repo { dir };
+    let elsewhere = tempfile::tempdir().unwrap();
+    let path = elsewhere.path().join("ledger.jsonl");
+    let go = || {
+        record(
+            &repo.git(),
+            &source(&repo),
+            Path::new("/projects"),
+            &repo.root(),
+            Some("feat/x"),
+            &Options::default(),
+            &path,
+            RecordRedaction::Keyed { names: false },
+            &FixedClock,
+        )
+    };
+    let err = go().unwrap_err();
+    assert!(matches!(err, ReportError::NoSaltHome), "{err:?}");
+    assert!(!path.exists());
+    // With the `.tally/` it records, and the salt lands there.
+    std::fs::create_dir(repo.root().join(".tally")).unwrap();
+    go().unwrap();
+    assert!(repo.persisted_salt().is_some());
+    assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 3);
 }
