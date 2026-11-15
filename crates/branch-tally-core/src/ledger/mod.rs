@@ -21,11 +21,13 @@
 
 mod captures;
 mod check;
+mod keyed_append;
 mod redaction;
 mod tally_dir;
 
 use std::path::{Path, PathBuf};
 
+pub use keyed_append::{append_keyed_default, append_keyed_explicit};
 pub use redaction::{
     KeyedRedact, RedactOutcome, SALT_FILE, Salt, redact_ledger, redact_ledger_default,
 };

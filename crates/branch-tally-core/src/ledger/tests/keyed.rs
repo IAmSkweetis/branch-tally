@@ -470,3 +470,5 @@ fn backfill_hashes_worktree_names() {
 }
 
 mod audit;
+
+mod appends;
