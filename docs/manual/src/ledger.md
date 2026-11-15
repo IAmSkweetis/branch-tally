@@ -107,9 +107,10 @@ appended 3, skipped 0, branch feat/x
 
 - **It only writes the file.** It does not `git add` or commit anything. Commit the ledger
   yourself.
-- **It hashes identifiers.** By default the request, session and agent ids, and worktree names,
-  are written as keyed hashes, and each line carries a `redaction` field. Branch names, models,
-  token counts and times are written as they are. `--no-ledger-redact` writes raw ids. See
+- **It hashes identifiers.** By default the request, session and agent ids, worktree names and
+  the id in a `worktree-agent-<id>` branch name are written as keyed hashes, and each line carries
+  a `redaction` field. Other branch names, models, token counts and times are written as they
+  are. `--no-ledger-redact` writes raw ids. See
   [Ledger Redaction](ledger-redaction.md).
 - **It is safe to run again.** Each line is keyed by the API call's request id and the branch it
   was recorded for. `record` appends only keys the ledger does not hold yet, so a second run
@@ -189,8 +190,8 @@ What a ledger report tells you on stderr, as counts only:
 | `note: ledger mixes modes (claim, timeline); the numbers combine them` | The branch was recorded under more than one attribution mode. |
 | `note: skipped N ledger line(s): …` | Lines that were malformed or written by an unsupported ledger version were skipped and counted. |
 | `note: N record(s) had an unreadable timestamp; they were kept but are undated` | Ledger lines whose `ts` is not strict RFC 3339 (see [Timestamps](cli.md#timestamps)). The lines are used and counted, but treated as having no timestamp. With `--with-live`, a separate line of the same form counts the live transcripts' records. |
-| `note: ledger holds N unredacted line(s) and M redacted line(s) under K salt(s); a call recorded in more than one form may be counted twice…` | The ledger mixes raw and hashed lines, or lines hashed under more than one salt. A call recorded in both forms is counted twice. Also printed by `project`. See [Mixed ledgers](ledger-redaction.md#mixed-ledgers). |
-| `note: live calls could not be matched against the redacted ledger lines (…); the total and the repository-wide counts may count a call twice` | With `--with-live`: the local salt is missing, unreadable, or doesn't match the ledger's redacted lines, so a call in both may be counted twice. See [Combining the ledger with live transcripts](ledger-redaction.md#combining-the-ledger-with-live-transcripts). |
+| `note: ledger holds N unredacted line(s) and M redacted line(s) under K salt(s); a call recorded in more than one form may be counted twice…` | The ledger mixes raw and hashed lines, or lines hashed under more than one salt. A call recorded in both forms is counted twice. Also printed by `project`. `report` also states it in the report, in a bold "Total may count some calls twice" line and the JSON `doubleCount` key. See [Mixed ledgers](ledger-redaction.md#mixed-ledgers). |
+| `note: live calls could not be matched against the redacted ledger lines (…); the total and the repository-wide counts may count a call twice` | With `--with-live`: the local salt is missing, unreadable, or doesn't match the ledger's redacted lines, so a call in both may be counted twice. The report states it too, as above. See [Combining the ledger with live transcripts](ledger-redaction.md#combining-the-ledger-with-live-transcripts). |
 | `note: N ledger request(s) had conflicting lines; kept the latest` | Printed only with `--allow-ledger-conflicts`. Two lines with the same key held different data, and the one with the latest `recorded_at` was used. See [Conflicting ledger lines](#conflicting-ledger-lines). |
 
 A duplicate line, such as one left by a union merge or by recording twice, is collapsed silently:
@@ -394,9 +395,9 @@ One JSON object per line, append-only. A line holds:
 | `agent_id` | The subagent's id, when a subagent made the call. Hashed by default. |
 | `ts` | The call's timestamp, as the transcript recorded it. Left out when the transcript's timestamp is missing or not strict RFC 3339 (see [Timestamps](cli.md#timestamps)). |
 | `model` | The model id. |
-| `recorded_for` | The branch `record` was run for. |
+| `recorded_for` | The branch `record` was run for. A `worktree-agent-<id>` name has its id hashed by default. |
 | `mode` | The attribution mode: `claim`, `strict` or `timeline`. |
-| `branch` | The branch attribution assigned to the call. |
+| `branch` | The branch attribution assigned to the call. A `worktree-agent-<id>` name has its id hashed by default. |
 | `basis` | How that branch was decided, such as stamped by the transcript, rolled up from a subagent's dispatcher, or `captured` from [hook captures](captures.md). |
 | `kept_by` | Why the call was kept for the branch: its own branch matched, or its session was claimed. |
 | `skill`, `agent` | The skill and named agent that made the call, if any. Hashed only with `ledger-redact-names` on. |
@@ -414,11 +415,12 @@ worktree outside the main checkout is stored without a name, and `record` says s
 
 ### Redaction and the ledger
 
-By default `record` hashes the request, session and agent ids and the worktree names it writes,
-with a salt committed in `.tally/salt`. Branch names, models, token counts and full timestamps are
-written as they are. The salt is not a secret, and git history keeps any line committed before
-redaction was on. [Ledger Redaction](ledger-redaction.md) lists exactly which fields a committed
-ledger makes public, with and without redaction, and what hashing does not protect against.
+By default `record` hashes the request, session and agent ids, the worktree names and the ids in
+agent branch names it writes, with a salt committed in `.tally/salt`. Other branch names, models,
+token counts and full timestamps are written as they are. The salt is not a secret, and git history
+keeps any line committed before redaction was on. [Ledger Redaction](ledger-redaction.md) lists
+exactly which fields a committed ledger makes public, with and without redaction, and what hashing
+does not protect against.
 
 `--redact` applies to report output, including a report from the ledger:
 `branch-tally report --from-ledger --redact` hides the identifiers in what it prints, while the

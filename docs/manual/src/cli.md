@@ -198,15 +198,19 @@ and `<!-- token-report:end -->` markers. It has, in order:
 3. a bold "Token total is at least …" line, when some calls were ambiguous;
 4. a bold "Totals overflowed and are unreliable" statement, when a total was too large to hold
    (see [Overflowed totals](#overflowed-totals));
-5. a footnote: the branch and mode, session and subagent counts, the heuristics used, the
+5. a bold "Total may count some calls twice" statement, when a report from the ledger may count a
+   call twice: the ledger mixes redacted and unredacted lines or several salts, or live calls
+   could not be matched to its redacted lines. It names the cause and says "This is an overcount,
+   not a floor". See [Mixed ledgers](ledger-redaction.md#mixed-ledgers);
+6. a footnote: the branch and mode, session and subagent counts, the heuristics used, the
    work-branch rule in timeline mode, `totals overflowed, unreliable` when they did, whether
    identifiers were redacted, the price table's date and source, unpriced models, and a reminder
    that costs are estimates at list API rates;
-6. a line such as "1 call(s) / 1,115 tokens in this repository carry no branch stamp and are not
+7. a line such as "1 call(s) / 1,115 tokens in this repository carry no branch stamp and are not
    attributed to any branch", when there are any (see [Unstamped calls](#unstamped-calls));
-7. a **Subagent usage** section, when subagents did part of the work: one row per subagent and
+8. a **Subagent usage** section, when subagents did part of the work: one row per subagent and
    model with its workspace, plus how many subagent calls had no dispatch link;
-8. a collapsed **Breakdown by skill / agent** table.
+9. a collapsed **Breakdown by skill / agent** table.
 
 With `--no-cost`, or `cost = false` in the config file, the cost columns are left out.
 
@@ -264,6 +268,7 @@ contributors control. The Markdown report shows them as text, never as formattin
 | `unpricedModels` | Model ids that had no price. |
 | `priceTable` | `asOf` (the table's date) and `source`: `"bundled"`, `"cache"` or `"override"`. |
 | `heuristics` | Calls and tokens per attribution heuristic (`sessionClaim`, `worktreeRecovery`, `originRecovery`, `dispatcherRollUp`, `timelineForward`, `timelineCarried`) and `ambiguous`, plus `isFloor`. `captured` is added only when [hook captures](captures.md) placed at least one call. Absent when no heuristic applied. |
+| `doubleCount` | Present when the total may count some calls twice, an overcount rather than a floor: `mixedLedger` (`unredactedLines`, `redactedLines`, `distinctSalts`) when the ledger is mixed, and `liveMatch` (`"no-salt"`, `"salt-unreadable"`, `"fingerprint-mismatch"` or `"partially-matched"`) when live calls could not be matched to redacted lines. Either or both. It does not change `totalCostIsFloor`. See [Mixed ledgers](ledger-redaction.md#mixed-ledgers). Absent otherwise. |
 | `unstamped` | `calls` and `tokens`: the calls in the repository that carry no branch stamp and were not attributed to any branch (see [Unstamped calls](#unstamped-calls)). Absent when there are none, and in a report from the ledger alone. |
 | `subagents` | Subagent totals (calls, tokens, dispatched subagents, workspaces, worktrees, unattributed and unlinked counts, cost) and `rows`, one per subagent and model with token counts and cost. Present when subagents did part of the work. |
 | `sessions` | One object per session: `id`, `origin` (`"main"` or the worktree), `first` and `last` timestamps, `calls`, `tokens` and `agents`. |
@@ -446,7 +451,7 @@ the [ledger](ledger.md). It writes only the ledger file: no `git add`, no commit
 | `--work-branch <REGEX>` | | Timeline mode only: a regex naming the work branches, as for `report`. |
 | `--config <PATH>` | user config path | Read this config file instead of the default location. It must exist. |
 | `--ledger <PATH>` | `.tally/ledger.jsonl` | The ledger file. The default is at the root of the current checkout. |
-| `--ledger-redact` | on | Hash ids and worktree names in the lines written, with the salt in `.tally/salt`. Undoes `ledger-redact = false` in the config file. |
+| `--ledger-redact` | on | Hash ids, worktree names and the ids in `worktree-agent-<id>` branch names in the lines written, with the salt in `.tally/salt` beside the ledger. Undoes `ledger-redact = false` in the config file. |
 | `--no-ledger-redact` | | Write raw ids. Undoes `ledger-redact = true`, the default. |
 | `--ledger-redact-names` | off | With ledger redaction, also hash agent and skill names. |
 | `--no-ledger-redact-names` | | Keep agent and skill names readable, the default. Undoes `ledger-redact-names = true` in the config file. |
@@ -467,14 +472,14 @@ no .tally/ directory: nothing recorded (create it to opt in)
 ```
 
 An explicit `--ledger <PATH>` is written whether or not the checkout has `.tally/`, and a symbolic
-link there is followed. With redaction on, though, the salt must be in the main checkout's
+link there is followed. With redaction on, though, its salt is the one in the main checkout's
 `.tally/`, so `--ledger` without it is an error unless you pass `--no-ledger-redact`.
 
 | Message (stderr, exit 1) | Cause |
 | ------------------------ | ----- |
 | `refusing to use <path>: it is …` | `.tally`, `.tally/ledger.jsonl`, `.tally/captures.jsonl` or `.tally/salt` is a symbolic link or the wrong kind of file. Nothing is written. See [Symbolic links are refused](ledger.md#symbolic-links-are-refused). |
 | `ledger redaction needs a .tally/ directory in the main checkout to hold its salt: create it, or pass --no-ledger-redact` | `--ledger <PATH>` with redaction on, and the main checkout has no `.tally/`. Nothing is written. |
-| `<path> is not a valid salt (expected 64 lowercase hex characters)` | `.tally/salt` exists but is damaged. It is never replaced. See [The salt](ledger-redaction.md#the-salt). |
+| `<path> is empty or damaged: it is not a salt (64 lowercase hex characters). It is never replaced automatically. It can be deleted to have a new one created; lines already hashed with the old salt will then read as a different salt` | `.tally/salt` exists but is empty or damaged. It is never replaced automatically. See [The salt](ledger-redaction.md#the-salt). |
 
 `record` also fails with the transcript errors listed under [Common errors](#common-errors).
 
@@ -677,34 +682,44 @@ branch-tally ledger redact [--ledger <PATH>] [--repo <PATH>] [--config <PATH>]
 ```
 
 Rewrites the ledger's unredacted lines in place with the keyed hash that `record` uses by default,
-so they match the lines `record` writes now. It hashes every line that parses and has no
-`redaction` field, using `.tally/salt` in the main checkout, which it creates when missing. Lines
-already redacted and lines that don't parse are left byte for byte as they are. It runs even with
+so they match the lines `record` writes now. It hashes the ids, worktree names and
+`worktree-agent-<id>` branch names of every line that parses and has no `redaction` field, and of
+every line whose `redaction` field sits over raw ids (counted as restamped). It uses the salt
+beside the ledger, copied from the main checkout's or created when missing, as described in
+[The salt](ledger-redaction.md#the-salt). Lines genuinely redacted and lines that don't parse are
+left byte for byte as they are. It runs even with
 `ledger-redact = false` in the config file. The ledger is replaced only after the rewrite succeeds,
 and nothing is committed. What it changes, and why git history still holds the old lines, is in
 [Rewriting older lines](ledger-redaction.md#rewriting-older-lines).
 
 | Option | Default | Does |
 | ------ | ------- | ---- |
-| `--ledger <PATH>` | `.tally/ledger.jsonl` | The ledger file. The default is at the root of the current checkout. The salt is still `.tally/salt` in the main checkout. |
+| `--ledger <PATH>` | `.tally/ledger.jsonl` | The ledger file. The default is at the root of the current checkout. With `--ledger`, the salt is `.tally/salt` in the main checkout. |
 | `--repo <PATH>` | `.` | The repository. |
 | `--config <PATH>` | user config path | Read this config file instead of the default location. It must exist. Only `ledger-redact-names` is used. |
 | `--ledger-redact-names` | off | Hash agent and skill names too. |
 | `--no-ledger-redact-names` | | Keep agent and skill names readable, the default. Undoes `ledger-redact-names = true` in the config file. |
 
-It prints one line on stdout:
+It prints one line on stdout, and notes on stderr when there is something to say:
 
 ```text
-redacted 3 line(s), 3 already redacted, 1 unparseable left as-is
+redacted 0 line(s), 1 restamped, 3 already redacted, 1 unparseable left as-is
+note: 1 unparseable line(s) were left as-is and may still hold raw ids
 ```
 
-Without a `.tally/` directory in the main checkout it changes and creates nothing, and prints
+| Note (stderr) | Meaning |
+| ------------- | ------- |
+| `note: N unparseable line(s) were left as-is and may still hold raw ids` | Lines that don't parse, or whose `ts` is not strict RFC 3339, were not rewritten. |
+| `note: lines already redacted without names are not re-hashed; the names opt-in cannot be backfilled onto stamped lines` | With `--ledger-redact-names` (or `ledger-redact-names = true`), lines already redacted keep their agent and skill names. |
+
+Without a `.tally/` directory beside the default ledger it changes and creates nothing, and prints
 `no .tally/ directory: nothing redacted (create it to opt in)` instead (exit 0).
 
 | Message (stderr, exit 1) | Cause |
 | ------------------------ | ----- |
-| `ledger redaction needs a .tally/ directory in the main checkout to hold its salt: create it, or pass --no-ledger-redact` | `--ledger <PATH>` was given and the main checkout has no `.tally/`. `ledger redact` has no `--no-ledger-redact`: create `.tally/` in the main checkout. |
-| `<path> is not a valid salt (expected 64 lowercase hex characters)` | `.tally/salt` exists but is damaged. It is never replaced. |
+| `ledger redact needs a .tally/ directory in the main checkout to hold its salt: create it first` | `--ledger <PATH>` was given and the main checkout has no `.tally/`. |
+| `<path> is empty or damaged: it is not a salt (64 lowercase hex characters). It is never replaced automatically. It can be deleted to have a new one created; lines already hashed with the old salt will then read as a different salt` | `.tally/salt` exists but is empty or damaged. It is never replaced automatically. |
+| `the ledger changed while it was being rewritten; nothing was replaced, run it again` | Something, such as a `record`, wrote to the ledger during the rewrite. The ledger is as it was; run `ledger redact` again. |
 | `refusing to use <path>: it is …` | `.tally`, `.tally/ledger.jsonl` or `.tally/salt` is a symbolic link or the wrong kind of file. See [Symbolic links are refused](ledger.md#symbolic-links-are-refused). |
 
 ## `branch-tally prices update`
@@ -835,11 +850,13 @@ format = md (default)
 cost = true (default)
 redact = false (default)
 redact-names = true (default)
+ledger-redact = true (default)
+ledger-redact-names = false (default)
 ```
 
-It does not list `ledger-redact` or `ledger-redact-names`. A `work-branch` that is set while the
-mode is not timeline carries `[inactive: mode is not timeline]`. `--config <PATH>` reads that file
-instead of the default location; it must exist. See the [Config reference](config.md).
+A `work-branch` that is set while the mode is not timeline carries
+`[inactive: mode is not timeline]`. `--config <PATH>` reads that file instead of the default
+location; it must exist. See the [Config reference](config.md).
 
 ## `branch-tally config init`
 
