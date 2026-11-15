@@ -35,7 +35,7 @@ pub(crate) fn init(args: &ConfigInitArgs) -> Result<String, String> {
     let path = match &args.path {
         Some(p) => p.clone(),
         None => config::default_config_path(&SystemEnv).ok_or(
-            "Could not determine the config directory (set APPDATA, XDG_CONFIG_HOME or HOME,              or pass --path)",
+            "Could not determine the config directory (set APPDATA, XDG_CONFIG_HOME or HOME, or pass --path)",
         )?,
     };
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
