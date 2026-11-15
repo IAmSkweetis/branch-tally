@@ -89,7 +89,12 @@ fn an_agent_worktree_branch_is_hashed_and_other_names_are_not() {
     let r = KeyedRedact::new(test_salt(), false);
     let want = format!("worktree-agent-{}", test_salt().hash("a1b2c3"));
     assert_eq!(r.redact_branch("worktree-agent-a1b2c3"), want);
-    assert_eq!(r.redact_branch(&want), want, "never hashed twice");
+    // A requested name is always hashed, even when its id happens to look like a hash.
+    let raw_hex = "0123456789abcdef0123456789abcdef";
+    assert_eq!(
+        r.redact_branch(&format!("worktree-agent-{raw_hex}")),
+        format!("worktree-agent-{}", test_salt().hash(raw_hex))
+    );
     for plain in [
         "main",
         "feat/x",
@@ -281,4 +286,63 @@ fn replace_if_unchanged_checks_the_expected_bytes() {
     tally.replace_if_unchanged("f", b"new\n", b"old\n").unwrap();
     assert_eq!(tally.read("f").unwrap().unwrap(), b"new\n");
     assert_eq!(std::fs::read_dir(tally.path()).unwrap().count(), 1);
+}
+
+// ---- re-audit: stamps and agent branches ----
+
+fn stamped_with_raw_agent_branch() -> LedgerEntry {
+    // What an earlier build wrote: hashed ids, a stamp, and a raw agent branch.
+    let mut e = KeyedRedact::new(test_salt(), false).redact(full_entry());
+    e.branch = "worktree-agent-a17hexid".to_owned();
+    e.recorded_for = "worktree-agent-a17hexid".to_owned();
+    e
+}
+
+#[test]
+fn a_stamped_line_with_a_raw_agent_branch_is_repaired_without_rehashing_ids() {
+    let r = KeyedRedact::new(test_salt(), false);
+    let before = stamped_with_raw_agent_branch();
+    let after = r.redact(before.clone());
+    let want = format!("worktree-agent-{}", test_salt().hash("a17hexid"));
+    assert_eq!(
+        (after.branch.as_str(), after.recorded_for.as_str()),
+        (want.as_str(), want.as_str())
+    );
+    assert_eq!(
+        after.request_id, before.request_id,
+        "ids are already hashed"
+    );
+    assert_eq!(after.session_id, before.session_id);
+    assert_eq!(after.redaction, Some(test_salt().fingerprint()));
+    // Now it is trustworthy, and a further pass changes nothing.
+    assert_eq!(r.redact(after.clone()), after);
+}
+
+#[test]
+fn a_properly_stamped_agent_branch_is_never_hashed_twice() {
+    let r = KeyedRedact::new(test_salt(), false);
+    let mut e = full_entry();
+    e.branch = "worktree-agent-a1b2c3".to_owned();
+    e.recorded_for = e.branch.clone();
+    let once = r.redact(e);
+    assert_eq!(r.redact(once.clone()), once);
+}
+
+#[test]
+fn the_backfill_restamps_a_stamped_line_with_a_raw_agent_branch() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = path(&dir);
+    write_lines(
+        &p,
+        &[serde_json::to_string(&stamped_with_raw_agent_branch()).unwrap()],
+    );
+    let out = redact_ledger(&p, &KeyedRedact::new(test_salt(), false)).unwrap();
+    assert_eq!(
+        (out.rewritten, out.restamped, out.already_redacted),
+        (0, 1, 0)
+    );
+    let text = std::fs::read_to_string(&p).unwrap();
+    assert!(!text.contains("a17hexid"), "{text}");
+    let again = redact_ledger(&p, &KeyedRedact::new(test_salt(), false)).unwrap();
+    assert_eq!((again.restamped, again.already_redacted), (0, 1));
 }
