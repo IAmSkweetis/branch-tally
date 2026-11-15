@@ -287,7 +287,7 @@ case \$url in
     printf '%s\n' "\$url" >> "$S/curl.urls"
     p=\${url#https://*/}
     cp "$S/api/\$p" "\$out" ;;
-  *) cp "$R/\${url#https://mirror.example.test/}" "\$out" ;;
+  *) cp "$R/\${url#https://mirror.example.test/}" "\$out" 2>/dev/null ;;
 esac
 CURL
   chmod +x "$S/stubs/curl"
@@ -316,7 +316,7 @@ case \$url in
   https://api.github.com/* | https://api.example.test/*)
     p=\${url#https://*/}
     cp "$S/api/\$p" "\$out" ;;
-  *) cp "$R/\${url#https://mirror.example.test/}" "\$out" ;;
+  *) cp "$R/\${url#https://mirror.example.test/}" "\$out" 2>/dev/null ;;
 esac
 WGET
   chmod +x "$S/stubs/wget"
@@ -705,6 +705,33 @@ done
 # 13b. A mirror is announced.
 sh_run --to "$D"
 check "a file:// mirror prints the effective source" contains "$out" "file://$R"
+
+# 13e. F-06: a user:password@ in a mirror or API URL is never printed, in the notice, the
+# scheme refusal or a download error. The URL used for downloads is unchanged.
+fresh userinfo
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mk_curl
+run_install BRANCH_TALLY_INSTALL_BASE_URL=https://user:secret@mirror.example.test/rel "$shell_under_test" "$installer" --to "$D"
+check "userinfo mirror: notice names the host" contains "$out" "Using release mirror: https://mirror.example.test/rel"
+check "userinfo mirror: stdout has no secret" lacks "$out" "secret"
+check "userinfo mirror: stderr has no secret" lacks "$err" "secret"
+check "userinfo mirror: the download error names the host" contains "$err" "could not download https://mirror.example.test/rel/"
+run_install BRANCH_TALLY_INSTALL_BASE_URL=file://user:secret@/nonexistent "$shell_under_test" "$installer" --to "$D" --version v2.0.0
+check "userinfo file mirror: stdout has no secret" lacks "$out" "secret"
+check "userinfo file mirror: stderr has no secret" lacks "$err" "secret"
+check "userinfo file mirror: the notice names the path" contains "$out" "Using release mirror: file:///nonexistent"
+run_install BRANCH_TALLY_INSTALL_BASE_URL=http://user:secret@mirror.example.test "$shell_under_test" "$installer" --to "$D"
+check "userinfo refusal: stderr has no secret" lacks "$err" "secret"
+check "userinfo refusal: stderr names the host" contains "$err" "http://mirror.example.test"
+run_install BRANCH_TALLY_INSTALL_API_URL=https://user:secret@api.example.test/x "$shell_under_test" "$installer" --to "$D"
+check "userinfo api: notice names the host" contains "$out" "Using release API: https://api.example.test/x"
+check "userinfo api: stdout has no secret" lacks "$out" "secret"
+check "userinfo api: stderr has no secret" lacks "$err" "secret"
+run_install BRANCH_TALLY_INSTALL_API_URL=ftp://user:secret@api.example.test "$shell_under_test" "$installer" --to "$D"
+check "userinfo api refusal: stderr has no secret" lacks "$err" "secret"
+run_install BRANCH_TALLY_INSTALL_BASE_URL=file://"$R"/@kept "$shell_under_test" "$installer" --to "$D" --version v2.0.0
+check "an @ in the path is left in the notice" contains "$out" "Using release mirror: file://$R/@kept"
 
 # 13c. Over https, curl is held to HTTPS and TLS 1.2+.
 fresh curlflags

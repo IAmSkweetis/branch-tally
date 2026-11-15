@@ -601,6 +601,26 @@ foreach ($bad in @('http://mirror.example.test', 'ftp://mirror.example.test', 'm
 $res = Invoke-Installer @('-To', $D)
 Test-Case 'a file:// mirror prints the effective source' ($res.Out -like '*Using release mirror: file://*')
 
+# 10b. F-06: a user:password@ in a mirror or API URL is never printed.
+Initialize-Sandbox 'userinfo'
+$R = $script:S.Release; $D = $script:S.Dest
+Build-Release $R 'v2.0.0' $target '2.0.0'
+Build-Latest $R 'v2.0.0'
+$res = Invoke-Installer @('-To', $D, '-Version', 'v2.0.0') @{ BRANCH_TALLY_INSTALL_BASE_URL = 'file://user:secret@/nonexistent' }
+Test-Case 'userinfo file mirror: output has no secret' (($res.Out + $res.Err) -notlike '*secret*')
+Test-Case 'userinfo file mirror: notice names the path' ($res.Out -like '*Using release mirror: file:///nonexistent*')
+Test-Case 'userinfo file mirror: the download error is reported' ($res.Err -like '*could not download file:///nonexistent/*')
+$res = Invoke-Installer @('-To', $D) @{ BRANCH_TALLY_INSTALL_BASE_URL = 'http://user:secret@mirror.example.test' }
+Test-Case 'userinfo refusal: output has no secret' (($res.Out + $res.Err) -notlike '*secret*')
+Test-Case 'userinfo refusal: names the host' ($res.Err -like '*http://mirror.example.test*')
+$res = Invoke-Installer @('-To', $D) @{ BRANCH_TALLY_INSTALL_API_URL = 'file://user:secret@/nonexistent' }
+Test-Case 'userinfo api: output has no secret' (($res.Out + $res.Err) -notlike '*secret*')
+Test-Case 'userinfo api: notice names the path' ($res.Out -like '*Using release API: file:///nonexistent*')
+$res = Invoke-Installer @('-To', $D) @{ BRANCH_TALLY_INSTALL_API_URL = 'ftp://user:secret@api.example.test' }
+Test-Case 'userinfo api refusal: output has no secret' (($res.Out + $res.Err) -notlike '*secret*')
+$res = Invoke-Installer @('-To', $D, '-Version', 'v2.0.0') @{ BRANCH_TALLY_INSTALL_BASE_URL = ('file://' + $R + '/@kept') }
+Test-Case 'an @ in the path is left in the notice' ($res.Out -like '*Using release mirror: file://*@kept*')
+
 # 11. F-06: a tag read from the remote SHA256SUMS must be vMAJOR.MINOR.PATCH.
 Initialize-Sandbox 'badtag'
 $R = $script:S.Release; $D = $script:S.Dest

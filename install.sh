@@ -99,6 +99,23 @@ printable() {
   printf '%s' "$1" | tr -cd 'A-Za-z0-9._/:@=+-'
 }
 
+# without_userinfo <url>: the URL with any user:password@ removed, for printing. The authority
+# is what follows "://" up to the first /, ? or #; everything up to its last @ is dropped. An @
+# in the path is left alone, and a value without "://" is returned unchanged. Only what is
+# printed changes: downloads use the URL as given.
+without_userinfo() {
+  case $1 in
+    *://*) ;;
+    *)
+      printf '%s' "$1"
+      return 0
+      ;;
+  esac
+  wu_rest=${1#*://}
+  wu_auth=${wu_rest%%[/?#]*}
+  printf '%s://%s%s' "${1%%://*}" "${wu_auth##*@}" "${wu_rest#"$wu_auth"}"
+}
+
 # valid_tag <tag>: true when the tag is vMAJOR.MINOR.PATCH, digits only.
 valid_tag() {
   case $1 in
@@ -134,7 +151,8 @@ truthy() {
 fetch() {
   case $1 in
     file://*)
-      cp "${1#file://}" "$2" || return 1
+      # cp's own error would repeat the path, which may hold user:password@; the caller reports.
+      cp "${1#file://}" "$2" 2>/dev/null || return 1
       ;;
     *)
       if [ "$fetch_tool" = curl ]; then
@@ -241,7 +259,7 @@ unverified() {
   fi
   warn "provenance NOT verified: $1."
   warn "The checksum is an integrity check only; it does not prove who built this archive."
-  warn "To verify it yourself, download $url/$archive and run:"
+  warn "To verify it yourself, download $url_shown/$archive and run:"
   warn "  gh attestation verify $archive $GH_PINS"
 }
 
@@ -317,19 +335,22 @@ main() {
   # refused: it would let anyone on the path replace both the archive and its checksum.
   case $base in
     https://* | file://*) ;;
-    *) die "BRANCH_TALLY_INSTALL_BASE_URL must start with https:// or file:// (got '$(printable "$base")')" ;;
+    *) die "BRANCH_TALLY_INSTALL_BASE_URL must start with https:// or file:// (got '$(printable "$(without_userinfo "$base")")')" ;;
   esac
+  # Mirror and API URLs may carry user:password@; only the credential-free form is ever printed.
+  base_shown=$(without_userinfo "$base")
+  api_shown=$(without_userinfo "$api")
   if [ "$base" != "$DEFAULT_BASE_URL" ]; then
-    info "Using release mirror: $base"
+    info "Using release mirror: $base_shown"
   fi
 
   # The latest-release lookup has the same scheme rule, and carries the same trust as the mirror.
   case $api in
     https://* | file://*) ;;
-    *) die "BRANCH_TALLY_INSTALL_API_URL must start with https:// or file:// (got '$(printable "$api")')" ;;
+    *) die "BRANCH_TALLY_INSTALL_API_URL must start with https:// or file:// (got '$(printable "$(without_userinfo "$api")")')" ;;
   esac
   if [ "$api" != "$DEFAULT_API_URL" ]; then
-    info "Using release API: $api"
+    info "Using release API: $api_shown"
   fi
 
   if [ -z "$dest" ]; then
@@ -413,12 +434,12 @@ main() {
     if tag=$(latest_from_api); then
       :
     else
-      warn "could not read the latest release from $api/repos/$REPO/releases/latest (unreachable,"
+      warn "could not read the latest release from $api_shown/repos/$REPO/releases/latest (unreachable,"
       warn "rate limited or an unusable answer). Falling back to the mirror's latest/download/SHA256SUMS."
       warn "'Latest' is from the mirror and was not confirmed by GitHub, so an older release could be"
       warn "served. To choose the release yourself, run: install.sh --version vX.Y.Z"
       fetch "$base/latest/download/SHA256SUMS" "$tmp/latest.sums" ||
-        die "could not download $base/latest/download/SHA256SUMS"
+        die "could not download $base_shown/latest/download/SHA256SUMS"
       resolved=$(sums_name "$tmp/latest.sums" "$target")
       [ -n "$resolved" ] || die "the latest release has no build for $target"
       tag=${resolved#branch-tally-}
@@ -435,9 +456,10 @@ main() {
   esac
   archive=branch-tally-$tag-$target.$ext
   url=$base/download/$tag
+  url_shown=$base_shown/download/$tag
 
   info "Installing branch-tally $tag for $target"
-  fetch "$url/SHA256SUMS" "$tmp/SHA256SUMS" || die "could not download $url/SHA256SUMS"
+  fetch "$url/SHA256SUMS" "$tmp/SHA256SUMS" || die "could not download $url_shown/SHA256SUMS"
   expected=$(awk -v a="$archive" '{ n = $2; sub(/^\*/, "", n); if (n == a) { print $1; exit } }' "$tmp/SHA256SUMS")
   [ -n "$expected" ] || die "$archive is not listed in SHA256SUMS; refusing to install"
   case $expected in
@@ -445,7 +467,7 @@ main() {
   esac
   [ "${#expected}" -eq 64 ] || die "malformed checksum for $archive in SHA256SUMS"
 
-  fetch "$url/$archive" "$tmp/$archive" || die "could not download $url/$archive"
+  fetch "$url/$archive" "$tmp/$archive" || die "could not download $url_shown/$archive"
   actual=$(sha256_of "$tmp/$archive")
   expected=$(printf '%s' "$expected" | tr 'A-F' 'a-f')
   [ "$actual" = "$expected" ] || die "checksum mismatch for $archive (expected $expected, got $actual); nothing installed"

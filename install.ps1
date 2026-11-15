@@ -89,6 +89,20 @@ function Install-BranchTally {
   $defaultBase = "https://github.com/$repo/releases"
   $defaultApi = 'https://api.github.com'
   $maxRedirects = 5
+
+  # Get-UrlWithoutUserinfo: the URL with any user:password@ removed, for printing. The authority is
+  # what follows "://" up to the first /, ? or #; everything up to its last @ is dropped. An @ in
+  # the path is left alone, and a value without "://" is returned unchanged. Only what is printed
+  # changes: downloads use the URL as given.
+  function Get-UrlWithoutUserinfo([string]$Url) {
+    $i = $Url.IndexOf('://')
+    if ($i -lt 0) { return $Url }
+    $rest = $Url.Substring($i + 3)
+    $e = $rest.IndexOfAny([char[]]'/?#')
+    if ($e -lt 0) { $e = $rest.Length }
+    $auth = $rest.Substring(0, $e)
+    return $Url.Substring(0, $i + 3) + $auth.Substring($auth.LastIndexOf('@') + 1) + $rest.Substring($e)
+  }
   $issuer = 'https://token.actions.githubusercontent.com'
   # The signer must be this repository's release workflow, run from main. release.yml starts from
   # workflow_run on main, and a manual dispatch on another branch is not a release.
@@ -114,16 +128,19 @@ function Install-BranchTally {
   # The release source must be https:// or file://, as for `branch-tally update`. Plain http is
   # refused: it would let anyone on the path replace both the archive and its checksum.
   if ($base -notmatch '^(https|file)://') {
-    $shown = $base -replace '[^A-Za-z0-9._/:@=+-]', ''
+    $shown = (Get-UrlWithoutUserinfo $base) -replace '[^A-Za-z0-9._/:@=+-]', ''
     throw "BRANCH_TALLY_INSTALL_BASE_URL must start with https:// or file:// (got '$shown')"
   }
-  if ($base -ne $defaultBase) { Write-Output "Using release mirror: $base" }
+  # Mirror and API URLs may carry user:password@; only the credential-free form is ever printed.
+  $baseShown = Get-UrlWithoutUserinfo $base
+  $apiShown = Get-UrlWithoutUserinfo $api
+  if ($base -ne $defaultBase) { Write-Output "Using release mirror: $baseShown" }
   # The latest-release lookup has the same scheme rule, and carries the same trust as the mirror.
   if ($api -notmatch '^(https|file)://') {
-    $shown = $api -replace '[^A-Za-z0-9._/:@=+-]', ''
+    $shown = (Get-UrlWithoutUserinfo $api) -replace '[^A-Za-z0-9._/:@=+-]', ''
     throw "BRANCH_TALLY_INSTALL_API_URL must start with https:// or file:// (got '$shown')"
   }
-  if ($api -ne $defaultApi) { Write-Output "Using release API: $api" }
+  if ($api -ne $defaultApi) { Write-Output "Using release API: $apiShown" }
 
   if ($Version -ne 'latest') {
     if (-not $Version.StartsWith('v')) { $Version = "v$Version" }
@@ -297,7 +314,7 @@ function Install-BranchTally {
     }
     [Console]::Error.WriteLine("install.ps1: warning: provenance NOT verified: $Reason.")
     [Console]::Error.WriteLine('The checksum is an integrity check only; it does not prove who built this archive.')
-    [Console]::Error.WriteLine("To verify it yourself, download $url/$archive and run:")
+    [Console]::Error.WriteLine("To verify it yourself, download $urlShown/$archive and run:")
     [Console]::Error.WriteLine("  gh attestation verify $archive $($ghPins -join ' ')")
   }
 
@@ -366,7 +383,7 @@ function Install-BranchTally {
     if ($Version -eq 'latest') {
       $tag = Get-LatestTagFromApi $tmp
       if (-not $tag) {
-        [Console]::Error.WriteLine("install.ps1: warning: could not read the latest release from $api/repos/$repo/releases/latest (unreachable,")
+        [Console]::Error.WriteLine("install.ps1: warning: could not read the latest release from $apiShown/repos/$repo/releases/latest (unreachable,")
         [Console]::Error.WriteLine("rate limited or an unusable answer). Falling back to the mirror's latest/download/SHA256SUMS.")
         [Console]::Error.WriteLine("'Latest' is from the mirror and was not confirmed by GitHub, so an older release could be")
         [Console]::Error.WriteLine('served. To choose the release yourself, run: install.ps1 -Version vX.Y.Z')
@@ -374,7 +391,7 @@ function Install-BranchTally {
         try {
           Get-Remote "$base/latest/download/SHA256SUMS" $latestSums
         } catch {
-          throw "could not download $base/latest/download/SHA256SUMS"
+          throw "could not download $baseShown/latest/download/SHA256SUMS"
         }
         $pattern = '^branch-tally-(v[0-9]+\.[0-9]+\.[0-9]+)-' + [regex]::Escape($target) + '\.zip\z'
         foreach ($line in [System.IO.File]::ReadAllLines($latestSums)) {
@@ -392,16 +409,17 @@ function Install-BranchTally {
 
     $archive = "branch-tally-$tag-$target.zip"
     $url = "$base/download/$tag"
+    $urlShown = "$baseShown/download/$tag"
     Write-Output "Installing branch-tally $tag for $target"
 
     $sums = Join-Path $tmp 'SHA256SUMS'
-    try { Get-Remote "$url/SHA256SUMS" $sums } catch { throw "could not download $url/SHA256SUMS" }
+    try { Get-Remote "$url/SHA256SUMS" $sums } catch { throw "could not download $urlShown/SHA256SUMS" }
     $expected = Get-ExpectedHash $sums $archive
     if (-not $expected) { throw "$archive is not listed in SHA256SUMS; refusing to install" }
     if ($expected -notmatch '^[0-9a-f]{64}\z') { throw "malformed checksum for $archive in SHA256SUMS" }
 
     $zip = Join-Path $tmp $archive
-    try { Get-Remote "$url/$archive" $zip } catch { throw "could not download $url/$archive" }
+    try { Get-Remote "$url/$archive" $zip } catch { throw "could not download $urlShown/$archive" }
     $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actual -ne $expected) {
       throw "checksum mismatch for $archive (expected $expected, got $actual); nothing installed"
