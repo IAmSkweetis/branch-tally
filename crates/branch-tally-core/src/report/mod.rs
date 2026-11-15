@@ -174,6 +174,20 @@ pub enum ReportError {
         /// The requested agent branch.
         branch: String,
     },
+    /// A ledger-only report of a `worktree-agent-<id>` branch whose ledger holds lines hashed
+    /// under more than one salt: only the local salt's spelling of the branch can be computed, so
+    /// lines under the others can't be selected. Refused rather than reported short
+    /// (Governance II).
+    #[error(
+        "can't select {branch} from a ledger hashed under {salts} salts: agent branches are \
+         stored hashed, and lines under a salt other than the local one can't be found"
+    )]
+    AgentBranchAcrossSalts {
+        /// The requested agent branch.
+        branch: String,
+        /// How many salt fingerprints the ledger's redacted lines carry.
+        salts: u64,
+    },
     /// A ledger-only report was asked for and there is no ledger file.
     #[error("no ledger at {}", .path.display())]
     LedgerMissing {
@@ -933,9 +947,20 @@ fn refuse_unselectable_agent_branch(
     salted: bool,
     stats: &crate::ledger::ReadStats,
 ) -> Result<(), ReportError> {
-    if !live && !salted && stats.redacted_lines > 0 && crate::ledger::is_agent_branch(branch) {
+    if live || stats.redacted_lines == 0 || !crate::ledger::is_agent_branch(branch) {
+        return Ok(());
+    }
+    if !salted {
         return Err(ReportError::AgentBranchNeedsSalt {
             branch: branch.to_owned(),
+        });
+    }
+    // One salt gives one hashed spelling; lines under any other salt stay unread.
+    let salts = stats.redaction_fingerprints.len() as u64;
+    if salts > 1 {
+        return Err(ReportError::AgentBranchAcrossSalts {
+            branch: branch.to_owned(),
+            salts,
         });
     }
     Ok(())

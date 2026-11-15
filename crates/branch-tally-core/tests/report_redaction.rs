@@ -662,3 +662,42 @@ fn a_ledger_only_agent_branch_report_without_the_salt_is_refused_not_short() {
         "{err:?}"
     );
 }
+
+#[test]
+fn a_ledger_only_agent_branch_report_across_two_salts_is_refused_not_short() {
+    let repo = Repo::new();
+    let branch = "worktree-agent-abc123";
+    let salt_file = repo.root().join(".tally").join("salt");
+    let first = FakeSource(vec![rec_on(branch, "s1", "req-a", 1)], Vec::new());
+    repo.record_on(branch, &first, RecordRedaction::Keyed { names: false });
+    let local = std::fs::read(&salt_file).unwrap();
+    // Another machine's salt: its lines spell the agent branch with a different hash.
+    std::fs::write(
+        &salt_file,
+        format!("{}\n", Salt::from_bytes([7; 32]).to_hex()),
+    )
+    .unwrap();
+    let second = FakeSource(vec![rec_on(branch, "s2", "req-b", 2)], Vec::new());
+    repo.record_on(branch, &second, RecordRedaction::Keyed { names: false });
+    std::fs::write(&salt_file, local).unwrap();
+    let ledger = repo.ledger();
+    let err = run_from_ledger_at(
+        &repo.git(),
+        None,
+        Path::new("/projects"),
+        &repo.root(),
+        Some(branch),
+        &Options::default(),
+        &LedgerTarget::Explicit(&ledger),
+        PriceTable::bundled(),
+    )
+    .map(|r| r.summary.total.calls)
+    .unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            ReportError::AgentBranchAcrossSalts { branch: b, salts: 2 } if b == branch
+        ),
+        "{err:?}"
+    );
+}

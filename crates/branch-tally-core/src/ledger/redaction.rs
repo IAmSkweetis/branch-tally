@@ -124,11 +124,24 @@ impl Salt {
     /// # Errors
     /// As [`Salt::load`], once the retry budget is spent.
     pub(crate) fn load_settled(tally: &TallyDir) -> Result<Option<Self>, LedgerError> {
+        Self::load_settled_with(tally, &|| {})
+    }
+
+    /// [`Salt::load_settled`] with `on_malformed` run after each malformed read, before the
+    /// retry: the test seam that orders a racing writer without relying on timing.
+    ///
+    /// # Errors
+    /// As [`Salt::load_settled`].
+    pub(crate) fn load_settled_with(
+        tally: &TallyDir,
+        on_malformed: &dyn Fn(),
+    ) -> Result<Option<Self>, LedgerError> {
         let mut retries = 0_u32;
         loop {
             match Self::load(tally) {
                 Err(LedgerError::MalformedSalt { .. }) if retries < SALT_READ_RETRIES => {
                     retries += 1;
+                    on_malformed();
                     std::thread::sleep(std::time::Duration::from_millis(u64::from(retries)));
                 }
                 other => return other,

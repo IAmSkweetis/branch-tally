@@ -109,30 +109,16 @@ fn a_salt_that_appears_between_planning_and_resolving_is_the_one_used() {
 }
 
 #[test]
-fn a_salt_still_being_written_by_a_racer_is_waited_for() {
-    // A racing creator has made `.tally/salt` but not yet written its bytes.
+fn a_salt_still_being_written_by_a_racer_is_reread_once_complete() {
+    // A racing creator has made `.tally/salt` but not yet written its bytes. The hook completes
+    // it after the first malformed read, so the order is fixed without timing.
     let dir = opted_in();
     std::fs::write(salt_path(&dir), b"").unwrap();
     let racer = format!("{}\n", other_salt().to_hex());
-    let path = salt_path(&dir);
-    let writer = std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(5));
-        std::fs::write(path, racer).unwrap();
-    });
-    let got = append_keyed_default(
-        dir.path(),
-        None,
-        false,
-        &[selected("a", "b", 1)],
-        "b",
-        Mode::Claim,
-        None,
-        &CLOCK,
-    );
-    writer.join().unwrap();
-    assert_eq!(got.unwrap().appended, 1);
-    let l = read_default(dir.path()).unwrap();
-    assert_eq!(l.entries()[0].redaction, Some(other_salt().fingerprint()));
+    let hook = || std::fs::write(salt_path(&dir), &racer).unwrap();
+    let tally = TallyDir::open(dir.path()).unwrap().unwrap();
+    let got = Salt::load_settled_with(&tally, &hook).unwrap();
+    assert_eq!(got, Some(other_salt()));
 }
 
 #[test]

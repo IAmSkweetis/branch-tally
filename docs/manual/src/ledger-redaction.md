@@ -55,11 +55,14 @@ A report asked for an agent branch by its real name, such as `worktree-agent-a1`
 with the local salt and finds the ledger's lines under both forms. Without a local salt that matches
 the ledger's redacted lines, a report from the ledger alone fails with
 `can't select worktree-agent-… from a redacted ledger without its salt` rather than print a short
-total. With live transcripts it finds only lines that hold the name as it is, and the report notes
-that live calls could not be matched. When the ledger holds the same stored request id under both
-spellings, it is counted once, and a note on stderr says how many lines that was (see the ledger
-notes under [Report from the ledger](ledger.md#report-from-the-ledger)). A raw line and a redacted
-line for the same call have different request ids, so they are not collapsed: see
+total. The same goes for a ledger hashed under more than one salt, where only the local salt's
+spelling can be found: it fails with
+`can't select worktree-agent-… from a ledger hashed under N salts`. With live transcripts it finds
+only lines that hold the name as it is, and the report notes that live calls could not be matched.
+When the ledger holds the same stored request id under both spellings, it is counted once, and a
+note on stderr says how many lines that was (see the ledger notes under
+[Report from the ledger](ledger.md#report-from-the-ledger)). A raw line and a redacted line for the
+same call have different request ids, so they are not collapsed: see
 [Mixed ledgers](#mixed-ledgers).
 
 Hashing changes no number. Models, token counts and times are kept, and branches are either kept
