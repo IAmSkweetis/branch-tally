@@ -186,12 +186,17 @@ pub(crate) struct Updated {
     pub(crate) skipped: Vec<String>,
 }
 
+/// Feed-derived text with control and bidi characters made inert before it reaches a terminal.
+fn neutral(text: &str) -> std::borrow::Cow<'_, str> {
+    branch_tally_core::text::replace_control_chars(text)
+}
+
 impl Updated {
     fn describe(&self, path: &Path) -> String {
         let mut out = format!(
             "Wrote {}\nas of: {}\nmodels: {}\n",
             path.display(),
-            self.as_of,
+            neutral(&self.as_of),
             self.models
         );
         if self.skipped.is_empty() {
@@ -201,7 +206,11 @@ impl Updated {
                 out,
                 "skipped {} model(s) without a usable price: {}",
                 self.skipped.len(),
-                self.skipped.join(", ")
+                self.skipped
+                    .iter()
+                    .map(|id| neutral(id))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             );
         }
         out
@@ -369,5 +378,25 @@ mod tests {
         assert!(update(&Fake(Ok("[]".into())), "2030-04-05", &cache).is_err());
         assert!(update(&Fake(Ok(GOOD.into())), "not-a-date", &cache).is_err());
         assert_eq!(std::fs::read_to_string(&cache).unwrap(), "keep");
+    }
+
+    #[test]
+    fn feed_derived_text_is_neutralised_in_the_description() {
+        let feed = r#"{"claude-a-1": {"litellm_provider": "anthropic", "mode": "chat",
+            "input_cost_per_token": 1e-6, "output_cost_per_token": 5e-6},
+            "claude-\u001b[2Jbad\u202e-2": {"litellm_provider": "anthropic", "mode": "chat"}}"#;
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("prices.toml");
+        let done = update(&Fake(Ok(feed.into())), "2030-04-05", &cache).unwrap();
+        assert!(!done.skipped.is_empty(), "the feed must skip the bad model");
+        let text = done.describe(&cache);
+        assert!(text.contains("bad"), "{text:?}");
+        assert!(
+            !text
+                .chars()
+                .filter(|c| *c != '\n')
+                .any(branch_tally_core::text::is_unsafe_control),
+            "{text:?}"
+        );
     }
 }

@@ -57,12 +57,11 @@ pub(crate) fn run(args: &UpdateArgs) -> Result<String, String> {
         .filter(|v| !v.trim().is_empty())
         .unwrap_or_else(|| DEFAULT_BASE_URL.to_owned());
     let base = check_base_url(&base)?;
-    let options = UpdateOptions {
-        check: args.check,
-        version: args.version.clone(),
-        yes: args.yes,
-        force: args.force,
-    };
+    let default_base = is_default_base(&base);
+    if !default_base {
+        crate::report::stderr(&mirror_notice(&base));
+    }
+    let options = update_options(args, default_base);
     let target = current_target();
     let key = ReleaseKey::from_base64(RELEASE_PUBLIC_KEY).map_err(|e| e.to_string())?;
     let outcome = run_verified(
@@ -75,7 +74,9 @@ pub(crate) fn run(args: &UpdateArgs) -> Result<String, String> {
             exe: current_exe(),
             target,
         },
-        &TerminalConfirmer,
+        &TerminalConfirmer {
+            mirror: !default_base,
+        },
     )
     .map_err(|e| e.to_string())?;
     if outcome.is_refusal() {
@@ -83,6 +84,29 @@ pub(crate) fn run(args: &UpdateArgs) -> Result<String, String> {
     } else {
         Ok(outcome.message())
     }
+}
+
+/// Whether `base` is the shipped release location (a trailing slash does not make it a mirror).
+fn is_default_base(base: &str) -> bool {
+    base.trim_end_matches('/') == DEFAULT_BASE_URL
+}
+
+/// What the user asked for. `--yes` is honoured only for the default release location: a mirror
+/// chosen by the environment always goes through the confirmer.
+fn update_options(args: &UpdateArgs, default_base: bool) -> UpdateOptions {
+    UpdateOptions {
+        check: args.check,
+        version: args.version.clone(),
+        yes: args.yes && default_base,
+        force: args.force,
+    }
+}
+
+/// The line announcing a non-default release source. The value comes from the environment, so
+/// control characters are neutralised.
+fn mirror_notice(base: &str) -> String {
+    let base = branch_tally_core::text::replace_control_chars(base);
+    format!("release source: {base} (from {BASE_URL_ENV}, not the default release location)")
 }
 
 /// Accept only `https://` and `file://` mirrors, before any network call.
@@ -186,7 +210,11 @@ impl HttpClient {
     fn fetch(&self, path: &str) -> Result<Vec<u8>, FetchError> {
         match self.base.strip_prefix("file://") {
             Some(dir) => read_local(dir, path, MAX_DOWNLOAD_BYTES),
-            None => fetch_http(&format!("{}/{path}", self.base), MAX_DOWNLOAD_BYTES),
+            None => fetch_http(
+                &format!("{}/{path}", self.base),
+                MAX_DOWNLOAD_BYTES,
+                self.https_only,
+            ),
         }
     }
 }
@@ -223,10 +251,11 @@ fn read_local(dir: &str, path: &str, cap: u64) -> Result<Vec<u8>, FetchError> {
     read_capped(handle, cap).map_err(FetchError::Failed)
 }
 
-fn fetch_http(url: &str, cap: u64) -> Result<Vec<u8>, FetchError> {
+fn fetch_http(url: &str, cap: u64, https_only: bool) -> Result<Vec<u8>, FetchError> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_connect(Some(Duration::from_secs(10)))
         .timeout_global(Some(Duration::from_secs(120)))
+        .https_only(https_only)
         .build()
         .into();
     let mut response = agent
@@ -469,26 +498,51 @@ fn old_path(exe: &Path) -> PathBuf {
 // ---------------------------------------------------------------------------------------------
 // Confirmer
 
-struct TerminalConfirmer;
+struct TerminalConfirmer {
+    /// Set when the release source is a mirror from the environment: `--yes` does not apply.
+    mirror: bool,
+}
 
 impl Confirmer for TerminalConfirmer {
     fn confirm(&self, prompt: &str) -> bool {
-        let mut stderr = io::stderr();
-        if !io::stdin().is_terminal() {
-            let _ = writeln!(
-                stderr,
-                "{prompt} Not a terminal, so no confirmation was possible; pass --yes to proceed."
-            );
-            return false;
-        }
-        let _ = write!(stderr, "{prompt} [y/N] ");
-        let _ = stderr.flush();
-        let mut line = String::new();
-        if io::stdin().lock().read_line(&mut line).is_err() {
-            return false;
-        }
-        matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+        ask(
+            prompt,
+            self.mirror,
+            io::stdin().is_terminal(),
+            &mut io::stdin().lock(),
+            &mut io::stderr(),
+        )
     }
+}
+
+/// Ask `prompt` on `err` and read the answer from `input`. Without a terminal the answer is no,
+/// and the message says how to proceed.
+fn ask(
+    prompt: &str,
+    mirror: bool,
+    interactive: bool,
+    input: &mut dyn BufRead,
+    err: &mut dyn Write,
+) -> bool {
+    if !interactive {
+        let hint = if mirror {
+            format!(
+                "{BASE_URL_ENV} is set to a non-default release source, which needs interactive \
+                 confirmation even with --yes; refusing without a terminal."
+            )
+        } else {
+            "Not a terminal, so no confirmation was possible; pass --yes to proceed.".to_owned()
+        };
+        let _ = writeln!(err, "{prompt} {hint}");
+        return false;
+    }
+    let _ = write!(err, "{prompt} [y/N] ");
+    let _ = err.flush();
+    let mut line = String::new();
+    if input.read_line(&mut line).is_err() {
+        return false;
+    }
+    matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
 }
 
 #[cfg(test)]
@@ -1102,7 +1156,7 @@ mod tests {
                 b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\n01234567890123456789",
             );
         });
-        let err = fetch_http(&url, 10).unwrap_err();
+        let err = fetch_http(&url, 10, false).unwrap_err();
         server.join().unwrap();
         assert!(format!("{err:?}").contains("larger than"), "{err:?}");
     }
@@ -1124,6 +1178,102 @@ mod tests {
             assert!(err.contains("https://"), "{err}");
             assert!(!err.contains('\n'), "{err}");
         }
+    }
+
+    // --- https only ---
+
+    #[test]
+    fn the_download_agent_refuses_a_plain_http_url_when_https_only() {
+        let server = FakeServer::start(200, "payload");
+        let err = fetch_http(&format!("{}/x", server.url), 100, true).unwrap_err();
+        assert!(matches!(err, FetchError::Failed(_)), "{err:?}");
+        assert_eq!(
+            server.heads(),
+            Vec::<String>::new(),
+            "the server was contacted"
+        );
+    }
+
+    #[test]
+    fn the_shipped_client_downloads_https_only() {
+        assert!(HttpClient::new("https://mirror.invalid").https_only);
+    }
+
+    // --- a mirror from the environment ---
+
+    fn args(yes: bool, check: bool) -> UpdateArgs {
+        UpdateArgs {
+            check,
+            version: None,
+            yes,
+            force: false,
+        }
+    }
+
+    #[test]
+    fn yes_is_honoured_for_the_default_base_only() {
+        assert!(update_options(&args(true, false), true).yes);
+        assert!(!update_options(&args(true, false), false).yes);
+        assert!(!update_options(&args(false, false), true).yes);
+    }
+
+    #[test]
+    fn the_default_base_is_recognised_with_or_without_a_trailing_slash() {
+        assert!(is_default_base(DEFAULT_BASE_URL));
+        assert!(is_default_base(&format!("{DEFAULT_BASE_URL}/")));
+        assert!(!is_default_base("https://mirror.example/releases"));
+        assert!(!is_default_base("file:///tmp/x"));
+    }
+
+    #[test]
+    fn the_notice_names_the_source_and_neutralises_control_characters() {
+        let notice = mirror_notice("https://m.example/\u{1b}[2J\u{202e}x");
+        assert!(notice.contains("https://m.example/"), "{notice}");
+        assert!(notice.contains(BASE_URL_ENV), "{notice}");
+        assert!(
+            !notice
+                .chars()
+                .any(branch_tally_core::text::is_unsafe_control),
+            "{notice:?}"
+        );
+    }
+
+    #[test]
+    fn a_mirror_without_a_terminal_is_refused_naming_the_variable() {
+        let mut err = Vec::new();
+        let agreed = ask("Update?", true, false, &mut io::empty().take(0), &mut err);
+        assert!(!agreed);
+        let said = String::from_utf8(err).unwrap();
+        assert!(said.contains(BASE_URL_ENV), "{said}");
+        assert!(!said.contains("pass --yes"), "{said}");
+    }
+
+    #[test]
+    fn a_mirror_with_a_terminal_asks_and_accepts_only_yes() {
+        for (answer, expected) in [
+            ("y\n", true),
+            ("YES\n", true),
+            ("n\n", false),
+            ("\n", false),
+        ] {
+            let mut err = Vec::new();
+            let got = ask("Update?", true, true, &mut answer.as_bytes(), &mut err);
+            assert_eq!(got, expected, "{answer:?}");
+            assert!(String::from_utf8(err).unwrap().contains("[y/N]"));
+        }
+    }
+
+    #[test]
+    fn the_default_base_keeps_the_existing_no_terminal_message() {
+        let mut err = Vec::new();
+        assert!(!ask(
+            "Update?",
+            false,
+            false,
+            &mut io::empty().take(0),
+            &mut err
+        ));
+        assert!(String::from_utf8(err).unwrap().contains("pass --yes"));
     }
 
     // --- extraction: links, odd names, corrupt archives ---
