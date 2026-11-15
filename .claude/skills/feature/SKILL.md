@@ -198,8 +198,8 @@ test, dispatched the same way.
 
 ## Step 6: What happens next (don't do these unprompted)
 
-1. The user runs **`/create-gh-pr`**. It pushes the branch, opens the PR, and records the token
-   usage while the worktrees still exist.
+1. The user runs **`/create-gh-pr`**. It records and commits the token usage while the
+   worktrees still exist, puts the table in the PR body, then pushes the branch and opens the PR.
 2. The PR is squash-merged.
 3. The user runs **`/worktree-cleanup`**.
 
