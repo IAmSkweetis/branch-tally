@@ -51,21 +51,43 @@ pub const TALLY_DIR: &str = ".tally";
 
 /// How many times the `O_CREAT` open is retried after `ENOENT` before the error surfaces.
 ///
-/// Root cause (issue #109), and what is known. Confirmed from CI: on `macos-latest`
-/// `concurrent_appends_lose_nothing` failed in four runs with `ENOENT` on the append, never on
-/// Linux or Windows. `probe` maps `ENOENT` to "missing", and `fstat` and `write` on an open fd
-/// cannot return it, so it came from the `openat(O_CREAT)` on a name that did not exist yet,
-/// with `.tally/` present. Six of eight threads failed together in one run, so the window is the
-/// first creation of the file. Inference, not confirmed (no macOS was available and the XNU
-/// `vn_open_auth` source was not read): the lookup half of concurrent create-opens of one name
-/// transiently reports `ENOENT` on APFS/XNU instead of resolving to the file another thread just
-/// created. POSIX does not allow `ENOENT` there while the directory exists, and nothing in this
-/// code removes the file or the directory.
+/// Root cause (issue #109). Each claim is labelled CONFIRMED (with its source) or INFERENCE.
 ///
-/// The bound is provisional: nothing in the code or the evidence justifies a specific number, and
-/// 8 is only the thread count of the test that exposed the bug. There is deliberately no backoff.
-/// A directory that really was removed keeps returning `ENOENT`, so the bound is what ends the
-/// loop.
+/// - CONFIRMED (CI): on `macos-latest` `concurrent_appends_lose_nothing` failed in four runs with
+///   `ENOENT` on the append, never on Linux or Windows; six of eight threads failed together in
+///   one run, so the window is the first creation of the file.
+/// - CONFIRMED (our code): `probe` maps `ENOENT` to "missing", and `fstat` and `write` on an
+///   open fd cannot return it, so the error came from the `openat(O_CREAT)` with `.tally/`
+///   present. Nothing here removes the file or the directory.
+/// - CONFIRMED (XNU source, tag `xnu-12377.121.6`, `bsd/vfs/vfs_vnops.c`): `open1`
+///   (`vfs_syscalls.c:4965`) calls `vn_open_auth`. For `O_CREAT` without `O_EXCL` it runs
+///   `namei`, and when the name is absent calls `vn_open_auth_do_create` (line 503), which
+///   calls the filesystem's create. The kernel handles a lost create race only for `EEXIST`:
+///   `if ((error == EEXIST) && !(fmode & O_EXCL))` then `goto again` (lines 524-529). Any
+///   other create error, `ENOENT` included, is `goto bad` (line 531) and returned to the caller.
+///   The kernel's own `ENOENT` retry (line 790, `nretries`, `max_retries = 10` at line 408)
+///   sits behind `if (vp)` (line 773) and is for a vnode that was found and then unlinked
+///   before the open finished ("a race against unlink"), so it does not cover a create that
+///   failed. That retry yields only after 5 attempts (`RETRY_NO_YIELD_COUNT`, line 343):
+///   `msleep` of `nretries * 10` ms (lines 812-818).
+/// - INFERENCE: the `ENOENT` is returned by APFS itself from its create (or compound open)
+///   VNOP when it loses the race, because the generic XNU code above never produces it for
+///   this case. APFS is closed source, so the source does not settle this, and no macOS machine
+///   was available to trace it.
+/// - CONFIRMED (public report, same symptom, not APFS-attributed): Zig's cache hit `ENOENT`
+///   from `openat(O_CREAT)` when two processes raced to create one file on macOS, and fixed it
+///   by looping on `ENOENT` with no bound
+///   (<https://github.com/ziglang/zig/commit/34286530b7c8beb070368b54abd8ec67a7344119>).
+///   Related and only suggestive, a `CPython` report of a macOS open/delete race seen on APFS
+///   but not on HFS+ (<https://mail.python.org/pipermail/python-bugs-list/2020-July/449867.html>,
+///   issue 41291). No Go, Rust std or libuv report was found.
+/// - INFERENCE: once the file exists a retry finds it (`vp` is set) and takes the ordinary
+///   open path, so a thread should lose this race a small number of times, bounded by the
+///   concurrent creators. Nothing found states a limit.
+///
+/// The bound is provisional: no source gives a number, and 8 is only the thread count of the
+/// test that exposed the bug. There is deliberately no backoff yet. A directory that really was
+/// removed keeps returning `ENOENT`, so the bound is what ends the loop.
 const OPEN_RETRIES: u32 = 8;
 
 /// A verified `.tally/` directory of a main checkout.
