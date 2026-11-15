@@ -116,6 +116,10 @@ a non-default `BRANCH_TALLY_INSTALL_API_URL` prints `Using release API: <url>`. 
 changes the source; the checksum and provenance checks are the same, and "latest" still comes from
 the API (see [Which release is the latest](#which-release-is-the-latest)).
 
+The variable also points [`branch-tally update`](../cli.md#release-mirror) at the mirror. A
+non-default value makes `update` print `release source: <url>` on stderr and ask before installing
+even when you pass `--yes`. Without a terminal it declines and installs nothing.
+
 Every download follows redirects one hop at a time, at most 5, and refuses any hop that isn't
 `https://`, on Windows PowerShell 5.1 and PowerShell 7 alike. A token is not sent on a redirect to
 another host.

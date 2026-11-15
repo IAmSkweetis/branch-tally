@@ -131,6 +131,10 @@ a non-default `BRANCH_TALLY_INSTALL_API_URL` prints `Using release API: <url>`. 
 changes the source; the checksum and provenance checks are the same, and "latest" still comes from
 the API (see [Which release is the latest](#which-release-is-the-latest)).
 
+The variable also points [`branch-tally update`](../cli.md#release-mirror) at the mirror. A
+non-default value makes `update` print `release source: <url>` on stderr and ask before installing
+even when you pass `--yes`. Without a terminal it declines and installs nothing.
+
 To pass flags through the pipe, use `sh -s --`:
 
 ```sh

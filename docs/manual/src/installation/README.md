@@ -51,9 +51,9 @@ installs a release older than the one running.
 Before it trusts anything it downloads, it checks the release's minisign signature
 (`SHA256SUMS.minisig`) against the release key built into the binary. That signature is its proof
 of origin. Only then does it check the archive against `SHA256SUMS`. It asks before replacing
-anything unless you pass `--yes`. `--version <vX.Y.Z>` installs a particular release, older ones
-included, as long as that release is signed. The [CLI reference](../cli.md#branch-tally-update)
-covers every option.
+anything unless you pass `--yes`, and always asks when a [release mirror](../cli.md#release-mirror)
+is set. `--version <vX.Y.Z>` installs a particular release, older ones included, as long as that
+release is signed. The [CLI reference](../cli.md#branch-tally-update) covers every option.
 
 Releases published before signing began have no signature, so `update` refuses them, including
 through `--version`, and installs nothing. Install one of those with an installer or
