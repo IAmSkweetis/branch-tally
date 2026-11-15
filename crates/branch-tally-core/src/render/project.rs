@@ -682,6 +682,7 @@ mod tests {
                 point("2026-02-03T00:00:00Z", "feat/b", 3.75, false),
             ],
             undated_branches: 0,
+            double_count: None,
         }
     }
 

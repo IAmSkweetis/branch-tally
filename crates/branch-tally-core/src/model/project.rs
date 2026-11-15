@@ -116,6 +116,11 @@ pub struct ProjectReport {
     pub series: Vec<SeriesPoint>,
     /// Rows with no timestamp, left off the series and counted here.
     pub undated_branches: u64,
+    /// Set when the totals may count some calls twice (a mixed ledger, decision 0005): an
+    /// overcount, never framed as a floor. `None` by default. Counts only, no identifiers.
+    /// Omitted from JSON when `None`; absent in older serialized data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub double_count: Option<super::DoubleCountRisk>,
 }
 
 impl ProjectReport {
@@ -138,6 +143,35 @@ impl ProjectReport {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn project_double_count_defaults_none_and_old_json_loads() {
+        assert_eq!(ProjectReport::default().double_count, None);
+        let mut v = serde_json::to_value(ProjectReport::default()).unwrap();
+        v.as_object_mut().unwrap().remove("double_count");
+        let r: ProjectReport = serde_json::from_value(v).unwrap();
+        assert_eq!(r.double_count, None);
+        assert!(!serde_json::to_string(&r).unwrap().contains("double_count"));
+    }
+
+    #[test]
+    fn project_double_count_round_trips() {
+        let risk = super::super::DoubleCountRisk::new(
+            Some(super::super::MixedLedger {
+                unredacted_lines: 1,
+                redacted_lines: 2,
+                distinct_salts: 2,
+            }),
+            None,
+        );
+        let r = ProjectReport {
+            double_count: risk,
+            ..ProjectReport::default()
+        };
+        let back: ProjectReport =
+            serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        assert_eq!(back.double_count, risk);
+    }
+
     use super::*;
 
     fn priced() -> RowCost {
