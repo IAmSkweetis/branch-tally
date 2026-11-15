@@ -512,8 +512,25 @@ mod tests {
     #[test]
     fn the_shipped_feed_agent_does_not_trust_the_fixture_ca() {
         let server = serve_tls_once("200 OK", "", "{}");
-        assert!(HttpFeed::new(server.url.clone()).fetch().is_err());
+        let err = HttpFeed::new(server.url.clone()).fetch().unwrap_err();
         let _ = server.finish();
+        let FeedError::Unavailable(why) = err;
+        let why = why.to_lowercase();
+        assert!(
+            why.contains("certificate") || why.contains("unknownissuer") || why.contains("tls"),
+            "not a trust failure: {why}"
+        );
+    }
+
+    #[test]
+    fn the_shipped_feed_agent_never_contacts_a_plain_http_url() {
+        // `check_feed_url` is bypassed on purpose: this pins the agent's own `https_only`.
+        let bait = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        bait.set_nonblocking(true).unwrap();
+        let url = format!("http://{}/prices.json", bait.local_addr().unwrap());
+        let err = HttpFeed::new(url).fetch().unwrap_err();
+        assert!(matches!(err, FeedError::Unavailable(_)), "{err:?}");
+        assert!(bait.accept().is_err(), "the plain http URL was contacted");
     }
 
     #[test]

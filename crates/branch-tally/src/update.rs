@@ -64,7 +64,7 @@ pub(crate) fn run(args: &UpdateArgs) -> Result<String, String> {
     let options = update_options(args, default_base);
     let target = current_target();
     let key = ReleaseKey::from_base64(RELEASE_PUBLIC_KEY).map_err(|e| e.to_string())?;
-    let outcome = run_verified(
+    execute(
         VERSION,
         target,
         &options,
@@ -74,17 +74,33 @@ pub(crate) fn run(args: &UpdateArgs) -> Result<String, String> {
             exe: current_exe(),
             target,
         },
-        &TerminalConfirmer {
-            mirror: !default_base,
-        },
+        &TerminalConfirmer::new(!default_base),
     )
-    .map_err(|e| e.to_string())?;
-    if outcome.is_refusal() {
+}
+
+/// Runs the verified update and turns its outcome into the stdout line or the stderr line.
+fn execute(
+    version: &str,
+    target: &str,
+    options: &UpdateOptions,
+    key: &ReleaseKey,
+    client: &dyn ReleaseClient,
+    installer: &dyn Installer,
+    confirmer: &TerminalConfirmer,
+) -> Result<String, String> {
+    let outcome = run_verified(version, target, options, key, client, installer, confirmer)
+        .map_err(|e| e.to_string())?;
+    if confirmer.refused.get() {
+        Err(MIRROR_NEEDS_TERMINAL.to_owned())
+    } else if outcome.is_refusal() {
         Err(outcome.message())
     } else {
         Ok(outcome.message())
     }
 }
+
+/// stderr line for a mirror with no terminal to confirm on.
+const MIRROR_NEEDS_TERMINAL: &str = "BRANCH_TALLY_INSTALL_BASE_URL is set to a non-default release source, which requires interactive confirmation even with --yes; refusing without a terminal, nothing was installed.";
 
 /// Whether `base` is the shipped release location (a trailing slash does not make it a mirror).
 fn is_default_base(base: &str) -> bool {
@@ -506,14 +522,32 @@ fn old_path(exe: &Path) -> PathBuf {
 struct TerminalConfirmer {
     /// Set when the release source is a mirror from the environment: `--yes` does not apply.
     mirror: bool,
+    /// Whether stdin is a terminal, read once.
+    interactive: bool,
+    /// Set when a mirror needed a confirmation and there was no terminal to ask on.
+    refused: std::cell::Cell<bool>,
+}
+
+impl TerminalConfirmer {
+    fn new(mirror: bool) -> Self {
+        Self {
+            mirror,
+            interactive: io::stdin().is_terminal(),
+            refused: std::cell::Cell::new(false),
+        }
+    }
 }
 
 impl Confirmer for TerminalConfirmer {
     fn confirm(&self, prompt: &str) -> bool {
+        if self.mirror && !self.interactive {
+            self.refused.set(true);
+            return false;
+        }
         ask(
             prompt,
             self.mirror,
-            io::stdin().is_terminal(),
+            self.interactive,
             &mut io::stdin().lock(),
             &mut io::stderr(),
         )
@@ -1091,6 +1125,47 @@ mod tests {
         failed(HttpClient::with_api("file:///unused", &api, None).latest_tag());
     }
 
+    fn mirror_run(interactive: bool) -> (Result<String, String>, usize) {
+        let release = tempfile::tempdir().unwrap();
+        let base = fake_release(release.path(), SIGNED_ARCHIVE, Some(GOOD_SIG));
+        let rec = Recorder::default();
+        let options = update_options(
+            &UpdateArgs {
+                check: false,
+                version: None,
+                yes: true,
+                force: false,
+            },
+            false,
+        );
+        let confirmer = TerminalConfirmer {
+            mirror: true,
+            interactive,
+            refused: std::cell::Cell::new(false),
+        };
+        let result = execute(
+            "1.0.0",
+            TARGET,
+            &options,
+            &ReleaseKey::from_base64(TEST_KEY.trim()).unwrap(),
+            &HttpClient::with_api(&base, &format!("{base}/api/latest.json"), None),
+            &rec,
+            &confirmer,
+        );
+        let installed = rec.installed.borrow().len();
+        (result, installed)
+    }
+
+    #[test]
+    fn a_mirror_with_yes_and_no_terminal_is_a_refusal_not_a_decline() {
+        let (result, installed) = mirror_run(false);
+        let err = result.unwrap_err();
+        assert_eq!(err, MIRROR_NEEDS_TERMINAL);
+        assert!(err.contains(BASE_URL_ENV), "{err}");
+        assert!(!err.contains('\n'), "{err}");
+        assert_eq!(installed, 0);
+    }
+
     #[test]
     fn a_pin_makes_no_api_call() {
         let release = tempfile::tempdir().unwrap();
@@ -1215,6 +1290,20 @@ mod tests {
             target.heads(),
             Vec::<String>::new(),
             "http target contacted"
+        );
+    }
+
+    #[test]
+    fn the_shipped_client_api_call_refuses_a_plain_http_url() {
+        let server = FakeServer::start(200, "{}");
+        let mut client = HttpClient::new("https://mirror.invalid");
+        client.api_url = format!("{}/latest", server.url);
+        let err = client.fetch_api().unwrap_err();
+        assert!(matches!(err, FetchError::Failed(_)), "{err:?}");
+        assert_eq!(
+            server.heads(),
+            Vec::<String>::new(),
+            "the API URL was contacted over plain http"
         );
     }
 
