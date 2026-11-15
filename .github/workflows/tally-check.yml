@@ -9,6 +9,10 @@ name: Tally check
 # checked out, built or executed. No secrets, read-only token. Logic and tests:
 # scripts/ci-tally-check.sh, `just test-scripts`.
 #
+# It does not trigger on `edited`: it reads the ledger and captures at the PR's head, and a title or
+# body edit (the token report rewrites the body) changes neither. Re-running it would cancel the
+# run for the push before it (the concurrency group below).
+#
 # It always runs and always reports (never path-filtered), so it can be a required check. The PR
 # that first adds this file does not run it, because the base branch lacks it yet; marking the
 # check required before that PR merges needs the admin bypass.
@@ -16,7 +20,7 @@ name: Tally check
 on:
   # zizmor: ignore[dangerous-triggers] -- deliberate: the check must come from the base branch so a PR cannot rewrite it. No PR code is checked out, built or run; the job has contents: read and no secrets.
   pull_request_target:
-    types: [opened, edited, synchronize, reopened]
+    types: [opened, synchronize, reopened]
 
 permissions: {}
 

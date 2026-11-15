@@ -6,9 +6,16 @@ name: PR checks
 # are exempt from the branch rule because the bot names them; its commits and titles still pass,
 # through the prefixes set in .github/dependabot.yml.
 
+# `pr-title` lives in its own workflow (pr-title.yml) because it must re-run when the title is
+# edited, and a body edit (the token report rewrites it) must not cancel this workflow's run for the
+# push. The checks below read only the branch and its commits, so they run on pushes, not edits.
+# After retargeting a PR to another base, push or re-run them: no event re-checks them for you.
+# Every job always runs for real, because a skipped required job counts as passing and a newer
+# skipped run could mask an earlier failure.
+
 on:
   pull_request:
-    types: [opened, edited, synchronize, reopened]
+    types: [opened, synchronize, reopened]
 
 permissions: {}
 
@@ -17,21 +24,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  pr-title:
-    name: pr-title
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: PR title is a Conventional Commit
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: sh scripts/check-commit-subject.sh "$PR_TITLE"
-
   branch-name:
     name: branch-name
     runs-on: ubuntu-latest

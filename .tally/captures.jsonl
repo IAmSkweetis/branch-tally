@@ -5,3 +5,10 @@
 {"v":1,"harness":"claude-code","kind":"stop","session_id":"a9ea57a1-80a6-488f-8127-96179eb2f20b","branch":"fix/issue-67-ledger-redaction","ts":"2026-11-15T19:02:38Z"}
 {"v":1,"harness":"claude-code","kind":"stop","session_id":"a9ea57a1-80a6-488f-8127-96179eb2f20b","branch":"fix/issue-67-ledger-redaction","ts":"2026-11-15T19:08:04Z"}
 {"v":1,"harness":"claude-code","kind":"subagent-stop","session_id":"a9ea57a1-80a6-488f-8127-96179eb2f20b","agent_id":"a2291cc0d8c6155e6","branch":"fix/issue-67-ledger-redaction","ts":"2026-11-15T19:11:06Z"}
+{"v":1,"harness":"claude-code","kind":"stop","session_id":"a9ea57a1-80a6-488f-8127-96179eb2f20b","branch":"fix/issue-67-ledger-redaction","ts":"2026-11-15T19:34:02Z"}
+{"v":1,"harness":"claude-code","kind":"subagent-stop","session_id":"a9ea57a1-80a6-488f-8127-96179eb2f20b","agent_id":"adfbdee17855d375a","branch":"fix/issue-67-ledger-redaction","ts":"2026-11-15T19:37:06Z"}
+{"v":1,"harness":"claude-code","kind":"stop","session_id":"a9ea57a1-80a6-488f-8127-96179eb2f20b","branch":"fix/issue-67-ledger-redaction","ts":"2026-11-15T19:44:22Z"}
+{"v":1,"harness":"claude-code","kind":"stop","session_id":"a9ea57a1-80a6-488f-8127-96179eb2f20b","branch":"fix/issue-67-ledger-redaction","ts":"2026-11-15T19:53:22Z"}
+{"v":1,"harness":"claude-code","kind":"stop","session_id":"a9ea57a1-80a6-488f-8127-96179eb2f20b","branch":"fix/issue-67-ledger-redaction","ts":"2026-11-15T19:55:17Z"}
+{"v":1,"harness":"claude-code","kind":"stop","session_id":"a9ea57a1-80a6-488f-8127-96179eb2f20b","branch":"main","ts":"2026-11-15T20:01:03Z"}
+{"v":1,"harness":"claude-code","kind":"subagent-stop","session_id":"a9ea57a1-80a6-488f-8127-96179eb2f20b","agent_id":"a921c76361fa8e94a","branch":"main","ts":"2026-11-15T20:04:05Z"}

@@ -154,7 +154,7 @@ its own lists the recipes.
 | `just audit-workflows [--offline]` | `zizmor` over `.github/`, pinned. Online audits run when `GH_TOKEN` is set. | `uvx zizmor@<pin> .github/` |
 | `just test-scripts` | proves `scripts/check-commit-subject.sh`, `scripts/check-branch-name.sh` and `scripts/package.sh` and `scripts/sign-checksums.sh` (release signing, against the real minisign when present, a failure in CI when absent) reject what they must and accept what they should | `sh scripts/test-checks.sh` |
 | `just check-pins` | fails when `mise.toml` disagrees with the pins in the justfile, the workflows, `rust-toolchain.toml`, `scripts/ci-install-minisign.sh` or `scripts/ci-install-pwsh.sh` (whose `sha256` pins must also be well-formed 64-hex digests) (or lacks one of them, or lists a tool nothing else pins), or when a vendored manual asset no longer matches its recorded sha256. Reads the files as text: needs `uv` only, not mise, just's evaluator or the network | `uv run scripts/check_pins.py` |
-| `just test-py` | `unittest` for `scripts/scrub_transcripts.py` and `scripts/make_goldens.py`, including one end-to-end run of the reference | `uv run python -m unittest discover -s scripts/tests` |
+| `just test-py` | `unittest` for `scripts/scrub_transcripts.py`, `scripts/make_goldens.py` and `scripts/splice_token_report.py`, including one end-to-end run of the reference | `uv run python -m unittest discover -s scripts/tests` |
 | `just check-plugin` | build the binary, then check the shipped plugin and marketplace: manifests parse, every hook command ends in `; exit 0`, every hook names a real subcommand of that binary. `claude plugin validate` also runs when the `claude` CLI is installed and is a printed `SKIP` otherwise (CI has none). Needs `cargo` and `uv` | `cargo build -p branch-tally` then `sh plugin/tests/check.sh target/debug/branch-tally` |
 | `just lint-install` | ShellCheck on `install.sh` and its test, PSScriptAnalyzer on the `.ps1` files. A missing tool is a printed skip locally and an error when `CI` is set | `sh scripts/lint-install.sh` |
 | `just test-install` | the installers' offline tests under `sh` and `pwsh`, with the same skip rule | `sh scripts/test-install.sh` |
@@ -435,7 +435,9 @@ and GitHub never lets an author approve their own, so the reviewer can't be a pe
 - **Automatic approvals** (`reviews.auto_approvals.enabled`). CodeRabbit requests changes for a
   blocking finding and approves once the latest commit has a finished review, every review thread
   is resolved and no pre-merge check fails. A new push dismisses the approval (the ruleset), and
-  CodeRabbit re-approves after reviewing it.
+  CodeRabbit re-approves after reviewing it. It skips a commit whose files are all excluded by
+  `path_filters` (a `.tally/`-only commit), so such a push dismisses the approval and it never
+  returns: see [Token usage](#token-usage) for the rule that avoids it.
 - **No self-approval** (`allow_author_approval: false`). Otherwise the author could comment
   `@coderabbitai approve` and get an approval without a finished review.
 - **Nothing in the PR description.** The squash commit is the title and description, so the
@@ -457,6 +459,12 @@ and GitHub never lets an author approve their own, so the reviewer can't be a pe
 
 The `CodeRabbit` status is **not** a required check. The approval already waits for the review,
 and a check that doesn't report (a skipped or rate-limited review) would leave the PR waiting.
+
+**Reading a reviewer's state.** The `CodeRabbit` check reads `skipping` on a commit it skipped,
+which says nothing about the review. Read the reviews on the head instead: `gh pr view --json
+reviewDecision,headRefOid,reviews` shows the decision, the head SHA and each review's commit. An
+approval on an earlier commit than the head is dismissed. The same applies to any reviewer, not
+only this one.
 
 When a review is wrong, reply in its thread to explain, then resolve it. When CodeRabbit can't
 approve at all (an outage, or a finding it won't drop), the admin merges with the ruleset bypass
@@ -480,10 +488,31 @@ just token-record                     # branch-tally record: append to .tally/le
 just token-report --pr --from-ledger  # branch-tally report: fill the PR table from the ledger
 ```
 
-`/create-gh-pr` runs `record`, commits `.tally/ledger.jsonl` (and `.tally/captures.jsonl` if
-present) to the PR branch, pushes, then fills the table from the ledger. Both ledger files merge
-with `merge=union` (`.gitattributes`). `just token-report --pr` still works and reads the live
-transcripts directly. The [ledger chapter](../manual/src/ledger.md) describes the files.
+**Record before the first push, never after approval.** `/create-gh-pr` runs `record`, commits
+`.tally/ledger.jsonl` (and `.tally/captures.jsonl` if present) to the branch, renders
+`just token-report --from-ledger` and splices it into the PR body
+(`scripts/splice_token_report.py`), and only then pushes and runs `gh pr create`. The PR opens with
+its table, so there is no trailing `.tally/`-only push and no follow-up body edit. Any later round
+(review fixes, a merge of `main`) commits its token usage together with that round's work, in the
+same push. Nothing is ever pushed only to record usage after a review.
+
+The reason: the `default` ruleset dismisses approvals on push and requires one, and a reviewer may
+skip a commit that changes only excluded paths (CodeRabbit does for `.tally/**`). Recording last
+then dismisses the approval and nothing restores it, so the PR can't merge without the admin
+bypass (#129). The cost is that the table covers everything up to the last commit before the final
+review, not that review's own round. The PR body says so beneath the table (`Recorded before
+review: usage from later rounds is not included, so this is a floor.`), so the number isn't read
+as complete. The skill also shows how to tell the reviewer's real state from the `skipping` check.
+
+Body edits don't cancel checks: `tally-check` doesn't run on `edited`, and `pr-title` is its own
+workflow (`pr-title.yml`) that runs on `edited` with no cancelling concurrency, so a body edit
+never cancels the push's run and the title is re-checked on every edit. `pr-checks` doesn't run
+on `edited` at all, and no job is skipped by an `if`: a skipped required job counts as passing, so
+a newer skipped run could mask an earlier failure. After retargeting a PR to another base, push or
+re-run the checks, because no edit re-checks `branch-name`, `commit-messages` or
+`dependency-review`. Both ledger files merge with `merge=union` (`.gitattributes`).
+`just token-report --pr` still works and reads the live transcripts directly. The
+[ledger chapter](../manual/src/ledger.md) describes the files.
 
 This repository enables the published `branch-tally-capture` and `branch-tally-record` plugins in
 `.claude/settings.json`, so sessions here capture attribution and record on SessionEnd. The
