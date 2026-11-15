@@ -1,0 +1,32 @@
+name: PR title
+
+# Merges are squashed, so the PR title becomes the commit on main and must be a Conventional
+# Commit. The rule lives in scripts/check-commit-subject.sh, which the git hooks run too.
+#
+# This is its own workflow so it can run on `edited`, when the title may have changed, without
+# sharing a concurrency group with PR checks: the token report rewrites the PR body right after a
+# push, and that edit must not cancel the push's run. No cancelling concurrency here, and no
+# job-level `if`: the job always runs for real, because a skipped required job counts as passing
+# and could mask an earlier failure. Re-checking the current title is cheap.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  pr-title:
+    name: pr-title
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: PR title is a Conventional Commit
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: sh scripts/check-commit-subject.sh "$PR_TITLE"

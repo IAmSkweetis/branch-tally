@@ -157,9 +157,10 @@ durability boundary, not the push.
 Order matters, and the reason is this project's own subject:
 
 1. The feature branch is merged, green, and dogfooded.
-2. **`create-gh-pr`** pushes the branch, opens the PR, and records the token usage
-   (`branch-tally record`, committed to the PR branch as `.tally/ledger.jsonl`, then
-   `report --pr --from-ledger`) **while every agent worktree still exists**. See
+2. **`create-gh-pr`** records the token usage (`branch-tally record`, committed to the branch as
+   `.tally/ledger.jsonl`) **while every agent worktree still exists**, puts the table in the PR
+   body, and only then pushes the branch and opens the PR. A later round commits its usage in the
+   same push as its work, never as a push of its own. See
    [dev_workflow.md](dev_workflow.md#token-usage).
 3. The PR merges.
 4. **`worktree-cleanup`** removes the worktrees and branches, and returns the main checkout to a
