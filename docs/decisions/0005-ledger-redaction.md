@@ -48,6 +48,9 @@ closed by #94: `capture` and `record` write only where `.tally/` exists (0002's 
   `redact-names`: config keys `ledger-redact` (default **true**) and `ledger-redact-names`
   (default false), with matching `record` flags. `report`'s defaults are unchanged.
   Redaction-by-default changes what `record` writes, so this is a breaking change.
+- **An explicit `--ledger` needs the salt too.** With redaction on, `record --ledger <path>` in a
+  checkout with no `.tally/` is an error: the salt has nowhere to live, and silently writing raw
+  ids would break the promise. Create `.tally/` or pass `--no-ledger-redact`.
 - **Live union.** When `report --from-ledger` unions live transcripts into a redacted ledger, the
   live records pass through the same keyed hash before the union, so one call is never counted
   twice under two spellings.
