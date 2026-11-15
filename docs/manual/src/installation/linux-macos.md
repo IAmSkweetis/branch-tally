@@ -133,7 +133,7 @@ the API (see [Which release is the latest](#which-release-is-the-latest)).
 
 The variable also points [`branch-tally update`](../cli.md#release-mirror) at the mirror. A
 non-default value makes `update` print `release source: <url>` on stderr and ask before installing
-even when you pass `--yes`. Without a terminal it declines and installs nothing.
+even when you pass `--yes`. Without a terminal it refuses, exits 1 and installs nothing.
 
 To pass flags through the pipe, use `sh -s --`:
 
