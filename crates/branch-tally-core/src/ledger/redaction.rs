@@ -9,8 +9,8 @@ use std::path::Path;
 use ring::{digest, hmac};
 
 use super::tally_dir::{hex, random_bytes};
-use super::{LedgerEntry, LedgerError, Redact, TallyDir, line_text, parse_line};
-use crate::model::{AgentId, RequestId, SelectedRecord, SessionId, SubagentTags};
+use super::{LedgerEntry, LedgerError, Redact, StoredOrigin, TallyDir, line_text, parse_line};
+use crate::model::{AgentId, RequestId, SelectedRecord, SessionId, SubagentTags, Workspace};
 
 /// The salt's file name inside `.tally/`.
 pub const SALT_FILE: &str = "salt";
@@ -176,8 +176,12 @@ impl KeyedRedact {
 
     /// A live record with the same fields hashed as a ledger entry's, so a union with a redacted
     /// ledger counts one call once.
+    ///
+    /// `main` is the main checkout, as for [`LedgerEntry::from_selected`]: a worktree origin is
+    /// reduced to its name relative to it, hashed, and re-prefixed, exactly as a ledger entry's
+    /// origin reads back, so the two compare equal. A worktree outside `main` stays unnamed.
     #[must_use]
-    pub fn redact_selected(&self, record: SelectedRecord) -> SelectedRecord {
+    pub fn redact_selected(&self, record: SelectedRecord, main: Option<&Path>) -> SelectedRecord {
         let mut record = record;
         let r = &mut record.attributed.record;
         r.request_id = self.salt.request_id(&r.request_id);
@@ -187,8 +191,24 @@ impl KeyedRedact {
             r.attribution.skill = r.attribution.skill.as_deref().map(|n| self.salt.hash(n));
             r.attribution.agent = r.attribution.agent.as_deref().map(|n| self.salt.hash(n));
         }
+        r.origin = r.origin.take().and_then(|o| {
+            self.redact_origin(&StoredOrigin::from_origin(&o, main))
+                .to_origin(main)
+        });
         record.attributed.subagent = record.attributed.subagent.map(|t| self.tags(t));
         record
+    }
+
+    /// A stored origin with its worktree name hashed (never optional: an `agent-<id>` name is an
+    /// agent id). `Main` and an unnamed worktree are unchanged.
+    #[must_use]
+    pub fn redact_origin(&self, origin: &StoredOrigin) -> StoredOrigin {
+        match origin {
+            StoredOrigin::Worktree(Some(name)) => {
+                StoredOrigin::Worktree(Some(self.salt.hash(name)))
+            }
+            other => other.clone(),
+        }
     }
 
     /// The tags with their agent id hashed. The `subagent` label is the agent id when no name was
@@ -202,7 +222,10 @@ impl KeyedRedact {
                 tags.subagent
             },
             agent_id: self.salt.agent_id(&tags.agent_id),
-            workspace: tags.workspace,
+            workspace: match tags.workspace {
+                Workspace::Worktree(name) => Workspace::worktree(self.salt.hash(&name)),
+                other => other,
+            },
         }
     }
 }
@@ -220,6 +243,7 @@ impl Redact for KeyedRedact {
             entry.skill = entry.skill.as_deref().map(|n| self.salt.hash(n));
             entry.agent = entry.agent.as_deref().map(|n| self.salt.hash(n));
         }
+        entry.origin = entry.origin.as_ref().map(|o| self.redact_origin(o));
         entry.subagent = entry.subagent.map(|t| self.tags(t));
         entry.redaction = Some(self.salt.fingerprint());
         entry

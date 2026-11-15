@@ -770,6 +770,23 @@ mod keyed_redaction {
         s
     }
 
+    /// A call from a subagent that ran in a worktree named after its agent id.
+    fn worktree_call(id: &str, output: u64) -> SelectedRecord {
+        let mut s = call(id, output);
+        let name = format!("agent-of-{id}");
+        let slug = format!(
+            "{}--claude-worktrees-{name}",
+            paths::slug(Path::new("/repo"))
+        );
+        s.attributed.record.origin = Some(Origin::worktree(slug));
+        s.attributed.subagent = Some(SubagentTags {
+            workspace: Workspace::worktree(&name),
+            subagent: "worker".to_owned(),
+            agent_id: AgentId::new(&name),
+        });
+        s
+    }
+
     fn total_output(l: &ledger::Ledger) -> u64 {
         l.entries().iter().map(|e| e.usage.output).sum()
     }
@@ -781,7 +798,16 @@ mod keyed_redaction {
         redact: &dyn ledger::Redact,
         at: &'static str,
     ) {
-        append(path, calls, "feat/x", Mode::Claim, None, redact, &Fixed(at)).unwrap();
+        append(
+            path,
+            calls,
+            "feat/x",
+            Mode::Claim,
+            Some(Path::new("/repo")),
+            redact,
+            &Fixed(at),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -819,7 +845,12 @@ mod keyed_redaction {
     fn a_redacted_ledger_has_the_same_usage_totals_as_the_unredacted_one() {
         let dir = tempfile::tempdir().unwrap();
         let (plain, hashed) = (dir.path().join("p.jsonl"), dir.path().join("h.jsonl"));
-        let calls = [call("a", 1), call("b", 20), call("c", 300)];
+        let calls = [
+            call("a", 1),
+            call("b", 20),
+            call("c", 300),
+            worktree_call("w", 4000),
+        ];
         append_to(&plain, &calls, &Identity, "2026-03-01T00:00:00Z");
         append_to(
             &hashed,
@@ -841,7 +872,14 @@ mod keyed_redaction {
         };
         assert_eq!(sum(&p), sum(&h));
         let text = std::fs::read_to_string(&hashed).unwrap();
-        for raw in ["\"a\"", "\"sess\"", "agent-of-a", "worker"] {
+        for raw in [
+            "\"a\"",
+            "\"sess\"",
+            "agent-of-a",
+            "worker",
+            "agent-of-w",
+            "claude-worktrees",
+        ] {
             assert!(!text.contains(raw), "{raw} must not survive");
         }
     }

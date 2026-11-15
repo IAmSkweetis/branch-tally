@@ -133,7 +133,7 @@ fn a_redacted_line_has_only_hashes_for_ids() {
 fn redact_selected_matches_the_ledger_entry_round_trip_on_hashed_fields() {
     let r = KeyedRedact::new(test_salt(), false);
     let rec = selected("req-9", "b", 5);
-    let live = r.redact_selected(rec.clone());
+    let live = r.redact_selected(rec.clone(), None);
     let via_ledger = r
         .redact(LedgerEntry::from_selected(&rec, "b", Mode::Claim, None))
         .to_selected(None);
@@ -367,4 +367,104 @@ fn append_with_a_keyed_redactor_dedupes_on_the_hashed_key() {
     let first = append(&p, &recs, "b", Mode::Claim, None, &r, &CLOCK).unwrap();
     let second = append(&p, &recs, "b", Mode::Claim, None, &r, &CLOCK).unwrap();
     assert_eq!((first.appended, second.appended, second.skipped), (2, 0, 2));
+}
+
+// ---- worktree names (decision 0005, amended) ----
+
+const MAIN: &str = "/repo";
+
+fn worktree_record(id: &str, name: &str) -> SelectedRecord {
+    let mut rec = selected(id, "b", 5);
+    let slug = format!(
+        "{}--claude-worktrees-{name}",
+        crate::paths::slug(Path::new(MAIN))
+    );
+    rec.attributed.record.origin = Some(Origin::worktree(slug));
+    rec.attributed.subagent = Some(SubagentTags {
+        workspace: Workspace::worktree(name),
+        subagent: "ag".to_owned(),
+        agent_id: AgentId::new("agent-1"),
+    });
+    rec
+}
+
+fn worktree_entry(name: &str) -> LedgerEntry {
+    LedgerEntry::from_selected(
+        &worktree_record("r1", name),
+        "b",
+        Mode::Claim,
+        Some(Path::new(MAIN)),
+    )
+}
+
+#[test]
+fn worktree_names_are_hashed_in_tags_and_origin_regardless_of_names() {
+    let name = "agent-a1b2c3";
+    for names in [false, true] {
+        let after = KeyedRedact::new(test_salt(), names).redact(worktree_entry(name));
+        let hashed = test_salt().hash(&format!("claude-worktrees-{name}"));
+        assert_eq!(
+            after.origin,
+            Some(StoredOrigin::Worktree(Some(hashed))),
+            "{names}"
+        );
+        assert_eq!(
+            after.subagent.unwrap().workspace,
+            Workspace::worktree(test_salt().hash(name))
+        );
+        let text = serde_json::to_string(
+            &KeyedRedact::new(test_salt(), names).redact(worktree_entry(name)),
+        )
+        .unwrap();
+        assert!(!text.contains("a1b2c3"), "{text}");
+    }
+}
+
+#[test]
+fn main_and_unnamed_worktree_origins_stay_as_they_are() {
+    let r = KeyedRedact::new(test_salt(), false);
+    assert_eq!(r.redact_origin(&StoredOrigin::Main), StoredOrigin::Main);
+    assert_eq!(
+        r.redact_origin(&StoredOrigin::Worktree(None)),
+        StoredOrigin::Worktree(None)
+    );
+    let mut e = worktree_entry("agent-x");
+    e.origin = Some(StoredOrigin::Worktree(None));
+    assert_eq!(r.redact(e).origin, Some(StoredOrigin::Worktree(None)));
+}
+
+#[test]
+fn a_live_record_hashed_with_the_main_checkout_matches_the_ledger_entry_origin() {
+    let r = KeyedRedact::new(test_salt(), false);
+    let main = Some(Path::new(MAIN));
+    let rec = worktree_record("r1", "agent-a1b2c3");
+    let live = r.redact_selected(rec.clone(), main);
+    let stored = r
+        .redact(LedgerEntry::from_selected(&rec, "b", Mode::Claim, main))
+        .to_selected(main);
+    assert_eq!(
+        live.attributed.record.origin,
+        stored.attributed.record.origin
+    );
+    assert_eq!(live.attributed.subagent, stored.attributed.subagent);
+    assert!(live.attributed.record.origin.is_some());
+    // A worktree outside the main checkout stays unknown, as it reads back from the ledger.
+    let mut outside = rec;
+    outside.attributed.record.origin = Some(Origin::worktree("elsewhere--agent-q"));
+    assert_eq!(
+        r.redact_selected(outside, main).attributed.record.origin,
+        None
+    );
+}
+
+#[test]
+fn backfill_hashes_worktree_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = path(&dir);
+    let e = worktree_entry("agent-a1b2c3");
+    write_lines(&p, &[serde_json::to_string(&e).unwrap()]);
+    redact_ledger(&p, &KeyedRedact::new(test_salt(), false)).unwrap();
+    let text = std::fs::read_to_string(&p).unwrap();
+    assert!(!text.contains("a1b2c3"), "{text}");
+    assert!(text.contains(&test_salt().hash("agent-a1b2c3")));
 }
