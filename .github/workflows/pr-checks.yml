@@ -6,6 +6,14 @@ name: PR checks
 # are exempt from the branch rule because the bot names them; its commits and titles still pass,
 # through the prefixes set in .github/dependabot.yml.
 
+# `edited` fires for a title, a body or a base-branch change, and the token report rewrites the body.
+# A body-only edit must not cancel the run for the push before it, and the workflow-level
+# concurrency group cancels before any job-level `if` is evaluated. So an `edited` run gets its own
+# group (unique per run, never cancelling and never cancelled), and only pushes share the per-PR
+# group that cancels. The jobs then skip unless what they check changed: pr-title on a title
+# edit, the rest on a base-branch change. A skipped required job reports as passed, and the
+# checks for the head SHA are already there from the push.
+
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
@@ -13,12 +21,13 @@ on:
 permissions: {}
 
 concurrency:
-  group: pr-checks-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: pr-checks-${{ github.event.pull_request.number }}${{ github.event.action == 'edited' && format('-edited-{0}', github.run_id) || '' }}
+  cancel-in-progress: ${{ github.event.action != 'edited' }}
 
 jobs:
   pr-title:
     name: pr-title
+    if: github.event.action != 'edited' || github.event.changes.title
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -34,6 +43,7 @@ jobs:
 
   branch-name:
     name: branch-name
+    if: github.event.action != 'edited' || github.event.changes.base
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -49,6 +59,7 @@ jobs:
 
   commit-messages:
     name: commit-messages
+    if: github.event.action != 'edited' || github.event.changes.base
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -78,6 +89,7 @@ jobs:
 
   dependency-review:
     name: dependency-review
+    if: github.event.action != 'edited' || github.event.changes.base
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
