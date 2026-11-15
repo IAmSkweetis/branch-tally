@@ -125,6 +125,45 @@ impl Salt {
     /// # Errors
     /// As [`Salt::load`], plus [`LedgerError::Write`] when it cannot be created.
     pub fn load_or_create(tally: &TallyDir) -> Result<Self, LedgerError> {
+        Self::settle(tally, &|| {
+            Self::generate().map_err(|source| LedgerError::Write {
+                path: tally.file_path(SALT_FILE),
+                source,
+            })
+        })
+    }
+
+    /// The salt for the ledger in `target`: its own `salt` when it has one. Otherwise a copy of
+    /// `main`'s salt when the main checkout's `.tally/` has one (so every worktree on a machine
+    /// hashes alike), else a fresh one. The copy is an exclusive create, so a racer's salt wins
+    /// and is reused. Nothing is ever written to `main`.
+    ///
+    /// # Errors
+    /// As [`Salt::load_or_create`], and [`LedgerError::MalformedSalt`] when `main`'s salt file
+    /// is damaged.
+    pub fn resolve(target: &TallyDir, main: Option<&TallyDir>) -> Result<Self, LedgerError> {
+        Self::settle(target, &|| {
+            let Some(main) = main else {
+                return Self::generate().map_err(|source| LedgerError::Write {
+                    path: target.file_path(SALT_FILE),
+                    source,
+                });
+            };
+            match Self::load(main)? {
+                Some(salt) => Ok(salt),
+                None => Self::generate().map_err(|source| LedgerError::Write {
+                    path: target.file_path(SALT_FILE),
+                    source,
+                }),
+            }
+        })
+    }
+
+    /// Loads the salt in `tally`, or creates one from `candidate`.
+    fn settle(
+        tally: &TallyDir,
+        candidate: &dyn Fn() -> Result<Self, LedgerError>,
+    ) -> Result<Self, LedgerError> {
         // A creator that lost the race may see the winner's file before its bytes land, which
         // reads as malformed for a moment. Retry briefly before believing it.
         let mut retries = 0_u32;
@@ -132,10 +171,7 @@ impl Salt {
             match Self::load(tally) {
                 Ok(Some(salt)) => return Ok(salt),
                 Ok(None) => {
-                    let salt = Self::generate().map_err(|source| LedgerError::Write {
-                        path: tally.file_path(SALT_FILE),
-                        source,
-                    })?;
+                    let salt = candidate()?;
                     let text = format!("{}\n", salt.to_hex());
                     if tally.create_new(SALT_FILE, text.as_bytes())? {
                         return Ok(salt);
@@ -196,6 +232,7 @@ impl KeyedRedact {
                 .to_origin(main)
         });
         record.attributed.subagent = record.attributed.subagent.map(|t| self.tags(t));
+        record.attributed.branch = self.redact_branch(&record.attributed.branch);
         record
     }
 
@@ -208,6 +245,19 @@ impl KeyedRedact {
                 StoredOrigin::Worktree(Some(self.salt.hash(name)))
             }
             other => other.clone(),
+        }
+    }
+
+    /// A requested branch name as the ledger would store it: `worktree-agent-<id>` becomes
+    /// `worktree-agent-<hash(id)>`, every other name is unchanged, and an id that is already a
+    /// hash is not hashed again.
+    #[must_use]
+    pub fn redact_branch(&self, branch: &str) -> String {
+        match branch.strip_prefix(AGENT_BRANCH_PREFIX) {
+            Some(id) if !id.is_empty() && !is_hash(id) => {
+                format!("{AGENT_BRANCH_PREFIX}{}", self.salt.hash(id))
+            }
+            _ => branch.to_owned(),
         }
     }
 
@@ -232,10 +282,12 @@ impl KeyedRedact {
 
 impl Redact for KeyedRedact {
     fn redact(&self, entry: LedgerEntry) -> LedgerEntry {
-        if entry.redaction.is_some() {
+        if is_hashed_line(&entry) {
             return entry;
         }
         let mut entry = entry;
+        entry.branch = self.redact_branch(&entry.branch);
+        entry.recorded_for = self.redact_branch(&entry.recorded_for);
         entry.request_id = self.salt.request_id(&entry.request_id);
         entry.session_id = self.salt.session_id(&entry.session_id);
         entry.agent_id = entry.agent_id.as_ref().map(|id| self.salt.agent_id(id));
@@ -250,6 +302,26 @@ impl Redact for KeyedRedact {
     }
 }
 
+/// The branch Claude Code gives an agent's worktree, followed by the agent id.
+const AGENT_BRANCH_PREFIX: &str = "worktree-agent-";
+
+/// Whether `text` is what [`Salt::hash`] writes: 32 lowercase hex characters.
+fn is_hash(text: &str) -> bool {
+    text.len() == 32 && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Whether a line is genuinely redacted: it carries the stamp AND its request, session and agent
+/// ids are hashes. A stamp over raw ids (a forgery or a bug) is not believed.
+fn is_hashed_line(entry: &LedgerEntry) -> bool {
+    entry.redaction.is_some()
+        && is_hash(entry.request_id.as_str())
+        && is_hash(entry.session_id.as_str())
+        && entry
+            .agent_id
+            .as_ref()
+            .is_none_or(|id| is_hash(id.as_str()))
+}
+
 /// What `ledger redact` did.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RedactOutcome {
@@ -261,6 +333,9 @@ pub struct RedactOutcome {
     pub already_redacted: u64,
     /// Lines that do not parse (or whose `ts` is not RFC 3339), left byte-identical.
     pub unparseable: u64,
+    /// Lines that carried a `redaction` stamp but raw ids, so the stamp was not believed: they
+    /// were hashed and stamped again.
+    pub restamped: u64,
     /// `.tally/` does not exist: nothing was read or written.
     pub tally_absent: bool,
 }
@@ -270,6 +345,16 @@ pub struct RedactOutcome {
 /// # Errors
 /// [`LedgerError`] when the ledger cannot be read or replaced; the original is then untouched.
 pub fn redact_ledger(path: &Path, redactor: &KeyedRedact) -> Result<RedactOutcome, LedgerError> {
+    redact_ledger_with(path, redactor, &|| {})
+}
+
+/// `redact_ledger` with a seam that runs after the rewrite is written to its temporary file and
+/// before the original is checked and replaced.
+pub(super) fn redact_ledger_with(
+    path: &Path,
+    redactor: &KeyedRedact,
+    between: &dyn Fn(),
+) -> Result<RedactOutcome, LedgerError> {
     let real = match std::fs::canonicalize(path) {
         Ok(p) => p,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(RedactOutcome::default()),
@@ -285,18 +370,32 @@ pub fn redact_ledger(path: &Path, redactor: &KeyedRedact) -> Result<RedactOutcom
         source,
     })?;
     let (bytes, outcome) = rewrite(&existing, redactor);
-    if outcome.rewritten > 0 {
-        replace_file(&real, &bytes).map_err(|source| LedgerError::Write {
-            path: path.to_owned(),
-            source,
+    if outcome.rewritten + outcome.restamped > 0 {
+        replace_file(&real, &bytes, &existing, between).map_err(|source| {
+            if source.kind() == std::io::ErrorKind::InvalidData {
+                LedgerError::ChangedDuringRewrite {
+                    path: path.to_owned(),
+                }
+            } else {
+                LedgerError::Write {
+                    path: path.to_owned(),
+                    source,
+                }
+            }
         })?;
     }
     Ok(outcome)
 }
 
-/// Writes `bytes` beside `target` under a random name, created exclusively, then renames it
-/// over `target`. The temporary file is removed on failure.
-fn replace_file(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
+/// Writes `bytes` beside `target` under a random name, created exclusively, checks `target`
+/// still holds `expected` (an `InvalidData` error otherwise), then renames over it. The temporary
+/// file is removed on failure. A write landing between the check and the rename is not detected.
+fn replace_file(
+    target: &Path,
+    bytes: &[u8],
+    expected: &[u8],
+    between: &dyn Fn(),
+) -> std::io::Result<()> {
     use std::io::Write;
 
     let name = target
@@ -311,7 +410,17 @@ fn replace_file(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let done = file
         .write_all(bytes)
         .and_then(|()| file.sync_all())
-        .and_then(|()| std::fs::rename(&temp, target));
+        .and_then(|()| {
+            between();
+            if std::fs::read(target)? == expected {
+                std::fs::rename(&temp, target)
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "changed while rewriting",
+                ))
+            }
+        });
     if done.is_err() {
         drop(file);
         let _ = std::fs::remove_file(&temp);
@@ -338,6 +447,10 @@ fn rewrite(existing: &[u8], redactor: &KeyedRedact) -> (Vec<u8>, RedactOutcome) 
                 outcome.rewritten += 1;
                 out.extend_from_slice(line_text(&redactor.redact(entry)).as_bytes());
             }
+            Ok((entry, false)) if !is_hashed_line(&entry) => {
+                outcome.restamped += 1;
+                out.extend_from_slice(line_text(&redactor.redact(entry)).as_bytes());
+            }
             Ok((_, false)) => {
                 outcome.already_redacted += 1;
                 out.extend_from_slice(piece);
@@ -360,6 +473,15 @@ pub fn redact_ledger_default(
     root: &Path,
     redactor: &KeyedRedact,
 ) -> Result<RedactOutcome, LedgerError> {
+    redact_ledger_default_with(root, redactor, &|| {})
+}
+
+/// `redact_ledger_default` with the same seam as [`redact_ledger_with`].
+pub(super) fn redact_ledger_default_with(
+    root: &Path,
+    redactor: &KeyedRedact,
+    between: &dyn Fn(),
+) -> Result<RedactOutcome, LedgerError> {
     let Some(tally) = TallyDir::open(root)? else {
         return Ok(RedactOutcome {
             tally_absent: true,
@@ -370,8 +492,8 @@ pub fn redact_ledger_default(
         return Ok(RedactOutcome::default());
     };
     let (bytes, outcome) = rewrite(&existing, redactor);
-    if outcome.rewritten > 0 {
-        tally.replace(super::LEDGER_FILE, &bytes)?;
+    if outcome.rewritten + outcome.restamped > 0 {
+        tally.replace_with(super::LEDGER_FILE, &bytes, Some(&existing), between)?;
     }
     Ok(outcome)
 }

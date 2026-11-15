@@ -468,3 +468,5 @@ fn backfill_hashes_worktree_names() {
     assert!(!text.contains("a1b2c3"), "{text}");
     assert!(text.contains(&test_salt().hash("agent-a1b2c3")));
 }
+
+mod audit;
