@@ -8,8 +8,8 @@ use std::cmp::Reverse;
 use std::fmt::Write as _;
 
 use crate::model::{
-    Costs, DefaultBranchSource, HeuristicBreakdown, Mode, PriceTableSource, RowCost, SessionId,
-    SessionRow, Summary, WorkBranchRule, Workspace,
+    Costs, DefaultBranchSource, DoubleCountRisk, HeuristicBreakdown, LiveMatchFailure, Mode,
+    PriceTableSource, RowCost, SessionId, SessionRow, Summary, WorkBranchRule, Workspace,
 };
 
 /// Opens the region of a PR body this tool owns.
@@ -184,6 +184,54 @@ fn overflow_statement(overflowed: bool, o: &mut Vec<String>) {
             .to_owned(),
     );
     o.push(String::new());
+}
+
+/// When the total may count some calls twice (decision 0005, "Mixing is counted and noted"), say
+/// so and why. This is an overcount, not a floor, so it never says "at least". Counts only: no
+/// ids, paths, salts or fingerprints. Pushes nothing when there is no risk.
+fn double_count_statement(risk: Option<&DoubleCountRisk>, o: &mut Vec<String>) {
+    let Some(risk) = risk else {
+        return;
+    };
+    let mut causes: Vec<String> = Vec::new();
+    if let Some(m) = &risk.mixed_ledger {
+        causes.push(format!(
+            "the ledger mixes {} unredacted and {} redacted line(s) under {} salt(s), so a call \
+             recorded in both forms is counted twice; run `branch-tally ledger redact` to \
+             collapse them",
+            n(m.unredacted_lines),
+            n(m.redacted_lines),
+            n(m.distinct_salts),
+        ));
+    }
+    if let Some(f) = &risk.live_match {
+        let why = match f {
+            LiveMatchFailure::NoSalt => "there is no local salt",
+            LiveMatchFailure::SaltUnreadable => "the local salt could not be read",
+            LiveMatchFailure::FingerprintMismatch => {
+                "the local salt matches none of the redacted lines"
+            }
+            LiveMatchFailure::PartiallyMatched => {
+                "the local salt matches only some of the redacted lines"
+            }
+        };
+        causes.push(format!(
+            "live calls could not be matched to redacted ledger lines ({why}), so a call in both \
+             may be counted twice"
+        ));
+    }
+    o.push(format!(
+        "**Total may count some calls twice**: {}. This is an overcount, not a floor.",
+        causes.join("; ")
+    ));
+    o.push(String::new());
+}
+
+/// The bold footnote statements, in order: floor, overflow, double-count risk.
+fn statements(summary: &Summary, o: &mut Vec<String>) {
+    floor_statement(&summary.footnote.heuristics, summary.total.tokens(), o);
+    overflow_statement(summary.footnote.totals_overflowed, o);
+    double_count_statement(summary.footnote.double_count.as_ref(), o);
 }
 
 /// Recorded text on one line: a line break would end a table row, a heading or the footnote.
@@ -476,8 +524,7 @@ pub fn markdown(summary: &Summary, costs: &Costs, show_cost: bool) -> String {
 
     session_table(&ordered, summary.redacted, &mut o);
 
-    floor_statement(heur, total.tokens(), &mut o);
-    overflow_statement(summary.footnote.totals_overflowed, &mut o);
+    statements(summary, &mut o);
 
     let mode = if summary.mode == Mode::Timeline {
         " \u{b7} timeline mode"
