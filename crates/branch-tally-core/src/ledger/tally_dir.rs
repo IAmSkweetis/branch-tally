@@ -43,6 +43,7 @@ use std::fs::{File, Metadata};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use super::LedgerError;
 
@@ -85,10 +86,21 @@ pub const TALLY_DIR: &str = ".tally";
 ///   open path, so a thread should lose this race a small number of times, bounded by the
 ///   concurrent creators. Nothing found states a limit.
 ///
-/// The bound is provisional: no source gives a number, and 8 is only the thread count of the
-/// test that exposed the bug. There is deliberately no backoff yet. A directory that really was
-/// removed keeps returning `ENOENT`, so the bound is what ends the loop.
-const OPEN_RETRIES: u32 = 8;
+/// The bound and the schedule are the maintainer's decision for #109, modelled on the kernel's
+/// own retry in `vn_open_auth` (10 retries, the first 5 without yielding, then a sleep of
+/// `10 ms * n`) with a 10x smaller step, so a capture hook does not stall: up to 10 retries, the
+/// first 5 immediate, then `1 ms * n` (6 to 10 ms, 40 ms in all). A directory that really was
+/// removed keeps returning `ENOENT`, so the bound is what ends the loop; that is the only case
+/// that pays the full 40 ms. The sleep goes through a seam so tests never wait.
+const OPEN_RETRIES: u32 = 10;
+
+/// The first this-many retries are immediate; later ones sleep first. Mirrors XNU's
+/// `RETRY_NO_YIELD_COUNT` (`vfs_vnops.c:343`).
+const RETRIES_WITHOUT_PAUSE: u32 = 5;
+
+/// Retry `n` (once past [`RETRIES_WITHOUT_PAUSE`]) sleeps `n` times this: 6 to 10 ms, 40 ms in
+/// all when the directory is really gone.
+const RETRY_PAUSE_STEP: Duration = Duration::from_millis(1);
 
 /// A verified `.tally/` directory of a main checkout.
 #[derive(Debug, Clone)]
@@ -342,7 +354,13 @@ impl TallyDir {
 
     /// `append` with the same seam as `read_with`.
     fn append_with(&self, name: &str, bytes: &[u8], between: &dyn Fn()) -> Result<(), LedgerError> {
-        self.append_via(name, bytes, between, &|dir, name| dir.open_file(name, true))
+        self.append_via(
+            name,
+            bytes,
+            between,
+            &|dir, name| dir.open_file(name, true),
+            &std::thread::sleep,
+        )
     }
 
     /// `append_with` with the `O_CREAT` open injectable, so a test can make it fail with `ENOENT`
@@ -353,6 +371,7 @@ impl TallyDir {
         bytes: &[u8],
         between: &dyn Fn(),
         open: &dyn Fn(&Self, &str) -> std::io::Result<File>,
+        sleep: &dyn Fn(Duration),
     ) -> Result<(), LedgerError> {
         let path = self.file_path(name);
         if !is_plain_name(name) {
@@ -368,7 +387,7 @@ impl TallyDir {
             Err(source) => return Err(write_err(source)),
         }
         between();
-        let mut file = self.open_creating(name, open).map_err(write_err)?;
+        let mut file = self.open_creating(name, open, sleep).map_err(write_err)?;
         let meta = file.metadata().map_err(write_err)?;
         if !is_plain_file(&meta) {
             return Err(refused(&path, "it is not a regular file"));
@@ -376,7 +395,8 @@ impl TallyDir {
         file.write_all(bytes).map_err(write_err)
     }
 
-    /// Runs the `O_CREAT` open, retrying immediately on `NotFound` up to [`OPEN_RETRIES`] times.
+    /// Runs the `O_CREAT` open, retrying on `NotFound` up to [`OPEN_RETRIES`] times: the first [`RETRIES_WITHOUT_PAUSE`] at
+    /// once, then after a sleep of [`RETRY_PAUSE_STEP`] times the retry number.
     ///
     /// Every attempt is a fresh `openat` relative to the held directory fd with `O_NOFOLLOW`, so
     /// a retry re-applies #105's guarantees: a link that appeared meanwhile is refused, and a
@@ -387,12 +407,16 @@ impl TallyDir {
         &self,
         name: &str,
         open: &dyn Fn(&Self, &str) -> std::io::Result<File>,
+        sleep: &dyn Fn(Duration),
     ) -> std::io::Result<File> {
         let mut retries = 0;
         loop {
             match open(self, name) {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound && retries < OPEN_RETRIES => {
                     retries += 1;
+                    if retries > RETRIES_WITHOUT_PAUSE {
+                        sleep(RETRY_PAUSE_STEP * retries);
+                    }
                 }
                 other => return other,
             }
@@ -616,33 +640,64 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn create_open_that_fails_with_enoent_is_retried() {
+    fn ms(n: &[u64]) -> Vec<Duration> {
+        n.iter().map(|&n| Duration::from_millis(n)).collect()
+    }
+
+    /// Runs an append whose open fails `fails` times; returns the open calls and the sleeps.
+    #[cfg(unix)]
+    fn append_failing(fails: u32) -> (Result<(), LedgerError>, u32, Vec<Duration>) {
         let dir = checkout();
         let tally = with_tally(dir.path());
         let calls = std::cell::Cell::new(0);
-        let open = flaky_open(3, &calls, &|| {});
-        tally.append_via("f.jsonl", b"a\n", &|| {}, &open).unwrap();
-        assert_eq!(calls.get(), 4);
-        assert_eq!(tally.read("f.jsonl").unwrap().unwrap(), b"a\n");
+        let slept = std::cell::RefCell::new(Vec::new());
+        let open = flaky_open(fails, &calls, &|| {});
+        let result = tally.append_via("f.jsonl", b"a\n", &|| {}, &open, &|d| {
+            slept.borrow_mut().push(d);
+        });
+        if result.is_ok() {
+            assert_eq!(tally.read("f.jsonl").unwrap().unwrap(), b"a\n");
+        } else {
+            assert_eq!(tally.read("f.jsonl").unwrap(), None);
+        }
+        (result, calls.get(), slept.into_inner())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_early_success_does_not_sleep() {
+        let (result, calls, slept) = append_failing(0);
+        assert!(result.is_ok());
+        assert_eq!((calls, slept), (1, vec![]));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_first_five_retries_are_immediate() {
+        let (result, calls, slept) = append_failing(5);
+        assert!(result.is_ok());
+        assert_eq!((calls, slept), (6, vec![]));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn later_retries_sleep_one_ms_times_the_attempt() {
+        let (result, calls, slept) = append_failing(7);
+        assert!(result.is_ok());
+        assert_eq!((calls, slept), (8, ms(&[6, 7])));
     }
 
     #[cfg(unix)]
     #[test]
     fn enoent_past_the_retry_bound_surfaces_as_a_write_error() {
-        let dir = checkout();
-        let tally = with_tally(dir.path());
-        let calls = std::cell::Cell::new(0);
-        let open = flaky_open(u32::MAX, &calls, &|| {});
-        let err = tally
-            .append_via("f.jsonl", b"a\n", &|| {}, &open)
-            .unwrap_err();
+        let (result, calls, slept) = append_failing(u32::MAX);
+        let err = result.unwrap_err();
         assert!(
             matches!(&err, LedgerError::Write { source, .. } if source.kind() == std::io::ErrorKind::NotFound),
             "{err:?}"
         );
-        assert_eq!(calls.get(), OPEN_RETRIES + 1);
-        assert_eq!(tally.read("f.jsonl").unwrap(), None);
+        assert_eq!(calls, 11);
+        assert_eq!(slept, ms(&[6, 7, 8, 9, 10]));
     }
 
     #[cfg(unix)]
@@ -658,7 +713,7 @@ mod tests {
         let open = flaky_open(1, &calls, &plant);
         assert!(
             tally
-                .append_via("f.jsonl", b"evil\n", &|| {}, &open)
+                .append_via("f.jsonl", b"evil\n", &|| {}, &open, &|_| {})
                 .is_err()
         );
         assert_eq!(calls.get(), 2, "the retry ran");
@@ -680,7 +735,9 @@ mod tests {
             swap_tally_for_link(dir.path(), &victim);
         };
         let open = flaky_open(1, &calls, &swap);
-        tally.append_via("f.jsonl", b"x\n", &|| {}, &open).unwrap();
+        tally
+            .append_via("f.jsonl", b"x\n", &|| {}, &open, &|_| {})
+            .unwrap();
         assert_eq!(calls.get(), 2, "the retry ran");
         assert_eq!(
             std::fs::read_dir(&victim).unwrap().count(),
@@ -702,7 +759,7 @@ mod tests {
         };
         let open = flaky_open(1, &calls, &remove);
         let err = tally
-            .append_via("f.jsonl", b"x\n", &|| {}, &open)
+            .append_via("f.jsonl", b"x\n", &|| {}, &open, &|_| {})
             .unwrap_err();
         assert!(matches!(err, LedgerError::Write { .. }), "{err:?}");
         assert!(
