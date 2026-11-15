@@ -604,6 +604,111 @@ pub fn run(
     Ok(report)
 }
 
+/// The ledger's entries for one requested branch. An agent branch (`worktree-agent-<id>`) is
+/// stored under its hashed name on redacted lines, so the raw name and the hashed name are both
+/// read: a ledger that spells it both ways is the mixed case, counted and noted, not hidden.
+struct BranchLedger {
+    ledgers: Vec<crate::ledger::Ledger>,
+    /// `(hashed, requested)`: a record's branch, hashed on a redacted line, reads as requested.
+    alias: Option<(String, String)>,
+}
+
+impl BranchLedger {
+    fn new(
+        read: &crate::ledger::Ledger,
+        branch: &str,
+        redactor: Option<&crate::ledger::KeyedRedact>,
+    ) -> Self {
+        let mut ledgers = vec![read.for_branch(branch)];
+        let mut alias = None;
+        if let Some(red) = redactor {
+            let hashed = red.redact_branch(branch);
+            if hashed != branch {
+                ledgers.push(read.for_branch(&hashed));
+                alias = Some((hashed, branch.to_owned()));
+            }
+        }
+        Self { ledgers, alias }
+    }
+
+    fn records(&self, main: &Path) -> Vec<crate::model::SelectedRecord> {
+        let mut out: Vec<_> = self
+            .ledgers
+            .iter()
+            .flat_map(|l| l.to_selected(Some(main)))
+            .collect();
+        if let Some((hashed, requested)) = &self.alias {
+            for r in &mut out {
+                if &r.attributed.branch == hashed {
+                    r.attributed.branch.clone_from(requested);
+                }
+            }
+        }
+        out
+    }
+
+    fn held(&self) -> std::collections::HashSet<crate::model::RequestId> {
+        self.ledgers
+            .iter()
+            .flat_map(|l| l.entries().iter().map(|e| e.request_id.clone()))
+            .collect()
+    }
+
+    fn modes(&self) -> Vec<Mode> {
+        [Mode::Strict, Mode::Claim, Mode::Timeline]
+            .into_iter()
+            .filter(|m| self.ledgers.iter().any(|l| l.modes().contains(m)))
+            .collect()
+    }
+
+    /// The ledger's records, then live records it lacks, deduplicated by request id.
+    fn union(&self, live: &[crate::model::SelectedRecord], main: &Path) -> crate::ledger::Union {
+        let mut records = self.records(main);
+        let held = self.held();
+        let ledger_len = records.len() as u64;
+        let mut seen = held.clone();
+        let (mut live_only, mut in_both) = (0, 0);
+        let mut counted_both = std::collections::HashSet::new();
+        for rec in live {
+            let id = &rec.attributed.record.request_id;
+            if seen.insert(id.clone()) {
+                live_only += 1;
+                records.push(rec.clone());
+            } else if held.contains(id) && counted_both.insert(id.clone()) {
+                in_both += 1;
+            }
+        }
+        crate::ledger::Union {
+            records,
+            ledger_only: ledger_len - in_both,
+            live_only,
+            in_both,
+        }
+    }
+}
+
+/// Why the footnote carries a double-count risk, from what reading the ledger counted and how
+/// well live calls matched it. The one place `Footnote::double_count` is set.
+fn double_count_risk(
+    stats: &crate::ledger::ReadStats,
+    matching: LiveRedactionMatch,
+) -> Option<crate::model::DoubleCountRisk> {
+    use crate::model::{LiveMatchFailure, MixedLedger};
+    let mixed = stats.is_mixed().then_some(MixedLedger {
+        unredacted_lines: stats.unredacted_lines,
+        redacted_lines: stats.redacted_lines,
+        distinct_salts: stats.redaction_fingerprints.len() as u64,
+    });
+    let failure = match matching {
+        LiveRedactionMatch::NotNeeded | LiveRedactionMatch::Matched => None,
+        LiveRedactionMatch::NoSalt => Some(LiveMatchFailure::NoSalt),
+        LiveRedactionMatch::SaltUnreadable => Some(LiveMatchFailure::SaltUnreadable),
+        LiveRedactionMatch::FingerprintMismatch => Some(LiveMatchFailure::FingerprintMismatch),
+        LiveRedactionMatch::PartiallyMatched => Some(LiveMatchFailure::PartiallyMatched),
+    };
+    crate::model::DoubleCountRisk::new(mixed, failure)
+}
+
 /// A ledger-only selection: the repository-wide unattributed counts are unknown, not zero.
 fn ledger_only_picked(ledger_records: Vec<crate::model::SelectedRecord>) -> Picked {
     let attributed: Vec<_> = ledger_records
@@ -626,18 +731,13 @@ fn ledger_only_picked(ledger_records: Vec<crate::model::SelectedRecord>) -> Pick
 /// it, else by its hashed id when a redacted line does; one held in neither form is unchanged.
 fn match_live_selected(
     redactor: Option<&crate::ledger::KeyedRedact>,
-    ledger: &crate::ledger::Ledger,
+    held: &std::collections::HashSet<crate::model::RequestId>,
     live: Vec<crate::model::SelectedRecord>,
     main: &Path,
 ) -> Vec<crate::model::SelectedRecord> {
     let Some(redactor) = redactor else {
         return live;
     };
-    let held: std::collections::HashSet<_> = ledger
-        .entries()
-        .iter()
-        .map(|e| e.request_id.clone())
-        .collect();
     live.into_iter()
         .map(|rec| {
             let id = &rec.attributed.record.request_id;
@@ -692,26 +792,54 @@ fn full_attributed_set(
     all
 }
 
+/// The checkouts whose `.tally/` may hold the salt for the ledger being read, in order: the git
+/// top level for the default ledger (or the checkout owning an explicit ledger in a `.tally/`),
+/// then the main checkout.
+fn salt_homes(ledger_root: Option<&Path>, ledger_path: &Path, main: &Path) -> Vec<PathBuf> {
+    let own = match ledger_root {
+        Some(root) => Some(root.to_path_buf()),
+        None => ledger_path
+            .parent()
+            .filter(|p| p.file_name().is_some_and(|n| n == crate::ledger::TALLY_DIR))
+            .and_then(Path::parent)
+            .map(Path::to_path_buf),
+    };
+    own.into_iter().chain([main.to_path_buf()]).collect()
+}
+
 /// The redactor to match live calls against redacted ledger lines, and how well it matches.
+///
+/// `homes` are the checkouts whose `.tally/` may hold the salt, in order of preference.
 ///
 /// Never guesses: without a readable salt whose fingerprint is on a redacted line, there is no
 /// redactor and the condition is reported. Names are not hashed here, since the union keys on
 /// request ids alone.
 fn live_redactor(
-    main_checkout: &Path,
+    homes: &[PathBuf],
     stats: &crate::ledger::ReadStats,
 ) -> (Option<crate::ledger::KeyedRedact>, LiveRedactionMatch) {
     use crate::ledger::{KeyedRedact, Salt, TallyDir};
     if stats.redacted_lines == 0 {
         return (None, LiveRedactionMatch::NotNeeded);
     }
-    let salt = match TallyDir::open(main_checkout).and_then(|t| match t {
-        Some(t) => Salt::load(&t),
-        None => Ok(None),
-    }) {
-        Ok(Some(salt)) => salt,
-        Ok(None) => return (None, LiveRedactionMatch::NoSalt),
-        Err(_) => return (None, LiveRedactionMatch::SaltUnreadable),
+    // The first `.tally/` holding a salt wins: the ledger's own, then the main checkout's. Only
+    // loaded, never created.
+    let mut found = None;
+    for home in homes {
+        match TallyDir::open(home).and_then(|t| match t {
+            Some(t) => Salt::load(&t),
+            None => Ok(None),
+        }) {
+            Ok(Some(salt)) => {
+                found = Some(salt);
+                break;
+            }
+            Ok(None) => {}
+            Err(_) => return (None, LiveRedactionMatch::SaltUnreadable),
+        }
+    }
+    let Some(salt) = found else {
+        return (None, LiveRedactionMatch::NoSalt);
     };
     let fingerprint = salt.fingerprint();
     if !stats.redaction_fingerprints.contains(&fingerprint) {
@@ -921,9 +1049,11 @@ pub fn run_from_ledger_at(
         Some(root) => crate::ledger::read_default(root)?,
         None => crate::ledger::read(&ledger_path)?,
     };
+    let homes = salt_homes(ledger_root.as_deref(), &ledger_path, &main_checkout);
+    let (redactor, matching) = live_redactor(&homes, read.stats());
     // Exactly the entries `record` wrote for this branch; the ledger keys on (request, branch).
-    let ledger = read.for_branch(&branch);
-    let ledger_records = ledger.to_selected(Some(&main_checkout));
+    let ledger = BranchLedger::new(&read, &branch, redactor.as_ref());
+    let ledger_records = ledger.records(&main_checkout);
     let mut info = LedgerReport {
         ledger_stats: read.stats().clone(),
         ledger_only: ledger_records.len() as u64,
@@ -933,7 +1063,11 @@ pub fn run_from_ledger_at(
         live_included: source.is_some(),
         full_set: FullSetCounts::Unavailable,
         live_read_stats: None,
-        live_redaction: LiveRedactionMatch::NotNeeded,
+        live_redaction: if source.is_some() {
+            matching
+        } else {
+            LiveRedactionMatch::NotNeeded
+        },
     };
     let mut unavailable = None;
     let mut capture_stats = crate::ledger::CaptureReadStats::default();
@@ -953,16 +1087,14 @@ pub fn run_from_ledger_at(
         unavailable = live.unavailable;
         capture_stats = live.captures.stats().clone();
         // Against redacted lines, live calls are matched in hashed form (decision 0005).
-        let (redactor, matching) = live_redactor(&main_checkout, &read.stats().clone());
-        info.live_redaction = matching;
         let live_selected = match_live_selected(
             redactor.as_ref(),
-            &ledger,
+            &ledger.held(),
             live_sel.selected,
             &main_checkout,
         );
         // The ledger's copy wins on overlap.
-        let union = crate::ledger::union(&ledger, &live_selected, Some(&main_checkout));
+        let union = ledger.union(&live_selected, &main_checkout);
         let records = union.records;
         info.ledger_only = union.ledger_only;
         info.live_only = union.live_only;
@@ -995,6 +1127,7 @@ pub fn run_from_ledger_at(
     let mut report = finish(&branch, options, sel, read_stats, table);
     report.worktrees_unavailable = unavailable;
     report.capture_stats = capture_stats;
+    report.summary.footnote.double_count = double_count_risk(read.stats(), info.live_redaction);
     report.ledger = Some(info);
     Ok(report)
 }

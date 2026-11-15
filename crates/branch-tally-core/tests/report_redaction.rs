@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use branch_tally_core::git::{FakeGit, Worktree};
 use branch_tally_core::ledger::{Clock, Identity, KeyedRedact, LedgerTarget, Salt, TallyDir};
 use branch_tally_core::model::{
-    AgentId, Dispatch, Harness, Origin, Record, RequestId, SessionId, Usage,
+    AgentId, Dispatch, Harness, LiveMatchFailure, Origin, Record, RequestId, SessionId, Usage,
 };
 use branch_tally_core::pricing::PriceTable;
 use branch_tally_core::report::{LiveRedactionMatch, Options, Report, record, run_from_ledger_at};
@@ -85,12 +85,20 @@ impl Repo {
         Salt::load_or_create(&tally).unwrap()
     }
     fn record(&self, source: &FakeSource, redact: &dyn branch_tally_core::ledger::Redact) -> u64 {
+        self.record_on("feat/x", source, redact)
+    }
+    fn record_on(
+        &self,
+        branch: &str,
+        source: &FakeSource,
+        redact: &dyn branch_tally_core::ledger::Redact,
+    ) -> u64 {
         record(
             &self.git(),
             source,
             Path::new("/projects"),
             &self.root(),
-            Some("feat/x"),
+            Some(branch),
             &Options::default(),
             &self.ledger(),
             redact,
@@ -101,13 +109,16 @@ impl Repo {
         .appended
     }
     fn report(&self, source: Option<&dyn Source>) -> Report {
+        self.report_on("feat/x", source)
+    }
+    fn report_on(&self, branch: &str, source: Option<&dyn Source>) -> Report {
         let ledger = self.ledger();
         run_from_ledger_at(
             &self.git(),
             source,
             Path::new("/projects"),
             &self.root(),
-            Some("feat/x"),
+            Some(branch),
             &Options::default(),
             &LedgerTarget::Explicit(&ledger),
             PriceTable::bundled(),
@@ -117,6 +128,10 @@ impl Repo {
 }
 
 fn rec(session: &str, request: &str, output: u64) -> Record {
+    rec_on("feat/x", session, request, output)
+}
+
+fn rec_on(branch: &str, session: &str, request: &str, output: u64) -> Record {
     let mut r = Record::new(
         Harness::ClaudeCode,
         SessionId::new(session),
@@ -128,7 +143,7 @@ fn rec(session: &str, request: &str, output: u64) -> Record {
         },
     );
     r.model = Some("m".to_owned());
-    r.git_branch = Some("feat/x".to_owned());
+    r.git_branch = Some(branch.to_owned());
     r.origin = Some(Origin::Main);
     r
 }
@@ -279,4 +294,145 @@ fn an_ambiguous_call_is_not_counted_twice_in_the_repository_wide_counts() {
         alone.summary.footnote
     );
     assert_eq!(ambiguous(&both), 1);
+}
+
+#[test]
+fn the_footnote_flags_a_mixed_ledger_with_its_counts() {
+    let repo = Repo::new();
+    let src = source(&repo);
+    let first = FakeSource(vec![src.0[0].clone()], src.1.clone());
+    repo.record(&first, &Identity);
+    repo.record(&src, &KeyedRedact::new(repo.salt(), false));
+    let risk = repo
+        .report(Some(&src))
+        .summary
+        .footnote
+        .double_count
+        .unwrap();
+    let mixed = risk.mixed_ledger.unwrap();
+    assert_eq!(
+        (
+            mixed.unredacted_lines,
+            mixed.redacted_lines,
+            mixed.distinct_salts
+        ),
+        (1, 3, 1)
+    );
+    assert_eq!(risk.live_match, None);
+    // A ledger-only report says so too.
+    assert!(repo.report(None).summary.footnote.double_count.is_some());
+}
+
+#[test]
+fn the_footnote_flags_a_live_match_failure_and_is_silent_when_clean() {
+    let repo = Repo::new();
+    let src = source(&repo);
+    repo.record(&src, &KeyedRedact::new(repo.salt(), false));
+    assert_eq!(
+        repo.report(Some(&src)).summary.footnote.double_count,
+        None,
+        "a matched redacted ledger is not a risk"
+    );
+    std::fs::remove_file(repo.root().join(".tally").join("salt")).unwrap();
+    let risk = repo
+        .report(Some(&src))
+        .summary
+        .footnote
+        .double_count
+        .unwrap();
+    assert_eq!(risk.live_match, Some(LiveMatchFailure::NoSalt));
+    assert_eq!(risk.mixed_ledger, None);
+
+    let plain = Repo::new();
+    plain.record(&source(&plain), &Identity);
+    assert_eq!(
+        plain
+            .report(Some(&source(&plain)))
+            .summary
+            .footnote
+            .double_count,
+        None
+    );
+}
+
+#[test]
+fn the_salt_is_read_from_the_tally_dir_that_holds_the_ledger() {
+    // A linked worktree keeps its own ledger and salt; the main checkout has neither.
+    let main = tempfile::tempdir().unwrap();
+    let wt = Repo::new();
+    let git = FakeGit::new()
+        .with_toplevel(wt.root(), wt.root())
+        .with_main_checkout(wt.root(), main.path())
+        .with_worktrees(
+            main.path(),
+            vec![Worktree {
+                path: main.path().to_owned(),
+                branch: "main".to_owned(),
+            }],
+        );
+    let src = source(&wt);
+    let red = KeyedRedact::new(wt.salt(), false);
+    branch_tally_core::report::record_at(
+        &git,
+        &src,
+        Path::new("/projects"),
+        &wt.root(),
+        Some("feat/x"),
+        &Options::default(),
+        &LedgerTarget::Default,
+        &red,
+        &FixedClock,
+    )
+    .unwrap();
+    let run = |source: Option<&dyn Source>| {
+        run_from_ledger_at(
+            &git,
+            source,
+            Path::new("/projects"),
+            &wt.root(),
+            Some("feat/x"),
+            &Options::default(),
+            &LedgerTarget::Default,
+            PriceTable::bundled(),
+        )
+        .unwrap()
+    };
+    let both = run(Some(&src));
+    let info = both.ledger.as_ref().unwrap();
+    assert_eq!(info.live_redaction, LiveRedactionMatch::Matched);
+    assert_eq!((info.live_only, info.in_both), (0, 3));
+    assert_eq!(calls(&both), calls(&run(None)));
+    assert!(
+        !main.path().join(".tally").exists(),
+        "nothing is created in the main checkout"
+    );
+}
+
+#[test]
+fn an_agent_branch_finds_its_redacted_and_unredacted_lines() {
+    let repo = Repo::new();
+    let branch = "worktree-agent-abc123";
+    let src = FakeSource(
+        vec![
+            rec_on(branch, "s1", "req-a", 1),
+            rec_on(branch, "s1", "req-b", 2),
+        ],
+        Vec::new(),
+    );
+    repo.record_on(branch, &src, &KeyedRedact::new(repo.salt(), false));
+    let redacted_only = repo.report_on(branch, None);
+    assert_eq!(redacted_only.summary.total.calls, 2);
+    assert_eq!(
+        redacted_only.summary.footnote.off_branch_tokens, 0,
+        "hashed branch names must not read as off-branch"
+    );
+    // One call also recorded raw: the same agent branch in both spellings, counted and noted.
+    let raw = FakeSource(vec![src.0[0].clone()], Vec::new());
+    repo.record_on(branch, &raw, &Identity);
+    let mixed = repo.report_on(branch, None);
+    assert_eq!(mixed.summary.total.calls, 3);
+    assert!(mixed.summary.footnote.double_count.is_some());
+    let both = repo.report_on(branch, Some(&src));
+    assert_eq!(both.summary.total.calls, 3);
+    assert_eq!(both.summary.footnote.off_branch_tokens, 0);
 }
