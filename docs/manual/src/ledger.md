@@ -47,9 +47,9 @@ Git does not track empty directories, which is what the `.gitkeep` is for. Once 
 is committed, it keeps the directory in place on its own.
 
 `.tally/salt` is the key `record` hashes ids with, which it does by default. Every clone must use
-the same one, so it is committed. `record` would create it on its first run, but creating it here,
-once, keeps two machines from each creating their own. What it protects, and what it does not, is
-on the [Ledger Redaction](ledger-redaction.md) page.
+the same one, so it is committed. `record` would create it the first time it appends a line, but
+creating it here, once, keeps two machines from each creating their own. What it protects, and what
+it does not, is on the [Ledger Redaction](ledger-redaction.md) page.
 
 Committing the directory matters because every clone and every git worktree gets its own copy of
 it. A worktree, or a clone, whose checked-out commit has no `.tally/` is not opted in, and `record`
@@ -190,8 +190,9 @@ What a ledger report tells you on stderr, as counts only:
 | `note: ledger mixes modes (claim, timeline); the numbers combine them` | The branch was recorded under more than one attribution mode. |
 | `note: skipped N ledger line(s): …` | Lines that were malformed or written by an unsupported ledger version were skipped and counted. |
 | `note: N record(s) had an unreadable timestamp; they were kept but are undated` | Ledger lines whose `ts` is not strict RFC 3339 (see [Timestamps](cli.md#timestamps)). The lines are used and counted, but treated as having no timestamp. With `--with-live`, a separate line of the same form counts the live transcripts' records. |
-| `note: ledger holds N unredacted line(s) and M redacted line(s) under K salt(s); a call recorded in more than one form may be counted twice…` | The ledger mixes raw and hashed lines, or lines hashed under more than one salt. A call recorded in both forms is counted twice. Also printed by `project`. `report` also states it in the report, in a bold "Total may count some calls twice" line and the JSON `doubleCount` key. See [Mixed ledgers](ledger-redaction.md#mixed-ledgers). |
+| `note: ledger holds N unredacted line(s) and M redacted line(s) under K salt(s); a call recorded in more than one form may be counted twice…` | The ledger mixes raw and hashed lines, or lines hashed under more than one salt. A call recorded in both forms is counted twice. Also printed by `project`. `report` and `project` also state it in the output, in a bold "Total may count some calls twice" line and the JSON `doubleCount` key. See [Mixed ledgers](ledger-redaction.md#mixed-ledgers). |
 | `note: live calls could not be matched against the redacted ledger lines (…); the total and the repository-wide counts may count a call twice` | With `--with-live`: the local salt is missing, unreadable, or doesn't match the ledger's redacted lines, so a call in both may be counted twice. The report states it too, as above. See [Combining the ledger with live transcripts](ledger-redaction.md#combining-the-ledger-with-live-transcripts). |
+| `note: N ledger line(s) held the same call under both the raw and hashed spelling of an agent branch and were counted once` | A `worktree-agent-<id>` branch was recorded once as it is and once with its id hashed. The call is counted once. See [Ledger Redaction](ledger-redaction.md#what-a-committed-ledger-makes-public). |
 | `note: N ledger request(s) had conflicting lines; kept the latest` | Printed only with `--allow-ledger-conflicts`. Two lines with the same key held different data, and the one with the latest `recorded_at` was used. See [Conflicting ledger lines](#conflicting-ledger-lines). |
 
 A duplicate line, such as one left by a union merge or by recording twice, is collapsed silently:
