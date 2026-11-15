@@ -38,12 +38,18 @@ once, from the repository's root, and commit it:
 ```sh
 mkdir .tally
 touch .tally/.gitkeep
-git add .tally/.gitkeep
+branch-tally ledger redact     # creates .tally/salt; there is nothing to rewrite yet
+git add .tally/.gitkeep .tally/salt
 git commit -m "chore: opt in to branch-tally"
 ```
 
 Git does not track empty directories, which is what the `.gitkeep` is for. Once the ledger itself
 is committed, it keeps the directory in place on its own.
+
+`.tally/salt` is the key `record` hashes ids with, which it does by default. Every clone must use
+the same one, so it is committed. `record` would create it the first time it appends a line, but
+creating it here, once, keeps two machines from each creating their own. What it protects, and what
+it does not, is on the [Ledger Redaction](ledger-redaction.md) page.
 
 Committing the directory matters because every clone and every git worktree gets its own copy of
 it. A worktree, or a clone, whose checked-out commit has no `.tally/` is not opted in, and `record`
@@ -58,7 +64,10 @@ Without the directory, `record` writes nothing, creates nothing, prints this on 
 no .tally/ directory: nothing recorded (create it to opt in)
 ```
 
-`--ledger <path>` is exempt: an explicit ledger file is written whether or not `.tally/` exists.
+`--ledger <path>` is exempt only with redaction off: an explicit ledger file is then written whether
+or not `.tally/` exists. With redaction on, the default, the salt has to live in the main
+checkout's `.tally/`, so `record --ledger <path>` without it is an error (exit 1). See
+[An explicit `--ledger` needs `.tally/`](ledger-redaction.md#an-explicit---ledger-needs-tally).
 
 ### Keep both sides' lines on merge
 
@@ -77,6 +86,11 @@ If you use a different path with `--ledger`, put that path in `.gitattributes` i
 If you commit the [hook captures](captures.md) file too, give it the same treatment:
 `.tally/captures.jsonl merge=union`.
 
+Don't give `.tally/salt` that treatment, and don't use a pattern such as `.tally/* merge=union`
+that would include it. The salt is one line. A union merge of two different salts would leave two
+lines, which is not a valid salt, and `record` would stop. A conflict there is meant to be loud;
+see [The salt](ledger-redaction.md#the-salt).
+
 ## Record
 
 ```sh
@@ -93,6 +107,11 @@ appended 3, skipped 0, branch feat/x
 
 - **It only writes the file.** It does not `git add` or commit anything. Commit the ledger
   yourself.
+- **It hashes identifiers.** By default the request, session and agent ids, worktree names and
+  the id in a `worktree-agent-<id>` branch name are written as keyed hashes, and each line carries
+  a `redaction` field. Other branch names, models, token counts and times are written as they
+  are. `--no-ledger-redact` writes raw ids. See
+  [Ledger Redaction](ledger-redaction.md).
 - **It is safe to run again.** Each line is keyed by the API call's request id and the branch it
   was recorded for. `record` appends only keys the ledger does not hold yet, so a second run
   reports `appended 0, skipped 3`.
@@ -171,6 +190,9 @@ What a ledger report tells you on stderr, as counts only:
 | `note: ledger mixes modes (claim, timeline); the numbers combine them` | The branch was recorded under more than one attribution mode. |
 | `note: skipped N ledger line(s): …` | Lines that were malformed or written by an unsupported ledger version were skipped and counted. |
 | `note: N record(s) had an unreadable timestamp; they were kept but are undated` | Ledger lines whose `ts` is not strict RFC 3339 (see [Timestamps](cli.md#timestamps)). The lines are used and counted, but treated as having no timestamp. With `--with-live`, a separate line of the same form counts the live transcripts' records. |
+| `note: ledger holds N unredacted line(s) and M redacted line(s) under K salt(s); a call recorded in more than one form may be counted twice…` | The ledger mixes raw and hashed lines, or lines hashed under more than one salt. A call recorded in both forms is counted twice. Also printed by `project`. `report` and `project` also state it in the output, in a bold "Total may count some calls twice" line and the JSON `doubleCount` key. See [Mixed ledgers](ledger-redaction.md#mixed-ledgers). |
+| `note: live calls could not be matched against the redacted ledger lines (…); the total and the repository-wide counts may count a call twice` | With `--with-live`: the local salt is missing, unreadable, or doesn't match the ledger's redacted lines, so a call in both may be counted twice. The report states it too, as above. See [Combining the ledger with live transcripts](ledger-redaction.md#combining-the-ledger-with-live-transcripts). |
+| `note: N ledger line(s) held the same call under both the raw and hashed spelling of an agent branch and were counted once` | The same stored request id appears under both spellings of a `worktree-agent-<id>` branch, raw and hashed: for example, a line with hashed ids whose branch an earlier build left raw. It is counted once. A call recorded once raw and once redacted has two different request ids, so it is not collapsed here: that is a [mixed ledger](ledger-redaction.md#mixed-ledgers), counted twice and noted. See [Ledger Redaction](ledger-redaction.md#what-a-committed-ledger-makes-public). |
 | `note: N ledger request(s) had conflicting lines; kept the latest` | Printed only with `--allow-ledger-conflicts`. Two lines with the same key held different data, and the one with the latest `recorded_at` was used. See [Conflicting ledger lines](#conflicting-ledger-lines). |
 
 A duplicate line, such as one left by a union merge or by recording twice, is collapsed silently:
@@ -236,7 +258,8 @@ therefore ship `.tally/ledger.jsonl`, or `.tally` itself, as a link to a file so
 your machine, and a hook that followed it would write there. So branch-tally does not follow links
 in the default `.tally/` location, on read or on write.
 
-The guard covers `.tally`, `.tally/ledger.jsonl`, `.tally/captures.jsonl` and `.tally/prices.toml`.
+The guard covers `.tally`, `.tally/ledger.jsonl`, `.tally/captures.jsonl`, `.tally/prices.toml`
+and `.tally/salt`.
 When one of them is a symbolic link, or is not the kind of file it should be (`.tally` must be a
 directory, the others regular files), nothing is followed or created through it, and the command
 fails with exit 1 and a message naming the path:
@@ -355,6 +378,11 @@ branches are only noted. The reviewer still decides whether the new lines are pl
 The price override is not checked, only flagged. Reports announce it on stderr too; see
 [Which price table is used](cli.md#which-price-table-is-used).
 
+`.tally/salt` is not looked at either: a pull request that adds or changes it passes. And because
+the check allows appends only, a pull request that runs
+[`ledger redact`](ledger-redaction.md#rewriting-older-lines) over lines already on the base branch
+fails it.
+
 ## What is stored
 
 One JSON object per line, append-only. A line holds:
@@ -362,22 +390,23 @@ One JSON object per line, append-only. A line holds:
 | Field | Holds |
 | ----- | ----- |
 | `v` | The ledger schema version, currently `1`. |
-| `request_id` | The API call's request id. With `recorded_for`, the line's key. |
+| `request_id` | The API call's request id, hashed by default. With `recorded_for`, the line's key. |
 | `harness` | The agent harness, `claude-code`. |
-| `session_id` | The Claude Code session id. |
-| `agent_id` | The subagent's id, when a subagent made the call. |
+| `session_id` | The Claude Code session id, hashed by default. |
+| `agent_id` | The subagent's id, when a subagent made the call. Hashed by default. |
 | `ts` | The call's timestamp, as the transcript recorded it. Left out when the transcript's timestamp is missing or not strict RFC 3339 (see [Timestamps](cli.md#timestamps)). |
 | `model` | The model id. |
-| `recorded_for` | The branch `record` was run for. |
+| `recorded_for` | The branch `record` was run for. A `worktree-agent-<id>` name has its id hashed by default. |
 | `mode` | The attribution mode: `claim`, `strict` or `timeline`. |
-| `branch` | The branch attribution assigned to the call. |
+| `branch` | The branch attribution assigned to the call. A `worktree-agent-<id>` name has its id hashed by default. |
 | `basis` | How that branch was decided, such as stamped by the transcript, rolled up from a subagent's dispatcher, or `captured` from [hook captures](captures.md). |
 | `kept_by` | Why the call was kept for the branch: its own branch matched, or its session was claimed. |
-| `skill`, `agent` | The skill and named agent that made the call, if any. |
-| `subagent` | The subagent's workspace and ids, for subagent calls. |
-| `origin` | Where the session ran: `"main"` for the main checkout, or `{"worktree": "<name>"}` with the worktree's name relative to the repository. |
+| `skill`, `agent` | The skill and named agent that made the call, if any. Hashed only with `ledger-redact-names` on. |
+| `subagent` | The subagent's workspace, label and agent id, for subagent calls. Ids and worktree names in it are hashed by default. |
+| `origin` | Where the session ran: `"main"` for the main checkout, or `{"worktree": "<name>"}` with the worktree's name relative to the repository. The name is hashed by default. |
 | `usage` | Token counts: input, 5-minute and 1-hour cache writes, cache reads, output and thinking. |
 | `recorded_at` | When the line was written, in UTC. |
+| `redaction` | On a redacted line, the fingerprint of the salt it was hashed with. Absent on an unredacted line. |
 
 What is **never** stored: message content (prompts, responses, tool input or output, code), the
 working directory, or any path. A worktree's transcript directory name encodes its full path,
@@ -387,10 +416,13 @@ worktree outside the main checkout is stored without a name, and `record` says s
 
 ### Redaction and the ledger
 
-The ledger stores real identifiers: session ids, agent ids, skill and agent names and full
-timestamps. `record` has no redaction option, and the config file's `redact` setting does not
-apply to it. Anyone who can read the repository can read those identifiers.
+By default `record` hashes the request, session and agent ids, the worktree names and the ids in
+agent branch names it writes, with a salt committed in `.tally/salt`. Other branch names, models,
+token counts and full timestamps are written as they are. The salt is not a secret, and git history
+keeps any line committed before redaction was on. [Ledger Redaction](ledger-redaction.md) lists
+exactly which fields a committed ledger makes public, with and without redaction, and what hashing
+does not protect against.
 
 `--redact` applies to report output, including a report from the ledger:
 `branch-tally report --from-ledger --redact` hides the identifiers in what it prints, while the
-file itself is unchanged.
+file itself is unchanged. It is a separate setting, off by default, and `record` does not use it.

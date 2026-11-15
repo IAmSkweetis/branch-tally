@@ -21,7 +21,13 @@ const BRANCH: &str = "feat/new";
 fn recorded() -> (World, PathBuf) {
     let world = World::scenario("main-then-branch");
     let ledger = world.home.join("scratch").join("ledger.jsonl");
-    let out = world.run(&["record", BRANCH, "--ledger", ledger.to_str().unwrap()]);
+    let out = world.run(&[
+        "record",
+        BRANCH,
+        "--no-ledger-redact",
+        "--ledger",
+        ledger.to_str().unwrap(),
+    ]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     (world, ledger)
 }

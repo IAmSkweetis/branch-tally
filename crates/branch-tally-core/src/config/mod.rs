@@ -7,9 +7,11 @@
 //! read go through [`ConfigEnv`]; the CLI supplies the real implementation (`std::env` and
 //! `std::fs`) and tests supply a fake.
 //!
-//! The file is TOML with six optional, kebab-case keys: `mode` (`"claim"`, `"strict"`,
+//! The file is TOML with eight optional, kebab-case keys: `mode` (`"claim"`, `"strict"`,
 //! `"timeline"`), `work-branch` (a regex, kept as a string; the CLI compiles it), `format`
-//! (`"md"`, `"json"`), and the booleans `cost`, `redact` and `redact-names`. A malformed file, an unknown key or a bad
+//! (`"md"`, `"json"`), and the booleans `cost`, `redact` and `redact-names`, plus the
+//! ledger-redaction booleans `ledger-redact` (default true) and `ledger-redact-names` (default
+//! false) that govern `record`. A malformed file, an unknown key or a bad
 //! value is a [`ConfigError`] naming the file and, where there is one, the key. Nothing is ignored
 //! silently. Config content is never echoed except the offending key name.
 
@@ -97,7 +99,7 @@ pub enum ConfigError {
         message: String,
     },
     /// A key core does not know.
-    #[error("config file {}: unknown key `{key}` (expected mode, work-branch, format, cost, redact, redact-names)", path.display())]
+    #[error("config file {}: unknown key `{key}` (expected mode, work-branch, format, cost, redact, redact-names, ledger-redact, ledger-redact-names)", path.display())]
     UnknownKey {
         /// The file.
         path: PathBuf,
@@ -131,6 +133,10 @@ pub struct ConfigFile {
     pub redact: Option<bool>,
     /// `redact-names`.
     pub redact_names: Option<bool>,
+    /// `ledger-redact`.
+    pub ledger_redact: Option<bool>,
+    /// `ledger-redact-names`.
+    pub ledger_redact_names: Option<bool>,
 }
 
 impl ConfigFile {
@@ -200,6 +206,20 @@ impl ConfigFile {
                             .ok_or_else(|| bad("redact-names", "must be true or false"))?,
                     );
                 }
+                "ledger-redact" => {
+                    out.ledger_redact = Some(
+                        value
+                            .as_bool()
+                            .ok_or_else(|| bad("ledger-redact", "must be true or false"))?,
+                    );
+                }
+                "ledger-redact-names" => {
+                    out.ledger_redact_names = Some(
+                        value
+                            .as_bool()
+                            .ok_or_else(|| bad("ledger-redact-names", "must be true or false"))?,
+                    );
+                }
                 _ => {
                     return Err(ConfigError::UnknownKey {
                         path: path.to_owned(),
@@ -227,6 +247,10 @@ pub struct Flags {
     pub redact: Option<bool>,
     /// `--redact-names` / `--no-redact-names` (`false` keeps real agent and skill names).
     pub redact_names: Option<bool>,
+    /// `--ledger-redact` / `--no-ledger-redact`.
+    pub ledger_redact: Option<bool>,
+    /// `--ledger-redact-names` / `--no-ledger-redact-names`.
+    pub ledger_redact_names: Option<bool>,
 }
 
 /// Effective settings plus how they were found. This is everything `config show` prints.
@@ -252,6 +276,10 @@ pub struct Settings {
     /// Whether redaction also replaces agent and skill names. Default: `true`; only meaningful
     /// when `redact` is on.
     pub redact_names: Resolved<bool>,
+    /// Whether `record` redacts identifiers in the ledger it writes. Default: `true`.
+    pub ledger_redact: Resolved<bool>,
+    /// Whether ledger redaction also hashes agent and skill names. Default: `false`.
+    pub ledger_redact_names: Resolved<bool>,
 }
 
 /// The text `config init` writes: every key that has a built-in default, set to that default,
@@ -279,6 +307,15 @@ redact = false
 # With redact = true: replace agent and skill names with generic labels (true), or keep the real
 # names (false).
 redact-names = true
+
+# `record` hashes request, session and agent ids, subagent ids and worktree names, plus
+# worktree-agent-<id> branch names, in the committed ledger, under a per-repository salt: true or
+# false. Other branch names stay readable and the ledger never holds paths. Off writes ids in the
+# clear.
+ledger-redact = true
+
+# With ledger-redact = true: also hash agent and skill names (true), or keep them readable (false).
+ledger-redact-names = false
 ";
 
 /// The default config path: Windows `%APPDATA%\branch-tally\config.toml`; elsewhere
@@ -377,6 +414,8 @@ pub fn load(
         cost: pick(flags.cost, file.cost, true),
         redact: pick(flags.redact, file.redact, false),
         redact_names: pick(flags.redact_names, file.redact_names, true),
+        ledger_redact: pick(flags.ledger_redact, file.ledger_redact, true),
+        ledger_redact_names: pick(flags.ledger_redact_names, file.ledger_redact_names, false),
     })
 }
 

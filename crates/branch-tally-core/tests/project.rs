@@ -557,3 +557,56 @@ fn ordinary_totals_are_not_flagged() {
     assert!(!report.is_overflowed());
     assert!(!report.totals.totals_overflowed);
 }
+
+// Double-count risk (#67, decision 0005): a mixed ledger can count a call once per form.
+
+fn record_with(f: &Fixture, id: &str, redact: &dyn ledger::Redact) {
+    ledger::append(
+        &f.path,
+        &[plain(id, "priced", Some("2026-01-02T00:00:00Z"))],
+        "feat/a",
+        Mode::Claim,
+        Some(Path::new("/repo")),
+        redact,
+        &FixedClock,
+    )
+    .unwrap();
+}
+
+fn keyed(seed: u8) -> ledger::KeyedRedact {
+    ledger::KeyedRedact::new(ledger::Salt::from_bytes([seed; 32]), false)
+}
+
+#[test]
+fn a_mixed_ledger_sets_double_count_with_the_line_counts() {
+    let f = Fixture::new();
+    record_with(&f, "r1", &Identity);
+    record_with(&f, "r2", &keyed(1));
+    record_with(&f, "r3", &keyed(2));
+    let risk = build(&f).double_count.unwrap();
+    let mixed = risk.mixed_ledger.unwrap();
+    assert_eq!(
+        (
+            mixed.unredacted_lines,
+            mixed.redacted_lines,
+            mixed.distinct_salts
+        ),
+        (1, 2, 2)
+    );
+    assert!(risk.live_match.is_none());
+}
+
+#[test]
+fn an_unredacted_only_ledger_has_no_double_count() {
+    let f = Fixture::new();
+    record_with(&f, "r1", &Identity);
+    assert!(build(&f).double_count.is_none());
+}
+
+#[test]
+fn a_single_salt_redacted_ledger_has_no_double_count() {
+    let f = Fixture::new();
+    record_with(&f, "r1", &keyed(1));
+    record_with(&f, "r2", &keyed(1));
+    assert!(build(&f).double_count.is_none());
+}

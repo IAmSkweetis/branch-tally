@@ -745,3 +745,279 @@ mod check {
         assert!(!format!("{out:?}").contains(secret));
     }
 }
+
+/// Keyed redaction of the ledger (decision 0005, #67), proved at the ledger level.
+mod keyed_redaction {
+    use super::*;
+    use branch_tally_core::ledger::{
+        CheckInput, KeyedRedact, Salt, TallyDir, append, append_default, check, read,
+        redact_ledger, redact_ledger_default,
+    };
+    use branch_tally_core::model::{SubagentTags, Timestamp, Workspace};
+
+    fn salt() -> Salt {
+        Salt::from_bytes([42; 32])
+    }
+
+    fn call(id: &str, output: u64) -> SelectedRecord {
+        let mut s = selected(id, "feat/x", output);
+        s.attributed.record.agent_id = Some(AgentId::new(format!("agent-of-{id}")));
+        s.attributed.subagent = Some(SubagentTags {
+            workspace: Workspace::Main,
+            subagent: "worker".to_owned(),
+            agent_id: AgentId::new(format!("agent-of-{id}")),
+        });
+        s
+    }
+
+    /// A call from a subagent that ran in a worktree named after its agent id.
+    fn worktree_call(id: &str, output: u64) -> SelectedRecord {
+        let mut s = call(id, output);
+        let name = format!("agent-of-{id}");
+        let slug = format!(
+            "{}--claude-worktrees-{name}",
+            paths::slug(Path::new("/repo"))
+        );
+        s.attributed.record.origin = Some(Origin::worktree(slug));
+        s.attributed.subagent = Some(SubagentTags {
+            workspace: Workspace::worktree(&name),
+            subagent: "worker".to_owned(),
+            agent_id: AgentId::new(&name),
+        });
+        s
+    }
+
+    fn total_output(l: &ledger::Ledger) -> u64 {
+        l.entries().iter().map(|e| e.usage.output).sum()
+    }
+
+    #[expect(clippy::unwrap_used, reason = "test helper: fail loudly")]
+    fn append_to(
+        path: &Path,
+        calls: &[SelectedRecord],
+        redact: &dyn ledger::Redact,
+        at: &'static str,
+    ) {
+        append(
+            path,
+            calls,
+            "feat/x",
+            Mode::Claim,
+            Some(Path::new("/repo")),
+            redact,
+            &Fixed(at),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn two_independent_redacted_runs_concatenated_have_no_collisions_or_double_counting() {
+        let dir = tempfile::tempdir().unwrap();
+        let (one, two, merged) = (
+            dir.path().join("one.jsonl"),
+            dir.path().join("two.jsonl"),
+            dir.path().join("merged.jsonl"),
+        );
+        let redactor = KeyedRedact::new(salt(), false);
+        let (ca, cb, cc, cd) = (call("a", 1), call("b", 2), call("c", 4), call("d", 8));
+        append_to(
+            &one,
+            &[ca, cb.clone(), cc.clone()],
+            &redactor,
+            "2026-03-01T00:00:00Z",
+        );
+        append_to(&two, &[cb, cc, cd], &redactor, "2026-03-02T00:00:00Z");
+        // A union merge keeps both sides' lines.
+        let mut bytes = std::fs::read(&one).unwrap();
+        bytes.extend(std::fs::read(&two).unwrap());
+        std::fs::write(&merged, bytes).unwrap();
+
+        let back = read(&merged).unwrap();
+        assert_eq!(back.entries().len(), 4, "entries equal the distinct calls");
+        assert_eq!(back.stats().lines, 6);
+        assert_eq!(back.stats().duplicates, 2);
+        assert_eq!(back.stats().conflicts, 0);
+        assert_eq!(total_output(&back), 1 + 2 + 4 + 8);
+        assert!(!back.stats().is_mixed());
+    }
+
+    #[test]
+    fn a_redacted_ledger_has_the_same_usage_totals_as_the_unredacted_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let (plain, hashed) = (dir.path().join("p.jsonl"), dir.path().join("h.jsonl"));
+        let calls = [
+            call("a", 1),
+            call("b", 20),
+            call("c", 300),
+            worktree_call("w", 4000),
+        ];
+        append_to(&plain, &calls, &Identity, "2026-03-01T00:00:00Z");
+        append_to(
+            &hashed,
+            &calls,
+            &KeyedRedact::new(salt(), true),
+            "2026-03-01T00:00:00Z",
+        );
+        let (p, h) = (read(&plain).unwrap(), read(&hashed).unwrap());
+        assert_eq!(p.entries().len(), h.entries().len());
+        let sum = |l: &ledger::Ledger| {
+            l.entries().iter().fold((0, 0, 0, 0), |t, e| {
+                (
+                    t.0 + e.usage.input,
+                    t.1 + e.usage.cache_read,
+                    t.2 + e.usage.output,
+                    t.3 + e.usage.cache_write_5m,
+                )
+            })
+        };
+        assert_eq!(sum(&p), sum(&h));
+        let text = std::fs::read_to_string(&hashed).unwrap();
+        for raw in [
+            "\"a\"",
+            "\"sess\"",
+            "agent-of-a",
+            "worker",
+            "agent-of-w",
+            "claude-worktrees",
+        ] {
+            assert!(!text.contains(raw), "{raw} must not survive");
+        }
+    }
+
+    #[test]
+    fn redacting_an_old_ledger_then_appending_the_same_calls_redacted_dedupes() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".tally")).unwrap();
+        let calls = [call("a", 1), call("b", 2)];
+        append_default(
+            dir.path(),
+            &calls,
+            "feat/x",
+            Mode::Claim,
+            None,
+            &Identity,
+            &Fixed("2026-03-01T00:00:00Z"),
+        )
+        .unwrap();
+        let tally = TallyDir::open(dir.path()).unwrap().unwrap();
+        let r = KeyedRedact::new(Salt::load_or_create(&tally).unwrap(), false);
+        let out = redact_ledger_default(dir.path(), &r).unwrap();
+        assert_eq!(out.rewritten, 2);
+        let again = append_default(
+            dir.path(),
+            &calls,
+            "feat/x",
+            Mode::Claim,
+            None,
+            &r,
+            &Fixed("2026-03-02T00:00:00Z"),
+        )
+        .unwrap();
+        assert_eq!((again.appended, again.skipped), (0, 2));
+        let l = ledger::read_default(dir.path()).unwrap();
+        assert_eq!(l.entries().len(), 2);
+        assert!(!l.stats().is_mixed());
+    }
+
+    #[test]
+    fn an_explicit_ledger_is_redacted_in_place_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("l.jsonl");
+        append_to(&p, &[call("a", 1)], &Identity, "2026-03-01T00:00:00Z");
+        let r = KeyedRedact::new(salt(), false);
+        assert_eq!(redact_ledger(&p, &r).unwrap().rewritten, 1);
+        append_to(&p, &[call("a", 1)], &r, "2026-03-02T00:00:00Z");
+        assert_eq!(read(&p).unwrap().entries().len(), 1);
+    }
+
+    #[test]
+    fn a_mixed_ledger_is_counted_and_a_call_in_both_forms_shows_twice() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("l.jsonl");
+        append_to(
+            &p,
+            &[call("a", 1), call("b", 2)],
+            &Identity,
+            "2026-03-01T00:00:00Z",
+        );
+        append_to(
+            &p,
+            &[call("a", 1)],
+            &KeyedRedact::new(salt(), false),
+            "2026-03-02T00:00:00Z",
+        );
+        let s = read(&p).unwrap().stats().clone();
+        assert_eq!((s.unredacted_lines, s.redacted_lines), (2, 1));
+        assert_eq!(s.redaction_fingerprints, vec![salt().fingerprint()]);
+        assert!(s.is_mixed());
+        // Not hidden and not guessed: the call recorded in both forms is two entries.
+        assert_eq!(s.entries, 3);
+    }
+
+    #[test]
+    fn two_salts_are_a_mix_even_with_no_unredacted_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("l.jsonl");
+        append_to(
+            &p,
+            &[call("a", 1)],
+            &KeyedRedact::new(salt(), false),
+            "2026-03-01T00:00:00Z",
+        );
+        append_to(
+            &p,
+            &[call("b", 1)],
+            &KeyedRedact::new(Salt::from_bytes([9; 32]), false),
+            "2026-03-01T00:00:00Z",
+        );
+        let s = read(&p).unwrap().stats().clone();
+        assert_eq!(s.redaction_fingerprints.len(), 2);
+        assert!(s.is_mixed());
+    }
+
+    #[test]
+    fn ledger_check_accepts_redacted_lines_and_compares_stored_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let (base, head) = (dir.path().join("b.jsonl"), dir.path().join("h.jsonl"));
+        let r = KeyedRedact::new(salt(), false);
+        append_to(&base, &[call("a", 1)], &r, "2026-03-01T00:00:00Z");
+        let base_bytes = std::fs::read(&base).unwrap();
+        // The head holds the base plus a new call, and a repeat of the base's call recorded again
+        // (same stored key, hashed) as a later line.
+        append_to(&head, &[call("a", 1)], &r, "2026-03-01T00:00:00Z");
+        append_to(&head, &[call("z", 5)], &r, "2026-03-02T00:00:00Z");
+        let head_bytes = std::fs::read(&head).unwrap();
+        let now: Timestamp = "2026-04-01T00:00:00Z".parse().unwrap();
+        let report = check(&CheckInput {
+            base_ledger: Some(&base_bytes),
+            head_ledger: Some(&head_bytes),
+            base_captures: None,
+            head_captures: None,
+            head_branch: "feat/x",
+            base_branch: "main",
+            now: &now,
+        });
+        assert!(report.is_clean(), "{:?}", report.violations);
+
+        // The same call recorded again later has the same hashed key as the base's line, so
+        // check sees a duplicate key. That only holds while the hash is deterministic.
+        let extra = dir.path().join("x.jsonl");
+        append_to(&extra, &[call("a", 1)], &r, "2026-03-03T00:00:00Z");
+        let mut head_bytes = std::fs::read(&head).unwrap();
+        head_bytes.extend(std::fs::read(&extra).unwrap());
+        let report = check(&CheckInput {
+            base_ledger: Some(&base_bytes),
+            head_ledger: Some(&head_bytes),
+            base_captures: None,
+            head_captures: None,
+            head_branch: "feat/x",
+            base_branch: "main",
+            now: &now,
+        });
+        assert_eq!(report.violations.len(), 1, "{:?}", report.violations);
+        assert_eq!(
+            report.violations[0].rule,
+            branch_tally_core::ledger::Rule::DuplicateKey
+        );
+    }
+}

@@ -127,6 +127,8 @@ fn flag_beats_config_for_each_key() {
         cost: Some(true),
         redact: Some(false),
         redact_names: Some(true),
+        ledger_redact: None,
+        ledger_redact_names: None,
     };
     let s = load_text(FULL, &flags).unwrap();
     assert_eq!(
@@ -372,4 +374,75 @@ fn redact_and_cost_are_independent() {
 fn default_config_documents_the_redact_keys() {
     assert!(DEFAULT_CONFIG.contains("\nredact = false\n"));
     assert!(DEFAULT_CONFIG.contains("\nredact-names = true\n"));
+}
+
+#[test]
+fn ledger_redact_defaults_on_and_names_off() {
+    let s = load(&Fake::default(), None, &Flags::default()).unwrap();
+    assert!(s.ledger_redact.value);
+    assert_eq!(s.ledger_redact.source, Source::Default);
+    assert!(!s.ledger_redact_names.value);
+    assert_eq!(s.ledger_redact_names.source, Source::Default);
+    // report's defaults are unchanged.
+    assert!(!s.redact.value && s.redact_names.value);
+}
+
+#[test]
+fn ledger_redact_keys_come_from_file_and_flags_beat_them() {
+    let text = "ledger-redact = false\nledger-redact-names = true\n";
+    let s = load_text(text, &Flags::default()).unwrap();
+    assert_eq!(
+        (s.ledger_redact.value, s.ledger_redact.source),
+        (false, Source::ConfigFile)
+    );
+    assert_eq!(
+        (s.ledger_redact_names.value, s.ledger_redact_names.source),
+        (true, Source::ConfigFile)
+    );
+    let flags = Flags {
+        ledger_redact: Some(true),
+        ledger_redact_names: Some(false),
+        ..Flags::default()
+    };
+    let s = load_text(text, &flags).unwrap();
+    assert_eq!(
+        (s.ledger_redact.value, s.ledger_redact.source),
+        (true, Source::Flag)
+    );
+    assert_eq!(
+        (s.ledger_redact_names.value, s.ledger_redact_names.source),
+        (false, Source::Flag)
+    );
+}
+
+#[test]
+fn ledger_redact_keys_reject_non_booleans() {
+    for (text, key) in [
+        ("ledger-redact = \"yes\"", "ledger-redact"),
+        ("ledger-redact-names = 1", "ledger-redact-names"),
+    ] {
+        let err = load_text(text, &Flags::default()).unwrap_err();
+        assert!(matches!(err, ConfigError::BadValue { .. }), "{text}");
+        assert!(err.to_string().contains(key));
+    }
+}
+
+#[test]
+fn unknown_key_error_lists_ledger_keys() {
+    let err = load_text("harness = 1", &Flags::default()).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("ledger-redact, ledger-redact-names")
+    );
+}
+
+#[test]
+fn default_config_describes_ledger_redaction_accurately() {
+    assert!(!DEFAULT_CONFIG.contains("session ids, branch names, paths"));
+    assert!(DEFAULT_CONFIG.contains("per-repository salt"));
+    assert!(DEFAULT_CONFIG.contains("worktree-agent-<id>"));
+    assert!(DEFAULT_CONFIG.contains("never holds paths"));
+    assert!(
+        DEFAULT_CONFIG.contains("# With ledger-redact = true: also hash agent and skill names")
+    );
 }

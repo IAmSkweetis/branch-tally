@@ -6,13 +6,13 @@
 use std::path::{Path, PathBuf};
 
 use branch_tally_core::git::{FakeGit, Worktree};
-use branch_tally_core::ledger::{Clock, Identity};
+use branch_tally_core::ledger::Clock;
 use branch_tally_core::model::{
     Dispatch, Harness, Mode, Origin, Record, RequestId, SessionId, Usage,
 };
 use branch_tally_core::pricing::PriceTable;
 use branch_tally_core::report::{
-    FullSetCounts, Options, Report, ReportError, record, run, run_from_ledger,
+    FullSetCounts, Options, RecordRedaction, Report, ReportError, record, run, run_from_ledger,
 };
 use branch_tally_core::sources::claude_code::ClaudeCode;
 use branch_tally_core::sources::{
@@ -113,7 +113,7 @@ fn do_record_in(
         Some(branch),
         options,
         ledger,
-        &Identity,
+        RecordRedaction::Off,
         &FixedClock(at),
     )
     .unwrap()
@@ -339,7 +339,7 @@ fn a_union_takes_the_repository_wide_counts_from_the_live_side() {
         Some("feat/x"),
         &opts,
         &path,
-        &Identity,
+        RecordRedaction::Off,
         &FixedClock("2026-01-01T00:00:00Z"),
     )
     .unwrap();

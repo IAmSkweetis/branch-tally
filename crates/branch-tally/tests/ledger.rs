@@ -25,7 +25,13 @@ fn ledger_path(world: &World) -> PathBuf {
 fn recorded() -> (World, PathBuf) {
     let world = World::scenario("main-then-branch");
     let ledger = ledger_path(&world);
-    let out = world.run(&["record", BRANCH, "--ledger", ledger.to_str().unwrap()]);
+    let out = world.run(&[
+        "record",
+        BRANCH,
+        "--no-ledger-redact",
+        "--ledger",
+        ledger.to_str().unwrap(),
+    ]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     (world, ledger)
 }
@@ -35,7 +41,7 @@ fn record_appends_then_a_second_run_appends_nothing() {
     let world = World::scenario("main-then-branch");
     let ledger = ledger_path(&world);
     let path = ledger.to_str().unwrap();
-    let first = world.run(&["record", BRANCH, "--ledger", path]);
+    let first = world.run(&["record", BRANCH, "--no-ledger-redact", "--ledger", path]);
     assert_eq!(first.status.code(), Some(0), "{}", stderr(&first));
     assert_eq!(
         stdout(&first),
@@ -45,7 +51,7 @@ fn record_appends_then_a_second_run_appends_nothing() {
     );
     let lines = fs::read_to_string(&ledger).unwrap().lines().count();
     assert_eq!(lines, 5);
-    let second = world.run(&["record", BRANCH, "--ledger", path]);
+    let second = world.run(&["record", BRANCH, "--no-ledger-redact", "--ledger", path]);
     assert_eq!(second.status.code(), Some(0));
     assert_eq!(stdout(&second), "appended 0, skipped 5, branch feat/new\n");
     assert_eq!(fs::read_to_string(&ledger).unwrap().lines().count(), 5);
@@ -80,6 +86,7 @@ fn record_with_nothing_selected_appends_nothing_and_says_so() {
     let out = world.run(&[
         "record",
         "no/such-branch",
+        "--no-ledger-redact",
         "--ledger",
         ledger.to_str().unwrap(),
     ]);

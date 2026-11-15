@@ -32,6 +32,9 @@ fn main() -> ExitCode {
         cli::Command::Ledger(cli::LedgerCommand::Check(args)) => {
             ledger_check::run(&args).map_err(Failure::from)
         }
+        cli::Command::Ledger(cli::LedgerCommand::Redact(args)) => {
+            report::ledger_redact(&args).map_err(Failure::from)
+        }
         cli::Command::Prices(command) => prices::run(&command).map_err(Failure::from).map(|text| {
             // Verbatim UTF-8 with LF, whatever the console codepage.
             let mut out = std::io::stdout().lock();

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use branch_tally_core::git::{FakeGit, Worktree};
 use branch_tally_core::ledger::{
-    CaptureReadStats, Clock, Identity, LedgerTarget, append_captures, captures_path,
+    CaptureReadStats, Clock, LedgerTarget, append_captures, captures_path,
 };
 use branch_tally_core::model::{
     BranchBasis, CAPTURE_SCHEMA_VERSION, CaptureEvent, CaptureKind, Dispatch, Harness, Origin,
@@ -15,7 +15,7 @@ use branch_tally_core::model::{
 };
 use branch_tally_core::pricing::PriceTable;
 use branch_tally_core::report::{
-    Options, Report, ReportError, record, record_at, run, run_from_ledger_at,
+    Options, RecordRedaction, Report, ReportError, record, record_at, run, run_from_ledger_at,
 };
 use branch_tally_core::sources::{
     ReadStats, RepoIdentity, RootKind, Source, SourceError, TranscriptRoot,
@@ -192,7 +192,7 @@ fn record_uses_captures_and_reports_their_stats() {
         Some("feat/cap"),
         &Options::default(),
         &ledger,
-        &Identity,
+        RecordRedaction::Off,
         &Tick,
     )
     .unwrap();
@@ -224,7 +224,7 @@ fn record_default(
         Some("feat/cap"),
         &Options::default(),
         &LedgerTarget::Default,
-        &Identity,
+        RecordRedaction::Off,
         &Tick,
     )
 }

@@ -180,6 +180,31 @@ it in the ledger's history before trusting any figure in the report.
 10,000,000, so [running it in CI](ledger.md#running-it-in-ci) on each pull request keeps such a line
 out of the ledger.
 
+### A total that may count calls twice
+
+A ledger can hold one call under two spellings: once with raw ids and once hashed, or hashed under
+two different salts. Each spelling is a different key, so the call is counted twice, and the total
+is an overcount, not a floor. See [Mixed ledgers](ledger-redaction.md#mixed-ledgers). `project`
+then says so in every output, as well as in a note on stderr:
+
+- The Markdown report puts a statement before the table, such as:
+
+  ```text
+  **Total may count some calls twice**: the ledger holds 3 unredacted and 6 redacted line(s) under
+  2 salt(s), so a call recorded in both forms is counted twice; run `branch-tally ledger redact` to
+  collapse them. This is an overcount, not a floor.
+  ```
+
+  (The real statement is a single line; it is wrapped here to fit the page.) With no unredacted
+  lines, it names the salts instead and suggests no command.
+- The JSON has a top-level `doubleCount` object.
+- The SVG adds the footer line `total may count some calls twice (overcount, not a floor)`.
+
+None of these makes a figure a floor: `totalCostIsFloor` and the chart's "at least" are unchanged.
+When the report is also a floor, for example because a model is unpriced, the Markdown statement
+ends by saying its "at least" figures are not a guaranteed lower bound, instead of "This is an
+overcount, not a floor".
+
 ## The cost-over-time chart
 
 The chart has one point per dated branch, in the same order as the table. Each point's height is
@@ -299,6 +324,7 @@ option: branch names appear in the table as they are in the ledger.
 | `totalTokens` | Their tokens, each call counted once. |
 | `totalTokensIsFloor` | `true` when some calls could not be placed with certainty, or a total overflowed, so token totals are a lower bound. |
 | `totalsOverflowed` | `true` when a token or call total overflowed, in the project total or any branch, so every total is an unreliable floor (see [Overflowed totals](#overflowed-totals)). Absent otherwise. |
+| `doubleCount` | Present when the total may count some calls twice because the ledger mixes unredacted and redacted lines, or several salts: `mixedLedger` with `unredactedLines`, `redactedLines` and `distinctSalts`. See [A total that may count calls twice](#a-total-that-may-count-calls-twice). Absent otherwise. |
 | `totalCostUSD` | The estimated project cost in US dollars, each call counted once. |
 | `totalCostIsFloor` | `true` when any figure in the report is a floor: the total, a branch or a series point. |
 | `unpricedModels` | Model ids that had no price, across all branches. |
@@ -350,7 +376,10 @@ cut off. The report still prints on stdout as usual, in whichever format you cho
   leading into it is dashed.
 - Lines under the chart explain what it can't show: `hollow = floor (at least), dashed line leads
   to a floor` when there is a floor, `totals overflowed, unreliable` when a total overflowed (see
-  [Overflowed totals](#overflowed-totals)), `N undated branch(es) not shown`, and
+  [Overflowed totals](#overflowed-totals)), `total may count some calls twice (overcount, not a
+  floor)` when the ledger is mixed (see
+  [A total that may count calls twice](#a-total-that-may-count-calls-twice)),
+  `N undated branch(es) not shown`, and
   `N call(s) with no usable timestamp, branch dates may be early`. Each appears only when it
   applies.
 - Branch names are not printed on the chart. Each point has a tooltip with its branch, date and

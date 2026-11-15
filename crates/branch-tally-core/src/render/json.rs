@@ -10,8 +10,8 @@ use std::cmp::Reverse;
 use std::fmt::Write as _;
 
 use crate::model::{
-    Bucket, Costs, HeuristicBreakdown, PriceTableSource, RowCost, SubagentSummary, Summary,
-    Unstamped, WorkBranchRule,
+    Bucket, Costs, DoubleCountRisk, HeuristicBreakdown, LiveMatchFailure, PriceTableSource,
+    RowCost, SubagentSummary, Summary, Unstamped, WorkBranchRule,
 };
 
 /// Python `json.dumps` string escaping with `ensure_ascii=True`.
@@ -187,6 +187,33 @@ fn unstamped(u: &Unstamped, o: &mut String) {
         "  \"unstamped\": {{ \"calls\": {}, \"tokens\": {} }},",
         u.calls, u.tokens
     );
+}
+
+/// The `doubleCount` object (#67): present only when the total may count some calls twice, so
+/// plain reports keep their shape. A pure data mirror of the model: counts and enum names only.
+/// An overcount, not a floor.
+pub(super) fn double_count(risk: Option<&DoubleCountRisk>, o: &mut String) {
+    let Some(risk) = risk else {
+        return;
+    };
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(m) = &risk.mixed_ledger {
+        parts.push(format!(
+            "\"mixedLedger\": {{ \"unredactedLines\": {}, \"redactedLines\": {}, \
+             \"distinctSalts\": {} }}",
+            m.unredacted_lines, m.redacted_lines, m.distinct_salts
+        ));
+    }
+    if let Some(f) = &risk.live_match {
+        let name = match f {
+            LiveMatchFailure::NoSalt => "no-salt",
+            LiveMatchFailure::SaltUnreadable => "salt-unreadable",
+            LiveMatchFailure::FingerprintMismatch => "fingerprint-mismatch",
+            LiveMatchFailure::PartiallyMatched => "partially-matched",
+        };
+        parts.push(format!("\"liveMatch\": \"{name}\""));
+    }
+    let _ = writeln!(o, "  \"doubleCount\": {{ {} }},", parts.join(", "));
 }
 
 /// The `subagents` object (#6). Not in the reference: omitted when empty, so strict mode and
@@ -382,6 +409,7 @@ pub fn json(summary: &Summary, costs: &Costs, cost: bool) -> String {
     heuristics(heur, &mut o);
     work_branch(summary.work_branch.as_ref(), &mut o);
     unstamped(&summary.unstamped, &mut o);
+    double_count(summary.footnote.double_count.as_ref(), &mut o);
     subagents(&summary.subagents, costs, cost, &mut o);
 
     if sessions.is_empty() {

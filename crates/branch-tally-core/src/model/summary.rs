@@ -271,6 +271,68 @@ pub struct Footnote {
     /// `false`; absent in older serialized data.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub totals_overflowed: bool,
+    /// Set when the total may count some calls twice (decision 0005, "Mixing is counted and
+    /// noted"): an overcount, not a floor, so it is never framed as "at least". `None` in every
+    /// path that cannot double count. Carries counts only, no ids, paths or salts. Omitted from
+    /// JSON when `None`; absent in older serialized data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub double_count: Option<DoubleCountRisk>,
+}
+
+/// Why a total may count some calls twice. At least one of the parts is set when built through
+/// [`DoubleCountRisk::new`]; both can be.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DoubleCountRisk {
+    /// The ledger mixes unredacted and redacted lines, or several salts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mixed_ledger: Option<MixedLedger>,
+    /// Live calls could not be matched to the ledger's redacted lines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_match: Option<LiveMatchFailure>,
+}
+
+impl DoubleCountRisk {
+    /// Builds the risk, or `None` when neither cause is present, so `Some` always means a real
+    /// risk.
+    #[must_use]
+    pub fn new(
+        mixed_ledger: Option<MixedLedger>,
+        live_match: Option<LiveMatchFailure>,
+    ) -> Option<Self> {
+        if mixed_ledger.is_none() && live_match.is_none() {
+            return None;
+        }
+        Some(Self {
+            mixed_ledger,
+            live_match,
+        })
+    }
+}
+
+/// Line counts of a mixed ledger. Counts only, never ids or salts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MixedLedger {
+    /// Lines carrying plain identifiers.
+    pub unredacted_lines: u64,
+    /// Lines carrying keyed hashes.
+    pub redacted_lines: u64,
+    /// Distinct salt fingerprints across the redacted lines.
+    pub distinct_salts: u64,
+}
+
+/// Why live calls could not be matched to redacted ledger lines. Mirrors the four failure
+/// variants of `report::LiveRedactionMatch`, which this module cannot depend on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LiveMatchFailure {
+    /// The ledger has redacted lines and there is no local salt.
+    NoSalt,
+    /// A local salt exists but could not be read.
+    SaltUnreadable,
+    /// The local salt's fingerprint is on none of the redacted lines.
+    FingerprintMismatch,
+    /// The local salt matches some redacted lines; others cannot be matched.
+    PartiallyMatched,
 }
 
 /// Calls that no branch's report places (#60): a record whose branch is `(none)` after
@@ -486,6 +548,40 @@ mod tests {
         assert!(!b.any_ambiguous());
         b.ambiguous.add(0);
         assert!(b.any_ambiguous());
+    }
+
+    #[test]
+    fn double_count_defaults_to_none_and_old_json_loads() {
+        assert_eq!(Footnote::default().double_count, None);
+        let json = r#"{"subagent_calls":1,"off_branch_tokens":2,"worktree_sessions":3}"#;
+        let f: Footnote = serde_json::from_str(json).unwrap();
+        assert_eq!(f.double_count, None);
+        assert!(!serde_json::to_string(&f).unwrap().contains("double_count"));
+    }
+
+    #[test]
+    fn double_count_new_is_none_without_a_cause() {
+        assert_eq!(DoubleCountRisk::new(None, None), None);
+    }
+
+    #[test]
+    fn double_count_new_keeps_both_causes_and_round_trips() {
+        let m = MixedLedger {
+            unredacted_lines: 2,
+            redacted_lines: 5,
+            distinct_salts: 2,
+        };
+        let r = DoubleCountRisk::new(Some(m), Some(LiveMatchFailure::PartiallyMatched)).unwrap();
+        assert_eq!(r.mixed_ledger, Some(m));
+        assert_eq!(r.live_match, Some(LiveMatchFailure::PartiallyMatched));
+        let only = DoubleCountRisk::new(None, Some(LiveMatchFailure::NoSalt)).unwrap();
+        assert_eq!(only.mixed_ledger, None);
+        let f = Footnote {
+            double_count: Some(r),
+            ..Footnote::default()
+        };
+        let back: Footnote = serde_json::from_str(&serde_json::to_string(&f).unwrap()).unwrap();
+        assert_eq!(back, f);
     }
 
     #[test]

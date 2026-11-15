@@ -21,10 +21,17 @@
 
 mod captures;
 mod check;
+mod keyed_append;
+mod redaction;
 mod tally_dir;
 
 use std::path::{Path, PathBuf};
 
+pub use keyed_append::{append_keyed_default, append_keyed_explicit};
+pub(crate) use redaction::is_agent_branch;
+pub use redaction::{
+    KeyedRedact, RedactOutcome, SALT_FILE, Salt, redact_ledger, redact_ledger_default,
+};
 pub use tally_dir::{TALLY_DIR, TallyDir};
 
 pub use check::{
@@ -102,6 +109,10 @@ pub struct LedgerEntry {
     /// usage data: comparing entries for duplicates and conflicts ignores it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recorded_at: Option<String>,
+    /// The fingerprint of the salt this line was redacted under (decision 0005). Absent on an
+    /// unredacted line. Its presence is what stops a line being hashed twice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redaction: Option<String>,
 }
 
 /// A session origin as the ledger stores it: `"main"`, `{"worktree": "<relative name>"}` or
@@ -256,6 +267,7 @@ impl LedgerEntry {
                 .map(|o| StoredOrigin::from_origin(o, main)),
             usage: r.usage,
             recorded_at: None,
+            redaction: None,
         }
     }
 
@@ -329,6 +341,23 @@ pub struct ReadStats {
     pub malformed_timestamps: u64,
     /// 1-based numbers of the malformed and unsupported lines, for locating them.
     pub bad_line_numbers: Vec<u64>,
+    /// Valid lines with no `redaction` stamp (ids and names as the harness wrote them).
+    pub unredacted_lines: u64,
+    /// Valid lines carrying a `redaction` stamp.
+    pub redacted_lines: u64,
+    /// The distinct salt fingerprints the redacted lines carry, sorted.
+    pub redaction_fingerprints: Vec<String>,
+}
+
+impl ReadStats {
+    /// Whether the ledger mixes forms: unredacted and redacted lines, or lines redacted under
+    /// more than one salt. A call recorded once in each form is then counted once per form
+    /// (Governance II), so a report must say so.
+    #[must_use]
+    pub fn is_mixed(&self) -> bool {
+        (self.unredacted_lines > 0 && self.redacted_lines > 0)
+            || self.redaction_fingerprints.len() > 1
+    }
 }
 
 /// A ledger read from disk: deduplicated entries in first-seen order, plus what was counted.
@@ -433,6 +462,25 @@ pub enum LedgerError {
         /// Why, in words that contain no file content.
         reason: &'static str,
     },
+    /// `.tally/salt` exists but is not a salt. It is never replaced: that would orphan every
+    /// line already redacted under it.
+    #[error(
+        "{} is empty or damaged: it is not a salt (64 lowercase hex characters). It is never \
+         replaced automatically. It can be deleted to have a new one created; lines already \
+         hashed with the old salt will then read as a different salt",
+        path.display()
+    )]
+    MalformedSalt {
+        /// The salt path.
+        path: PathBuf,
+    },
+    /// The ledger changed between being read and being replaced by `ledger redact`, for example
+    /// a concurrent `record` appended to it. Nothing was replaced and no temporary file is left.
+    #[error("{} changed while it was being rewritten; nothing was replaced, run it again", path.display())]
+    ChangedDuringRewrite {
+        /// The ledger path.
+        path: PathBuf,
+    },
 }
 
 fn line_text(entry: &LedgerEntry) -> String {
@@ -501,6 +549,7 @@ fn parse_ledger(bytes: &[u8]) -> Ledger {
     let mut ledger = Ledger::default();
     let mut index: std::collections::HashMap<EntryKey, usize> = std::collections::HashMap::new();
     let mut conflicted: std::collections::HashSet<EntryKey> = std::collections::HashSet::new();
+    let mut fingerprints: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for (i, raw) in bytes.split(|b| *b == b'\n').enumerate() {
         let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
         if raw.iter().all(u8::is_ascii_whitespace) {
@@ -511,6 +560,13 @@ fn parse_ledger(bytes: &[u8]) -> Ledger {
         let entry = match parse_line(raw) {
             Ok((e, ts_cleared)) => {
                 ledger.stats.malformed_timestamps += u64::from(ts_cleared);
+                match &e.redaction {
+                    Some(fp) => {
+                        ledger.stats.redacted_lines += 1;
+                        fingerprints.insert(fp.clone());
+                    }
+                    None => ledger.stats.unredacted_lines += 1,
+                }
                 e
             }
             Err(unsupported) => {
@@ -542,6 +598,7 @@ fn parse_ledger(bytes: &[u8]) -> Ledger {
         }
     }
     ledger.stats.entries = ledger.entries.len() as u64;
+    ledger.stats.redaction_fingerprints = fingerprints.into_iter().collect();
     ledger
 }
 

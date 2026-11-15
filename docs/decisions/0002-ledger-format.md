@@ -110,3 +110,9 @@ that.
 - **An explicit `--ledger <path>` is exempt.** A path the user typed is the user's choice, links
   included. The default ledger's location is unchanged: the git top level's `.tally/`, so each
   worktree keeps its own ledger, as above. Captures and `prices.toml` stay in the main checkout's.
+
+## Addendum: the redaction policy (#67)
+
+The redaction step above is no longer the identity. [0005](0005-ledger-redaction.md) sets the
+policy: with ledger redaction on (the default), `record` replaces ids with a keyed hash under a
+per-repository salt, and marks each redacted line with the salt's fingerprint.

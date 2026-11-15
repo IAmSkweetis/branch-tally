@@ -116,6 +116,16 @@ fn render(settings: &Settings) -> String {
             &settings.redact_names.value.to_string(),
             settings.redact_names.source,
         ),
+        line(
+            "ledger-redact",
+            &settings.ledger_redact.value.to_string(),
+            settings.ledger_redact.source,
+        ),
+        line(
+            "ledger-redact-names",
+            &settings.ledger_redact_names.value.to_string(),
+            settings.ledger_redact_names.source,
+        ),
     ];
     format!("{}\n", lines.join("\n"))
 }

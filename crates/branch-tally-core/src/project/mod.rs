@@ -204,5 +204,17 @@ pub fn build(
         totals,
         series,
         undated_branches,
+        double_count: double_count_risk(ledger.stats()),
     }
+}
+
+/// The mixed-ledger risk (#67, decision 0005). `project` has no live side, so only the ledger's
+/// own mix can apply.
+fn double_count_risk(stats: &crate::ledger::ReadStats) -> Option<crate::model::DoubleCountRisk> {
+    let mixed = stats.is_mixed().then_some(crate::model::MixedLedger {
+        unredacted_lines: stats.unredacted_lines,
+        redacted_lines: stats.redacted_lines,
+        distinct_salts: stats.redaction_fingerprints.len() as u64,
+    });
+    crate::model::DoubleCountRisk::new(mixed, None)
 }
