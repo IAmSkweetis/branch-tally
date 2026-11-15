@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use branch_tally_core::config::{self, Flags, Format};
 use branch_tally_core::git::{Git, SystemGit, normalize_path};
 use branch_tally_core::ledger::{
-    CAPTURES_PATH, CaptureReadStats, Identity, LedgerTarget, SystemClock,
+    CAPTURES_PATH, CaptureReadStats, Identity, KeyedRedact, LedgerTarget, Redact, Salt,
+    SystemClock, TallyDir,
 };
 use branch_tally_core::model::Mode;
 use branch_tally_core::pr::{PrError, PrOutcome, SystemGh, update_pr};
@@ -24,7 +25,9 @@ use branch_tally_core::text::replace_control_chars;
 use clap::CommandFactory;
 use clap::error::ErrorKind;
 
-use crate::cli::{Cli, FormatArg, RecordArgs, ReportArgs, WorkBranchPattern, parse_work_branch};
+use crate::cli::{
+    Cli, FormatArg, LedgerRedactArgs, RecordArgs, ReportArgs, WorkBranchPattern, parse_work_branch,
+};
 use crate::config::SystemEnv;
 use crate::prices;
 use crate::pyrepr::repr;
@@ -245,11 +248,27 @@ pub(crate) fn record(args: &RecordArgs) -> Result<(), String> {
             cost: None,
             redact: None,
             redact_names: None,
-            ..Flags::default()
+            ledger_redact: args.redaction.redact(),
+            ledger_redact_names: args.redaction.names(),
         },
         args.work_branch.as_ref(),
     )?;
     let matches = |branch: &str| args.work_branch.as_ref().is_some_and(|p| p.matches(branch));
+    // With redaction on, the salt lives in the main checkout's `.tally/`. No `.tally/` means the
+    // repository has not opted in: nothing is written, so nothing needs hashing.
+    let keyed = if settings.ledger_redact.value {
+        match keyed_redactor(&cwd, settings.ledger_redact_names.value)? {
+            Some(keyed) => Some(keyed),
+            None if args.ledger.is_some() => return Err(NO_SALT_HOME.to_owned()),
+            None => None,
+        }
+    } else {
+        None
+    };
+    let redactor: &dyn Redact = match &keyed {
+        Some(keyed) => keyed,
+        None => &Identity,
+    };
     let recorded = branch_tally_core::report::record_at(
         &SystemGit,
         &ClaudeCode,
@@ -258,7 +277,7 @@ pub(crate) fn record(args: &RecordArgs) -> Result<(), String> {
         args.branch.as_deref(),
         &options(settings.mode.value, pattern.as_ref(), &matches, None),
         &ledger_target(args.ledger.as_deref()),
-        &Identity,
+        redactor,
         &SystemClock,
     )
     .map_err(|e| {
@@ -283,6 +302,63 @@ pub(crate) fn record(args: &RecordArgs) -> Result<(), String> {
     stdout(&format!(
         "appended {}, skipped {}, branch {}\n",
         recorded.outcome.appended, recorded.outcome.skipped, recorded.branch
+    ));
+    Ok(())
+}
+
+/// Fixed text: ledger redaction needs a `.tally/` to hold the salt.
+const NO_SALT_HOME: &str = "ledger redaction needs a .tally/ directory in the main checkout to \
+     hold its salt: create it, or pass --no-ledger-redact";
+
+/// The keyed redactor from the main checkout's salt, created if missing. `None` when the main
+/// checkout has no `.tally/` (the repository has not opted in): nothing is created.
+fn keyed_redactor(cwd: &Path, names: bool) -> Result<Option<KeyedRedact>, String> {
+    let main = SystemGit.main_checkout(cwd);
+    let Some(tally) = TallyDir::open(&main).map_err(|e| e.to_string())? else {
+        return Ok(None);
+    };
+    let salt = Salt::load_or_create(&tally).map_err(|e| e.to_string())?;
+    Ok(Some(KeyedRedact::new(salt, names)))
+}
+
+/// `ledger redact`: rewrite the ledger's unredacted lines with the keyed hash.
+pub(crate) fn ledger_redact(args: &LedgerRedactArgs) -> Result<(), String> {
+    let Resolved { settings, cwd, .. } = resolve(
+        &args.repo,
+        args.config.as_deref(),
+        &Flags {
+            ledger_redact_names: args.names_flag(),
+            ..Flags::default()
+        },
+        None,
+    )?;
+    let Some(keyed) = keyed_redactor(&cwd, settings.ledger_redact_names.value)? else {
+        if args.ledger.is_some() {
+            return Err(NO_SALT_HOME.to_owned());
+        }
+        stdout("no .tally/ directory: nothing redacted (create it to opt in)\n");
+        return Ok(());
+    };
+    let outcome = if let Some(path) = &args.ledger {
+        branch_tally_core::ledger::redact_ledger(path, &keyed)
+    } else {
+        let top = SystemGit.toplevel(&cwd).map_err(|e| {
+            format!(
+                "cannot place the default ledger: {} is not inside a git checkout ({e}); \
+                 pass --ledger <path>",
+                cwd.display()
+            )
+        })?;
+        branch_tally_core::ledger::redact_ledger_default(&top, &keyed)
+    }
+    .map_err(|e| e.to_string())?;
+    if outcome.tally_absent {
+        stdout("no .tally/ directory: nothing redacted (create it to opt in)\n");
+        return Ok(());
+    }
+    stdout(&format!(
+        "redacted {} line(s), {} already redacted, {} unparseable left as-is\n",
+        outcome.rewritten, outcome.already_redacted, outcome.unparseable
     ));
     Ok(())
 }
@@ -473,6 +549,19 @@ pub(crate) fn note_ledger_stats(stats: &branch_tally_core::ledger::ReadStats) {
             "note: skipped {total} ledger line(s): {}",
             detail.join(", ")
         ));
+    }
+    if stats.is_mixed() {
+        let mut note = format!(
+            "note: ledger holds {} unredacted line(s) and {} redacted line(s) under {} salt(s); \
+             a call recorded in more than one form may be counted twice",
+            stats.unredacted_lines,
+            stats.redacted_lines,
+            stats.redaction_fingerprints.len()
+        );
+        if stats.unredacted_lines > 0 {
+            note.push_str(". Run `branch-tally ledger redact` to rewrite the unredacted lines");
+        }
+        stderr(&note);
     }
     if stats.conflicts > 0 {
         stderr(&format!(
