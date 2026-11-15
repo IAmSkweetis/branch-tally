@@ -1,11 +1,12 @@
 //! The double-count footnote (#67, decision 0005): an overcount, never a floor. It reaches the
 //! rendered Markdown and JSON, and is absent (output unchanged) when there is no risk.
 
+use branch_tally_core::model::{BranchRow, ProjectReport};
 use branch_tally_core::model::{
     Costs, DoubleCountRisk, Footnote, LiveMatchFailure, MixedLedger, PriceTableInfo,
     PriceTableSource, Summary,
 };
-use branch_tally_core::render::{json, markdown};
+use branch_tally_core::render::{json, markdown, project_json, project_markdown, project_svg};
 
 fn fully_priced() -> Costs {
     Costs {
@@ -46,7 +47,7 @@ fn mixed_ledger_is_stated_with_counts_and_the_fix() {
     let out = md(DoubleCountRisk::new(Some(mixed()), None));
     assert!(out.contains(HEAD), "{out}");
     assert!(
-        out.contains("mixes 3 unredacted and 5 redacted line(s) under 2 salt(s)"),
+        out.contains("the ledger holds 3 unredacted and 5 redacted line(s) under 2 salt(s)"),
         "{out}"
     );
     assert!(out.contains("`branch-tally ledger redact`"), "{out}");
@@ -91,7 +92,7 @@ fn both_causes_are_stated_together() {
         Some(LiveMatchFailure::NoSalt),
     ));
     assert_eq!(out.matches(HEAD).count(), 1, "{out}");
-    assert!(out.contains("mixes 3 unredacted"), "{out}");
+    assert!(out.contains("the ledger holds 3 unredacted"), "{out}");
     assert!(out.contains("there is no local salt"), "{out}");
 }
 
@@ -125,4 +126,66 @@ fn json_carries_the_risk_and_stays_valid() {
     let v: serde_json::Value = serde_json::from_str(&only).expect("valid json");
     assert!(v["doubleCount"].get("mixedLedger").is_none(), "{only}");
     assert_eq!(v["doubleCount"]["liveMatch"], "no-salt", "{only}");
+}
+
+#[test]
+fn salts_only_mix_gives_no_redact_advice() {
+    let m = MixedLedger {
+        unredacted_lines: 0,
+        redacted_lines: 4,
+        distinct_salts: 2,
+    };
+    let out = md(DoubleCountRisk::new(Some(m), None));
+    assert!(out.contains(HEAD), "{out}");
+    assert!(
+        out.contains("the ledger holds 4 redacted line(s) hashed under 2 different salts"),
+        "{out}"
+    );
+    assert!(out.contains("two machines"), "{out}");
+    assert!(!out.contains("ledger redact"), "{out}");
+    assert!(out.contains("This is an overcount, not a floor."), "{out}");
+}
+
+fn project(risk: Option<DoubleCountRisk>) -> ProjectReport {
+    ProjectReport {
+        rows: vec![BranchRow::default()],
+        double_count: risk,
+        ..ProjectReport::default()
+    }
+}
+
+#[test]
+fn project_markdown_uses_the_same_statement_and_none_is_unchanged() {
+    let risk = DoubleCountRisk::new(Some(mixed()), Some(LiveMatchFailure::NoSalt));
+    let out = project_markdown(&project(risk));
+    assert_eq!(out.matches(HEAD).count(), 1, "{out}");
+    assert!(out.contains("the ledger holds 3 unredacted"), "{out}");
+    assert!(out.contains("`branch-tally ledger redact`"), "{out}");
+    let plain = project_markdown(&project(None));
+    assert!(!plain.contains("twice"), "{plain}");
+    assert_eq!(
+        plain,
+        project_markdown(&ProjectReport {
+            double_count: None,
+            ..project(None)
+        })
+    );
+}
+
+#[test]
+fn project_json_carries_the_risk_and_none_is_unchanged() {
+    let risk = DoubleCountRisk::new(Some(mixed()), Some(LiveMatchFailure::PartiallyMatched));
+    let j = project_json(&project(risk));
+    let v: serde_json::Value = serde_json::from_str(&j).expect("valid json");
+    assert_eq!(v["doubleCount"]["mixedLedger"]["redactedLines"], 5, "{j}");
+    assert_eq!(v["doubleCount"]["liveMatch"], "partially-matched", "{j}");
+    assert!(!project_json(&project(None)).contains("doubleCount"));
+}
+
+#[test]
+fn project_svg_footer_notes_the_overcount_only_when_set() {
+    let risk = DoubleCountRisk::new(None, Some(LiveMatchFailure::NoSalt));
+    let svg = project_svg(&project(risk));
+    assert!(svg.contains("may count some calls twice"), "{svg}");
+    assert!(!project_svg(&project(None)).contains("twice"));
 }

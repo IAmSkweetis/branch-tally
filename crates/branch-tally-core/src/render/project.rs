@@ -6,8 +6,8 @@
 
 use std::fmt::Write as _;
 
-use super::json::{float, string};
-use super::markdown::{code, millions, n};
+use super::json::{double_count, float, string};
+use super::markdown::{code, double_count_text, millions, n};
 use crate::model::{BranchRow, HeuristicBreakdown, HeuristicCount, ProjectReport, RowCost};
 
 /// The attribution heuristics in report order, with the Markdown name and the JSON key.
@@ -120,6 +120,10 @@ pub fn project_markdown(report: &ProjectReport) -> String {
              value the tool can hold, so every total here is at least what is shown and the real \
              figure is unknown.\n\n",
         );
+    }
+    if let Some(risk) = &report.double_count {
+        o.push_str(&double_count_text(risk));
+        o.push_str("\n\n");
     }
     o.push_str(
         "| Branch | Last call | Calls | Tokens | Cost |\n| --- | --- | ---: | ---: | ---: |\n",
@@ -330,6 +334,7 @@ pub fn project_json(report: &ProjectReport) -> String {
         float(t.overlap.cost.known),
         t.overlap.cost.is_floor()
     );
+    double_count(report.double_count.as_ref(), &mut o);
     let _ = writeln!(o, "  \"heuristics\": {},", heuristics_json(&t.uncertain));
     let _ = writeln!(o, "  \"undatedBranches\": {},", report.undated_branches);
     let _ = writeln!(o, "  \"undatedCalls\": {},", t.undated_calls);
@@ -468,6 +473,9 @@ pub fn project_svg(report: &ProjectReport) -> String {
             "{} call(s) with no usable timestamp, branch dates may be early",
             report.totals.undated_calls
         ));
+    }
+    if report.double_count.is_some() {
+        footer.push("total may count some calls twice (overcount, not a floor)".to_owned());
     }
     let height = footer_canvas_height(footer.len());
     let mut o = String::new();
