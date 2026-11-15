@@ -113,8 +113,10 @@ When reading the output:
   `_Recorded before review: usage from later rounds is not included, so this is a floor._`
 
 If `record` or `report` fails, or prints `No ledger records found` (no markers in its output),
-report what it said, leave the placeholder and go on. A missing table is worth reporting, never
-worth failing the PR over.
+report what it said, leave the `_Not yet recorded._` placeholder as it is, **omit the floor
+line** (there is no table for it to qualify), and go on. Tell the user why the table is missing
+(no ledger records for the branch, a missing binary, or the error printed). A missing table is
+worth reporting, never worth failing the PR over.
 
 ## Step 4: Compose
 
@@ -200,7 +202,8 @@ afterwards.
 
 ```bash
 just token-record
-git add .tally/ledger.jsonl && git commit -m "chore: record token usage for this branch"  # if it changed
+git add .tally/ledger.jsonl           # and .tally/captures.jsonl too, when it changed
+git commit -m "chore: record token usage for this branch"  # if it changed
 git push                              # one push: the fixes and the ledger together
 just token-report --pr --from-ledger  # optional: refreshes the table, which edits the body
 ```

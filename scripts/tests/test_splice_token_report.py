@@ -43,6 +43,25 @@ class SpliceTests(unittest.TestCase):
         self.assertTrue(out.startswith(f"text {START} inline\n"))
         self.assertIn("| `x` |", out)
 
+    def test_crlf_body_is_handled(self) -> None:
+        body = BODY.replace("\n", "\r\n")
+        out = sp.splice(body, REPORT)
+        self.assertIn("| `x` |", out)
+        self.assertNotIn("_Not yet recorded._", out)
+        self.assertTrue(out.startswith("## Summary"))
+
+    def test_only_the_first_marker_pair_is_replaced(self) -> None:
+        body = BODY + f"\n{START}\nsecond\n{END}\n"
+        out = sp.splice(body, REPORT)
+        self.assertIn("| `x` |", out)
+        self.assertIn("second", out)
+        self.assertEqual(out.count(START), 2)
+
+    def test_no_trailing_newline_is_preserved(self) -> None:
+        out = sp.splice(BODY.rstrip("\n"), REPORT)
+        self.assertIn("| `x` |", out)
+        self.assertFalse(out.endswith("\n"))
+
 
 if __name__ == "__main__":
     unittest.main()
