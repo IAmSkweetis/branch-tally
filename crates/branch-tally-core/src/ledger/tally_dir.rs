@@ -49,6 +49,25 @@ use super::LedgerError;
 /// The directory name, relative to the main checkout.
 pub const TALLY_DIR: &str = ".tally";
 
+/// How many times the `O_CREAT` open is retried after `ENOENT` before the error surfaces.
+///
+/// Root cause (issue #109), and what is known. Confirmed from CI: on `macos-latest`
+/// `concurrent_appends_lose_nothing` failed in four runs with `ENOENT` on the append, never on
+/// Linux or Windows. `probe` maps `ENOENT` to "missing", and `fstat` and `write` on an open fd
+/// cannot return it, so it came from the `openat(O_CREAT)` on a name that did not exist yet,
+/// with `.tally/` present. Six of eight threads failed together in one run, so the window is the
+/// first creation of the file. Inference, not confirmed (no macOS was available and the XNU
+/// `vn_open_auth` source was not read): the lookup half of concurrent create-opens of one name
+/// transiently reports `ENOENT` on APFS/XNU instead of resolving to the file another thread just
+/// created. POSIX does not allow `ENOENT` there while the directory exists, and nothing in this
+/// code removes the file or the directory.
+///
+/// The bound is provisional: nothing in the code or the evidence justifies a specific number, and
+/// 8 is only the thread count of the test that exposed the bug. There is deliberately no backoff.
+/// A directory that really was removed keeps returning `ENOENT`, so the bound is what ends the
+/// loop.
+const OPEN_RETRIES: u32 = 8;
+
 /// A verified `.tally/` directory of a main checkout.
 #[derive(Debug, Clone)]
 pub struct TallyDir {
@@ -301,6 +320,18 @@ impl TallyDir {
 
     /// `append` with the same seam as `read_with`.
     fn append_with(&self, name: &str, bytes: &[u8], between: &dyn Fn()) -> Result<(), LedgerError> {
+        self.append_via(name, bytes, between, &|dir, name| dir.open_file(name, true))
+    }
+
+    /// `append_with` with the `O_CREAT` open injectable, so a test can make it fail with `ENOENT`
+    /// (the macOS behaviour described on [`OPEN_RETRIES`]) on any OS.
+    fn append_via(
+        &self,
+        name: &str,
+        bytes: &[u8],
+        between: &dyn Fn(),
+        open: &dyn Fn(&Self, &str) -> std::io::Result<File>,
+    ) -> Result<(), LedgerError> {
         let path = self.file_path(name);
         if !is_plain_name(name) {
             return Err(refused(&path, "the name is not a single plain component"));
@@ -315,12 +346,35 @@ impl TallyDir {
             Err(source) => return Err(write_err(source)),
         }
         between();
-        let mut file = self.open_file(name, true).map_err(write_err)?;
+        let mut file = self.open_creating(name, open).map_err(write_err)?;
         let meta = file.metadata().map_err(write_err)?;
         if !is_plain_file(&meta) {
             return Err(refused(&path, "it is not a regular file"));
         }
         file.write_all(bytes).map_err(write_err)
+    }
+
+    /// Runs the `O_CREAT` open, retrying immediately on `NotFound` up to [`OPEN_RETRIES`] times.
+    ///
+    /// Every attempt is a fresh `openat` relative to the held directory fd with `O_NOFOLLOW`, so
+    /// a retry re-applies #105's guarantees: a link that appeared meanwhile is refused, and a
+    /// `.tally` that was renamed or removed is never re-resolved by path, so nothing is created
+    /// where it is absent. When the retries run out the last error is returned unchanged, and the
+    /// caller reports it as [`LedgerError::Write`]: the event is never dropped silently.
+    fn open_creating(
+        &self,
+        name: &str,
+        open: &dyn Fn(&Self, &str) -> std::io::Result<File>,
+    ) -> std::io::Result<File> {
+        let mut retries = 0;
+        loop {
+            match open(self, name) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound && retries < OPEN_RETRIES => {
+                    retries += 1;
+                }
+                other => return other,
+            }
+        }
     }
 }
 
@@ -519,6 +573,120 @@ mod tests {
             })
             .unwrap();
         assert_eq!(got.unwrap(), b"mine\n");
+    }
+
+    /// An opener that fails with `NotFound` `fails` times (running `each` before each failure),
+    /// then performs the real open. Counts calls in `calls`.
+    #[cfg(unix)]
+    fn flaky_open<'a>(
+        fails: u32,
+        calls: &'a std::cell::Cell<u32>,
+        each: &'a dyn Fn(),
+    ) -> impl Fn(&TallyDir, &str) -> std::io::Result<File> + 'a {
+        move |dir, name| {
+            calls.set(calls.get() + 1);
+            if calls.get() <= fails {
+                each();
+                return Err(std::io::ErrorKind::NotFound.into());
+            }
+            dir.open_file(name, true)
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_open_that_fails_with_enoent_is_retried() {
+        let dir = checkout();
+        let tally = with_tally(dir.path());
+        let calls = std::cell::Cell::new(0);
+        let open = flaky_open(3, &calls, &|| {});
+        tally.append_via("f.jsonl", b"a\n", &|| {}, &open).unwrap();
+        assert_eq!(calls.get(), 4);
+        assert_eq!(tally.read("f.jsonl").unwrap().unwrap(), b"a\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn enoent_past_the_retry_bound_surfaces_as_a_write_error() {
+        let dir = checkout();
+        let tally = with_tally(dir.path());
+        let calls = std::cell::Cell::new(0);
+        let open = flaky_open(u32::MAX, &calls, &|| {});
+        let err = tally
+            .append_via("f.jsonl", b"a\n", &|| {}, &open)
+            .unwrap_err();
+        assert!(
+            matches!(&err, LedgerError::Write { source, .. } if source.kind() == std::io::ErrorKind::NotFound),
+            "{err:?}"
+        );
+        assert_eq!(calls.get(), OPEN_RETRIES + 1);
+        assert_eq!(tally.read("f.jsonl").unwrap(), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_appearing_before_the_retry_is_refused_and_not_followed() {
+        let dir = checkout();
+        let tally = with_tally(dir.path());
+        let missing = dir.path().join("not-yet");
+        let calls = std::cell::Cell::new(0);
+        let plant = || {
+            std::os::unix::fs::symlink(&missing, tally.file_path("f.jsonl")).unwrap();
+        };
+        let open = flaky_open(1, &calls, &plant);
+        assert!(
+            tally
+                .append_via("f.jsonl", b"evil\n", &|| {}, &open)
+                .is_err()
+        );
+        assert_eq!(calls.get(), 2, "the retry ran");
+        assert!(
+            !missing.exists(),
+            "the link was followed and its target created"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_tally_swapped_for_a_link_before_the_retry_does_not_reach_the_victim() {
+        let dir = checkout();
+        let tally = with_tally(dir.path());
+        let victim = dir.path().join("victim-dir");
+        std::fs::create_dir(&victim).unwrap();
+        let calls = std::cell::Cell::new(0);
+        let swap = || {
+            swap_tally_for_link(dir.path(), &victim);
+        };
+        let open = flaky_open(1, &calls, &swap);
+        tally.append_via("f.jsonl", b"x\n", &|| {}, &open).unwrap();
+        assert_eq!(calls.get(), 2, "the retry ran");
+        assert_eq!(
+            std::fs::read_dir(&victim).unwrap().count(),
+            0,
+            "victim written"
+        );
+        let moved = dir.path().join("moved-tally");
+        assert_eq!(std::fs::read(moved.join("f.jsonl")).unwrap(), b"x\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_tally_removed_before_the_retry_creates_nothing_and_errors() {
+        let dir = checkout();
+        let tally = with_tally(dir.path());
+        let calls = std::cell::Cell::new(0);
+        let remove = || {
+            let _ = std::fs::remove_dir(dir.path().join(TALLY_DIR));
+        };
+        let open = flaky_open(1, &calls, &remove);
+        let err = tally
+            .append_via("f.jsonl", b"x\n", &|| {}, &open)
+            .unwrap_err();
+        assert!(matches!(err, LedgerError::Write { .. }), "{err:?}");
+        assert!(
+            !dir.path().join(TALLY_DIR).exists(),
+            "`.tally` was recreated"
+        );
     }
 
     #[test]
