@@ -123,3 +123,23 @@ fn there_is_no_flag_to_replace_the_release_key() {
         assert_eq!(run(&["update", flag, "x"]).status.code(), Some(2), "{flag}");
     }
 }
+
+#[test]
+fn a_non_default_mirror_is_announced_on_stderr_not_stdout_even_for_check() {
+    let out = run_with_base("file:///nonexistent");
+    let err = text(&out.stderr);
+    assert!(err.contains("release source"), "{err}");
+    assert!(err.contains("file:///nonexistent"), "{err}");
+    assert!(err.contains("BRANCH_TALLY_INSTALL_BASE_URL"), "{err}");
+    assert!(!text(&out.stdout).contains("file:///nonexistent"));
+}
+
+#[test]
+fn the_default_source_prints_no_source_notice() {
+    let out = Command::new(env!("CARGO_BIN_EXE_branch-tally"))
+        .args(["update", "--check"])
+        .env_remove("BRANCH_TALLY_INSTALL_BASE_URL")
+        .output()
+        .unwrap();
+    assert!(!text(&out.stderr).contains("release source"));
+}

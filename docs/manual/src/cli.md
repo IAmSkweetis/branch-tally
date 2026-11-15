@@ -667,10 +667,13 @@ Downloads [LiteLLM](https://github.com/BerriAI/litellm)'s public
 `model_prices_and_context_window.json` from GitHub, keeps the Anthropic chat models, and writes
 them to the per-user price cache. It replaces the cache only when the download and the conversion
 both succeed, so a failed update leaves a good cache in place. It prints the path written, the
-table's date, the model count, and any models skipped for lacking a usable price.
+table's date, the model count, and any models skipped for lacking a usable price. Model ids come
+from the downloaded list, so control characters and Unicode bidirectional-text controls in the
+date and the skipped ids are replaced with `�` (U+FFFD) before they reach your terminal.
 
-It sends no account or identifying data, only a `branch-tally/<version>` User-Agent. Despite the
-name, it does not update branch-tally itself; [`update`](#branch-tally-update) does that.
+It downloads over HTTPS only, and refuses a redirect to a URL that is not `https://`. It sends no
+account or identifying data, only a `branch-tally/<version>` User-Agent. Despite the name, it does
+not update branch-tally itself; [`update`](#branch-tally-update) does that.
 
 The cache file is `branch-tally/prices.toml` under:
 
@@ -815,7 +818,7 @@ behaves identically. It works on a binary installed by `install.sh`, `install.ps
 | ------ | ---- |
 | `--check` | Only report whether a different version is available. Installs nothing. |
 | `--version <vX.Y.Z>` | Install this release instead of the latest. The leading `v` is optional. It may be older than the running version: this is the only way to downgrade. |
-| `--yes` | Do not ask for confirmation. |
+| `--yes` | Do not ask for confirmation. Ignored when a [release mirror](#release-mirror) is set: `update` then always asks, and refuses without a terminal. |
 | `--force` | Reinstall even when already on the target version. It never installs an older release. |
 
 In order, it:
@@ -831,6 +834,8 @@ In order, it:
    reinstalls that same version.
 6. Asks `Update branch-tally vA -> vB? [y/N]` on stderr, unless `--yes` is given. Only `y` or `yes`
    proceeds. When stdin is not a terminal it cannot ask, so it declines and says to pass `--yes`.
+   With a [release mirror](#release-mirror) set, it asks even when `--yes` is given, and without a
+   terminal it refuses, exits 1 and installs nothing.
 7. Downloads the release's `SHA256SUMS` and `SHA256SUMS.minisig`, and verifies the signature
    against the release public key compiled into the binary. The signature's trusted comment must
    be exactly `branch-tally <tag> SHA256SUMS` for the tag being installed, so a signature from
@@ -846,7 +851,10 @@ In order, it:
    `.old` file is deleted the next time `update` runs.
 
 A failure at any step leaves the installed binary as it was. To use `update` in a script or CI job,
-pass `--yes`.
+pass `--yes`. That works only with the default release location: with a
+[release mirror](#release-mirror) set, a run without a terminal that would install a release is
+refused with exit 1, even with `--yes`. One that finds nothing to install still reports up to date
+with exit 0.
 
 ### What it prints
 
@@ -857,7 +865,8 @@ One line on stdout when it succeeds, or on stderr when it fails:
 | Updated | `updated branch-tally v0.6.0 -> v0.7.0` | `0` |
 | Already on the target | `branch-tally is up to date (v0.6.0)` | `0` |
 | Without `--version`, the latest release is older than the running one (also with `--check` or `--force`) | `the latest release (v0.6.0) is older than the running version (v0.7.0); nothing installed. To go back to an older release, pin it with --version` | `0` |
-| You answered no, or stdin is not a terminal | `update v0.6.0 -> v0.7.0 declined; nothing changed` | `0` |
+| You answered no, or stdin is not a terminal and `--yes` was not given (with the default release location) | `update v0.6.0 -> v0.7.0 declined; nothing changed` | `0` |
+| A [release mirror](#release-mirror) is set, stdin is not a terminal and a release would be installed, with or without `--yes` | `BRANCH_TALLY_INSTALL_BASE_URL is set to a non-default release source, which requires interactive confirmation even with --yes; refusing without a terminal, nothing was installed.` | `1` |
 | `--check` found another version | ``update available: v0.6.0 -> v0.7.0; run `branch-tally update` to install it`` | `0` |
 | A refusal or an error | see below | `1` |
 | A bad command line | a usage message | `2` |
@@ -881,11 +890,13 @@ because it is not signed.
 
 | Message starts with | Cause |
 | ------------------- | ----- |
+| `BRANCH_TALLY_INSTALL_BASE_URL must start with https:// or file://` | The [release mirror](#release-mirror) is not an `https://` or `file://` URL. Nothing was downloaded. |
+| `BRANCH_TALLY_INSTALL_BASE_URL is set to a non-default release source` | A [release mirror](#release-mirror) is set and stdin is not a terminal, so nobody could confirm the install. `--yes` doesn't change that. Nothing was installed. |
 | `not a valid version` | `--version` is not `X.Y.Z` or `vX.Y.Z`. |
-| `the latest release could not be resolved` | Without `--version`, the GitHub API could not be reached, refused the request (for example a rate limit or a bad token), or did not answer with a `vX.Y.Z` tag. The reason is in brackets. Nothing was installed. Pass `--version vX.Y.Z` to choose the release yourself. |
+| `the latest release could not be resolved` | Without `--version`, the GitHub API could not be reached, refused the request (for example a rate limit or a bad token), redirected to a URL that is not `https://`, or did not answer with a `vX.Y.Z` tag. The reason is in brackets. Nothing was installed. Pass `--version vX.Y.Z` to choose the release yourself. |
 | `release not found` | No release has that tag. |
 | `no release is built for target` | This binary was built for a platform with no prebuilt release. |
-| `download failed` | A network or read error. URLs are left out of the message. |
+| `download failed` | A network or read error, including a redirect to a URL that is not `https://`. URLs are left out of the message. |
 | `<tag> is not signed, so its origin can't be verified` | The release has no `SHA256SUMS.minisig`. Releases published before signing began are refused this way, including through `--version`. Nothing was installed. Install it [by hand](installation/manual-download.md) or with an installer instead. |
 | `SHA256SUMS.minisig is malformed` | The signature file could not be read as a minisign signature. Nothing was installed. |
 | `the signature does not match SHA256SUMS` | `SHA256SUMS` is not the file that was signed. Nothing was installed. |
@@ -927,6 +938,38 @@ GitHub API, as described above.
 The default is `https://github.com/IAmSkweetis/branch-tally/releases`. A `file://` URL naming a
 local directory also works. Any other scheme, including plain `http://`, is refused before any
 network call.
+
+When the variable is set to anything other than the default (a trailing `/` on the default doesn't
+count), `update` prints where it is downloading from on stderr before it does anything else,
+`--check` included:
+
+```text
+release source: https://mirror.example/releases (from BRANCH_TALLY_INSTALL_BASE_URL, not the default release location)
+```
+
+Control characters and Unicode bidirectional-text controls in the URL are replaced with `�`
+(U+FFFD) in that line, so the value can't send escape sequences to your terminal or disguise
+itself. A `user:password@` in the URL is left out of that line. The rest of the URL, including its
+path and query, is printed as written, so don't put a token there if stderr is logged.
+
+A mirror also changes confirmation. `update` asks `Update branch-tally vA -> vB? [y/N]` even when
+`--yes` is given, so a release source that comes from the environment is always confirmed by a
+person. When stdin is not a terminal and there is a release to install, it can't ask, so it
+refuses: it prints this on stderr, installs nothing and exits 1. When it finds nothing to install,
+it reports up to date with exit 0 before it would ask.
+
+```text
+BRANCH_TALLY_INSTALL_BASE_URL is set to a non-default release source, which requires interactive confirmation even with --yes; refusing without a terminal, nothing was installed.
+```
+
+So a script or CI job that runs `update --yes` with a mirror set fails instead of updating. Run it
+from a terminal, or unset the variable to use the default release location. Answering no at a
+terminal is an ordinary decline, with exit 0. `--check` installs nothing, so it never asks. With
+the default release location, `--yes` skips the question as before.
+
+Every download over the network is HTTPS only, from the mirror and from the GitHub API alike. A
+redirect to a URL that is not `https://` is refused, and nothing is installed. A `file://` mirror
+reads files from disk, so this doesn't apply to it.
 
 A mirror is trusted only as far as the signature: whatever it serves must still verify against the
 release key compiled into the binary. There is no flag, variable or config key that replaces that

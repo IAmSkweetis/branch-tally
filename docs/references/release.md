@@ -280,7 +280,7 @@ powershell -ExecutionPolicy Bypass -c "irm https://github.com/IAmSkweetis/branch
 | `--version <vX.Y.Z>` | `-Version` | `BRANCH_TALLY_INSTALL_VERSION` | Install that release instead of the latest |
 | `--to <dir>` | `-To` | `BRANCH_TALLY_INSTALL_DIR` | Install directory |
 | `--require-attestation` | `-RequireAttestation` | `BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION` | Fail unless provenance was verified (`1`, `true` or `yes` for the variable) |
-| none | none | `BRANCH_TALLY_INSTALL_BASE_URL` | Releases URL, `https://` or `file://` only, default `https://github.com/IAmSkweetis/branch-tally/releases`. The effective source is printed when it is set. The tests point it at a `file://` fake release |
+| none | none | `BRANCH_TALLY_INSTALL_BASE_URL` | Releases URL, `https://` or `file://` only, default `https://github.com/IAmSkweetis/branch-tally/releases`. The effective source is printed when it is set. `branch-tally update` reads it too: for a non-default source it prints `release source: <url> (from BRANCH_TALLY_INSTALL_BASE_URL, ...)` on stderr, even with `--check`, and `--yes` does not skip the confirmation (see below). The tests point it at a `file://` fake release |
 | none | none | `BRANCH_TALLY_INSTALL_API_URL` | Where "latest" is looked up, `https://` or `file://` only, default `https://api.github.com`. Printed as `Using release API: <url>` when set. The same trust as the mirror variable. The tests point it at a `file://` fake API |
 | none | none | `GH_TOKEN`, else `GITHUB_TOKEN` | Sent as a bearer token to the "latest" lookup only, to avoid rate limits. Never printed and never on a command line: curl reads it from a private header file, GNU wget 1.17+ from a private `--config` file, and any other wget (BusyBox) goes unauthenticated with a notice |
 
@@ -395,13 +395,18 @@ Core's tests use throwaway keys and signatures in
 
 `BRANCH_TALLY_INSTALL_BASE_URL` (the installers' mirror variable) is honoured, but only for
 `https://` and `file://`; any other scheme, plain `http://` included, is a one-line error before a
-network call. Downloads and the extracted binary are capped at 256 MiB, and exceeding the cap is an
-error, never a truncated install. The new binary is staged beside the old one with an exclusive
-create (a planted symlink is not followed), flushed to disk, given the old binary's permission bits
-(`0o755` if unreadable) and renamed into place. On Windows the running exe is first renamed to
-`branch-tally.exe.old`; the next update that actually installs removes it, and says so if it cannot
-(for example because it is still running). If moving the new binary in and restoring the old one
-both fail, the error states that the binary now lives at `<path>.old` and to rename it back.
+network call. When the value is not the default release location, `update` prints the source on
+stderr (control characters neutralised) and always asks for interactive confirmation, even with
+`--yes`; without a terminal it refuses and names the variable. The default location keeps `--yes`.
+The binary's downloads and its GitHub API call use an `https_only` agent, so a redirect to plain
+http fails (`file://` bases are read from disk). Downloads and the extracted binary are capped at
+256 MiB, and exceeding the cap is an error, never a truncated install. The new binary is staged
+beside the old one with an exclusive create (a planted symlink is not followed), flushed to disk,
+given the old binary's permission bits (`0o755` if unreadable) and renamed into place. On Windows
+the running exe is first renamed to `branch-tally.exe.old`; the next update that actually installs
+removes it, and says so if it cannot (for example because it is still running). If moving the new
+binary in and restoring the old one both fail, the error states that the binary now lives at
+`<path>.old` and to rename it back.
 
 ### Proving an install works
 
