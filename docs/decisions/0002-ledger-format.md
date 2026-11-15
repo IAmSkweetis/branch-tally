@@ -37,8 +37,8 @@ The ledger is **append-only JSON Lines** at `.tally/ledger.jsonl`.
   prefix back. A worktree outside the main checkout is stored without a name, and counted. Each
   line also carries `recorded_at`, the time it was written. Never message content, never `cwd`,
   and never a path or anything that encodes one.
-- **Redaction.** Every ledger write passes through a redaction step. Until #9 lands it is the
-  identity; #9 supplies the policy.
+- **Redaction.** Every ledger write passes through a redaction step. The policy is
+  [0005](0005-ledger-redaction.md) (#67): a keyed hash of ids under a per-repository salt.
 
 ## Why JSONL
 
