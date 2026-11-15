@@ -138,6 +138,25 @@ fn is_plain_file(meta: &Metadata) -> bool {
 }
 
 /// Whether a name is a single plain component.
+/// 32 bytes from the operating system's CSPRNG.
+pub(super) fn random_bytes() -> std::io::Result<[u8; 32]> {
+    use ring::rand::SecureRandom;
+    let mut bytes = [0_u8; 32];
+    ring::rand::SystemRandom::new()
+        .fill(&mut bytes)
+        .map_err(|_| std::io::Error::other("the system random number generator failed"))?;
+    Ok(bytes)
+}
+
+/// Lowercase hex.
+pub(super) fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    bytes.iter().fold(String::new(), |mut out, b| {
+        let _ = write!(out, "{b:02x}");
+        out
+    })
+}
+
 fn is_plain_name(name: &str) -> bool {
     !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\', '\0', ':'])
 }
@@ -343,6 +362,124 @@ impl TallyDir {
         Ok(Some(bytes))
     }
 
+    /// Creates `name` exclusively with `bytes`. `Ok(true)` when this call created it, `Ok(false)`
+    /// when it already existed (nothing is written). Never follows a link.
+    ///
+    /// # Errors
+    /// [`LedgerError::Refused`] when `name` is not a single plain component;
+    /// [`LedgerError::Write`] when it cannot be created.
+    pub fn create_new(&self, name: &str, bytes: &[u8]) -> Result<bool, LedgerError> {
+        let path = self.file_path(name);
+        if !is_plain_name(name) {
+            return Err(refused(&path, "the name is not a single plain component"));
+        }
+        let write_err = |source| LedgerError::Write {
+            path: path.clone(),
+            source,
+        };
+        match self.open_creating(name, &|dir, n| dir.open_new(n), &std::thread::sleep) {
+            Ok(mut file) => {
+                file.write_all(bytes).map_err(write_err)?;
+                Ok(true)
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+            Err(e) => Err(write_err(e)),
+        }
+    }
+
+    /// Creates `name` for writing, failing when anything (a link included) is already there.
+    fn open_new(&self, name: &str) -> std::io::Result<File> {
+        #[cfg(unix)]
+        {
+            use rustix::fs::{Mode, OFlags};
+            let flags = OFlags::WRONLY
+                | OFlags::CREATE
+                | OFlags::EXCL
+                | OFlags::NOFOLLOW
+                | OFlags::CLOEXEC
+                | OFlags::NONBLOCK;
+            let fd = rustix::fs::openat(&*self.handle, name, flags, Mode::from_raw_mode(0o666))?;
+            Ok(File::from(fd))
+        }
+        #[cfg(windows)]
+        {
+            use std::fs::OpenOptions;
+            use std::os::windows::fs::OpenOptionsExt;
+            OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .custom_flags(0x0020_0000)
+                .open(self.file_path(name))
+        }
+    }
+
+    /// Renames `from` over `to`, both in this directory.
+    fn rename(&self, from: &str, to: &str) -> std::io::Result<()> {
+        #[cfg(unix)]
+        {
+            Ok(rustix::fs::renameat(
+                &*self.handle,
+                from,
+                &*self.handle,
+                to,
+            )?)
+        }
+        #[cfg(windows)]
+        {
+            std::fs::rename(self.file_path(from), self.file_path(to))
+        }
+    }
+
+    /// Removes `name`, ignoring failure: used only to clean up a temporary file.
+    fn remove_quietly(&self, name: &str) {
+        #[cfg(unix)]
+        {
+            let _ = rustix::fs::unlinkat(&*self.handle, name, rustix::fs::AtFlags::empty());
+        }
+        #[cfg(windows)]
+        {
+            let _ = std::fs::remove_file(self.file_path(name));
+        }
+    }
+
+    /// Replaces the regular file `name` with `bytes` through a temporary file in the same
+    /// directory: exclusive create under a random name, write, then rename over `name`. On any
+    /// failure the temporary file is removed and `name` is untouched.
+    ///
+    /// # Errors
+    /// [`LedgerError::Refused`] when `name` is a link or not a regular file;
+    /// [`LedgerError::Write`] when the write or rename fails.
+    pub fn replace(&self, name: &str, bytes: &[u8]) -> Result<(), LedgerError> {
+        let path = self.file_path(name);
+        if !is_plain_name(name) {
+            return Err(refused(&path, "the name is not a single plain component"));
+        }
+        let write_err = |source| LedgerError::Write {
+            path: path.clone(),
+            source,
+        };
+        match self.probe(name) {
+            Ok(Some(true) | None) => {}
+            Ok(Some(false)) => return Err(refused(&path, "it is not a regular file")),
+            Err(source) => return Err(write_err(source)),
+        }
+        let random = random_bytes().map_err(write_err)?;
+        let temp = format!("{name}.{}.tmp", hex(&random[..8]));
+        let mut file = self
+            .open_creating(&temp, &|dir, n| dir.open_new(n), &std::thread::sleep)
+            .map_err(write_err)?;
+        let written = file
+            .write_all(bytes)
+            .and_then(|()| file.sync_all())
+            .and_then(|()| self.rename(&temp, name));
+        if let Err(source) = written {
+            drop(file);
+            self.remove_quietly(&temp);
+            return Err(write_err(source));
+        }
+        Ok(())
+    }
+
     /// Appends `bytes` to `name`, creating it when missing.
     ///
     /// # Errors
@@ -460,6 +597,74 @@ mod tests {
         tally.append("f.jsonl", b"a\n").unwrap();
         tally.append("f.jsonl", b"b\n").unwrap();
         assert_eq!(tally.read("f.jsonl").unwrap().unwrap(), b"a\nb\n");
+    }
+
+    #[test]
+    fn create_new_creates_once_and_never_overwrites() {
+        let dir = checkout();
+        let tally = with_tally(dir.path());
+        assert!(tally.create_new("s", b"first").unwrap());
+        assert!(!tally.create_new("s", b"second").unwrap());
+        assert_eq!(tally.read("s").unwrap().unwrap(), b"first");
+        assert!(matches!(
+            tally.create_new("../s", b"x").unwrap_err(),
+            LedgerError::Refused { .. }
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_new_does_not_follow_a_symlink() {
+        let dir = checkout();
+        let tally = with_tally(dir.path());
+        let victim = dir.path().join("victim");
+        std::fs::write(&victim, b"precious").unwrap();
+        std::os::unix::fs::symlink(&victim, tally.file_path("s")).unwrap();
+        assert!(!tally.create_new("s", b"evil").unwrap());
+        assert_eq!(std::fs::read(&victim).unwrap(), b"precious");
+    }
+
+    #[test]
+    fn replace_swaps_the_file_through_a_temp_and_leaves_no_temp() {
+        let dir = checkout();
+        let tally = with_tally(dir.path());
+        tally.append("f", b"old\n").unwrap();
+        tally.replace("f", b"new\n").unwrap();
+        assert_eq!(tally.read("f").unwrap().unwrap(), b"new\n");
+        let names: Vec<_> = std::fs::read_dir(tally.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names.len(), 1, "{names:?}");
+    }
+
+    #[test]
+    fn replace_refuses_a_directory_and_a_missing_file_is_created() {
+        let dir = checkout();
+        let tally = with_tally(dir.path());
+        std::fs::create_dir(tally.file_path("d")).unwrap();
+        assert!(matches!(
+            tally.replace("d", b"x").unwrap_err(),
+            LedgerError::Refused { .. }
+        ));
+        tally.replace("m", b"x").unwrap();
+        assert_eq!(tally.read("m").unwrap().unwrap(), b"x");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replace_refuses_a_symlink_and_the_victim_is_untouched() {
+        let dir = checkout();
+        let tally = with_tally(dir.path());
+        let victim = dir.path().join("victim");
+        std::fs::write(&victim, b"precious").unwrap();
+        std::os::unix::fs::symlink(&victim, tally.file_path("f")).unwrap();
+        assert!(matches!(
+            tally.replace("f", b"evil").unwrap_err(),
+            LedgerError::Refused { .. }
+        ));
+        assert_eq!(std::fs::read(&victim).unwrap(), b"precious");
+        assert_eq!(std::fs::read_dir(tally.path()).unwrap().count(), 1);
     }
 
     #[test]
