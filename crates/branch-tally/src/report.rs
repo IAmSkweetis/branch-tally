@@ -138,6 +138,7 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), Failure> {
             cost: args.cost_flag(),
             redact: args.redact_flag(),
             redact_names: args.redact_names_flag(),
+            ..Flags::default()
         },
         args.work_branch.as_ref(),
     )?;
@@ -244,6 +245,7 @@ pub(crate) fn record(args: &RecordArgs) -> Result<(), String> {
             cost: None,
             redact: None,
             redact_names: None,
+            ..Flags::default()
         },
         args.work_branch.as_ref(),
     )?;
