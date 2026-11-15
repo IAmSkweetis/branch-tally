@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use branch_tally_core::config::{self, Flags, Format};
 use branch_tally_core::git::{Git, SystemGit, normalize_path};
 use branch_tally_core::ledger::{
-    CAPTURES_PATH, CaptureReadStats, Identity, KeyedRedact, LedgerTarget, Redact, Salt,
-    SystemClock, TallyDir,
+    CAPTURES_PATH, CaptureReadStats, Identity, KeyedRedact, LedgerError, LedgerTarget, Redact,
+    Salt, SystemClock, TallyDir,
 };
 use branch_tally_core::model::Mode;
 use branch_tally_core::pr::{PrError, PrOutcome, SystemGh, update_pr};
@@ -254,14 +254,19 @@ pub(crate) fn record(args: &RecordArgs) -> Result<(), String> {
         args.work_branch.as_ref(),
     )?;
     let matches = |branch: &str| args.work_branch.as_ref().is_some_and(|p| p.matches(branch));
-    // With redaction on, the salt lives in the main checkout's `.tally/`. No `.tally/` means the
-    // repository has not opted in: nothing is written, so nothing needs hashing.
+    // With redaction on there is always a keyed redactor: never `Identity`. The salt lives in the
+    // `.tally/` the ledger goes into. With no `.tally/` for the default ledger nothing is written,
+    // so a throwaway in-memory salt stands in and nothing is created anywhere.
     let keyed = if settings.ledger_redact.value {
-        match keyed_redactor(&cwd, settings.ledger_redact_names.value)? {
-            Some(keyed) => Some(keyed),
+        let names = settings.ledger_redact_names.value;
+        Some(match keyed_redactor(&cwd, args.ledger.is_some(), names)? {
+            Some(keyed) => keyed,
             None if args.ledger.is_some() => return Err(NO_SALT_HOME.to_owned()),
-            None => None,
-        }
+            None => KeyedRedact::new(
+                Salt::generate().map_err(|_| "cannot generate a salt".to_owned())?,
+                names,
+            ),
+        })
     } else {
         None
     };
@@ -310,14 +315,46 @@ pub(crate) fn record(args: &RecordArgs) -> Result<(), String> {
 const NO_SALT_HOME: &str = "ledger redaction needs a .tally/ directory in the main checkout to \
      hold its salt: create it, or pass --no-ledger-redact";
 
-/// The keyed redactor from the main checkout's salt, created if missing. `None` when the main
-/// checkout has no `.tally/` (the repository has not opted in): nothing is created.
-fn keyed_redactor(cwd: &Path, names: bool) -> Result<Option<KeyedRedact>, String> {
+/// Fixed text for `ledger redact --ledger` with no `.tally/` to hold the salt.
+const NO_SALT_HOME_REDACT: &str = "ledger redact needs a .tally/ directory in the main checkout to \
+     hold its salt: create it first";
+
+/// Fixed text for a ledger that changed under a rewrite.
+const CHANGED_DURING_REWRITE: &str =
+    "the ledger changed while it was being rewritten; nothing was replaced, run it again";
+
+/// True when both paths name one checkout.
+fn same_checkout(a: &Path, b: &Path) -> bool {
+    a == b
+        || matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
+}
+
+/// The keyed redactor for the `.tally/` the ledger goes into: the git top level for the default
+/// ledger, the main checkout for an explicit `--ledger`. Its salt is that `.tally/`'s own, copied
+/// from the main checkout's when missing, else created. `None` when that `.tally/` does not exist
+/// (the repository has not opted in): nothing is created anywhere.
+fn keyed_redactor(cwd: &Path, explicit: bool, names: bool) -> Result<Option<KeyedRedact>, String> {
     let main = SystemGit.main_checkout(cwd);
-    let Some(tally) = TallyDir::open(&main).map_err(|e| e.to_string())? else {
+    let root = if explicit {
+        main.clone()
+    } else {
+        SystemGit.toplevel(cwd).map_err(|e| {
+            format!(
+                "cannot place the default ledger: {} is not inside a git checkout ({e}); \
+                 pass --ledger <path>",
+                cwd.display()
+            )
+        })?
+    };
+    let Some(target) = TallyDir::open(&root).map_err(|e| e.to_string())? else {
         return Ok(None);
     };
-    let salt = Salt::load_or_create(&tally).map_err(|e| e.to_string())?;
+    let main_tally = if same_checkout(&root, &main) {
+        None
+    } else {
+        TallyDir::open(&main).map_err(|e| e.to_string())?
+    };
+    let salt = Salt::resolve(&target, main_tally.as_ref()).map_err(|e| e.to_string())?;
     Ok(Some(KeyedRedact::new(salt, names)))
 }
 
@@ -332,9 +369,10 @@ pub(crate) fn ledger_redact(args: &LedgerRedactArgs) -> Result<(), String> {
         },
         None,
     )?;
-    let Some(keyed) = keyed_redactor(&cwd, settings.ledger_redact_names.value)? else {
+    let names = settings.ledger_redact_names.value;
+    let Some(keyed) = keyed_redactor(&cwd, args.ledger.is_some(), names)? else {
         if args.ledger.is_some() {
-            return Err(NO_SALT_HOME.to_owned());
+            return Err(NO_SALT_HOME_REDACT.to_owned());
         }
         stdout("no .tally/ directory: nothing redacted (create it to opt in)\n");
         return Ok(());
@@ -351,15 +389,30 @@ pub(crate) fn ledger_redact(args: &LedgerRedactArgs) -> Result<(), String> {
         })?;
         branch_tally_core::ledger::redact_ledger_default(&top, &keyed)
     }
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| match e {
+        LedgerError::ChangedDuringRewrite { .. } => CHANGED_DURING_REWRITE.to_owned(),
+        other => other.to_string(),
+    })?;
     if outcome.tally_absent {
         stdout("no .tally/ directory: nothing redacted (create it to opt in)\n");
         return Ok(());
     }
     stdout(&format!(
-        "redacted {} line(s), {} already redacted, {} unparseable left as-is\n",
-        outcome.rewritten, outcome.already_redacted, outcome.unparseable
+        "redacted {} line(s), {} restamped, {} already redacted, {} unparseable left as-is\n",
+        outcome.rewritten, outcome.restamped, outcome.already_redacted, outcome.unparseable
     ));
+    if outcome.unparseable > 0 {
+        stderr(&format!(
+            "note: {} unparseable line(s) were left as-is and may still hold raw ids",
+            outcome.unparseable
+        ));
+    }
+    if names && outcome.already_redacted > 0 {
+        stderr(
+            "note: lines already redacted without names are not re-hashed; the names opt-in \
+             cannot be backfilled onto stamped lines",
+        );
+    }
     Ok(())
 }
 
