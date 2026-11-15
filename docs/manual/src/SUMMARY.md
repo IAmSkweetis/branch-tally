@@ -10,6 +10,7 @@
 - [Integration](integration/README.md)
   - [Claude Code](integration/claude-code.md)
 - [Persisting the Ledger](ledger.md)
+  - [Ledger Redaction](ledger-redaction.md)
   - [Project Cost Over Time](project.md)
 - [Hook captures](captures.md)
 - [CLI reference](cli.md)

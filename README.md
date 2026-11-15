@@ -8,7 +8,10 @@ calls to a record in a ledger. Persisting the ledger is opt-in: `branch-tally re
 in a repository that has a `.tally/` directory, or to a file named with `--ledger`.
 
 The ledger only stores relevant metadata from the transcript. Prompts and messages are never
-stored.
+stored. By default `record` hashes the session, agent and request ids it writes, under a salt
+committed with the ledger, while branch names, models and timestamps stay readable. The manual's
+[Ledger Redaction](https://branch-tally.io/ledger-redaction.html) page lists exactly which fields a
+committed ledger makes public, and what the hashing does not hide.
 
 ## Why build branch-tally?
 
