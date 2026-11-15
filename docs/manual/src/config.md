@@ -43,7 +43,7 @@ The file is TOML. Every key is optional.
 | `cost` | boolean | `true` | `--cost`, `--no-cost` | Show estimated costs in `report`: the cost column in Markdown, the cost keys in JSON. See [Output formats](cli.md#output-formats). |
 | `redact` | boolean | `false` | `--redact`, `--no-redact` | Hide identifiers in the report. See [Redaction](cli.md#redaction). |
 | `redact-names` | boolean | `true` | `--redact-names`, `--keep-names` | With `redact = true`, replace agent and skill names with generic labels (`true`) or keep the real names (`false`). No effect when `redact` is off. |
-| `ledger-redact` | boolean | `true` | `--ledger-redact`, `--no-ledger-redact` (on `record`) | Hash the request, session and agent ids and the worktree names that `record` writes to the ledger, with the salt in `.tally/salt`. `false` writes them raw. See [Ledger Redaction](ledger-redaction.md). |
+| `ledger-redact` | boolean | `true` | `--ledger-redact`, `--no-ledger-redact` (on `record`) | Hash the request, session and agent ids, the worktree names and the ids in `worktree-agent-<id>` branch names that `record` writes to the ledger, with the salt in `.tally/salt`. `false` writes them raw. See [Ledger Redaction](ledger-redaction.md). |
 | `ledger-redact-names` | boolean | `false` | `--ledger-redact-names`, `--no-ledger-redact-names` (on `record` and `ledger redact`) | With `ledger-redact = true`, also hash agent and skill names. No effect when `ledger-redact` is off, except on `ledger redact`, which always hashes. |
 
 An example that reports in timeline mode, counts only `feat/` and `fix/` branches as work, and
@@ -95,9 +95,9 @@ branch-tally config show --config ./team.toml
 ```
 
 Prints the path consulted, `found: yes` or `found: no`, and one `key = value (source)` line for
-each of `mode`, `work-branch`, `format`, `cost`, `redact` and `redact-names`. The source is
-`config file` or `default`. It does not list `ledger-redact` or `ledger-redact-names`. With a config
-file that sets `mode`, `work-branch` and `redact`:
+each of `mode`, `work-branch`, `format`, `cost`, `redact`, `redact-names`, `ledger-redact` and
+`ledger-redact-names`. The source is
+`config file` or `default`. With a config file that sets `mode`, `work-branch` and `redact`:
 
 ```text
 config file: /home/you/.config/branch-tally/config.toml
@@ -108,6 +108,8 @@ format = md (default)
 cost = true (default)
 redact = true (config file)
 redact-names = true (default)
+ledger-redact = true (default)
+ledger-redact-names = false (default)
 ```
 
 ## `config init`
@@ -148,18 +150,15 @@ redact = false
 # names (false).
 redact-names = true
 
-# `record` redacts identifiers in the ledger it writes (session ids, branch names, paths): true or
-# false. Turning it off writes them in the clear.
+# `record` hashes request, session and agent ids, subagent ids and worktree names, plus
+# worktree-agent-<id> branch names, in the committed ledger, under a per-repository salt: true or
+# false. Other branch names stay readable and the ledger never holds paths. Off writes ids in the
+# clear.
 ledger-redact = true
 
 # With ledger-redact = true: also hash agent and skill names (true), or keep them readable (false).
 ledger-redact-names = false
 ```
-
-The comment above `ledger-redact` overstates it. Branch names are not hashed, and the ledger never
-holds a path in either setting. What it does hash is the request, session and agent ids and the
-worktree names; see
-[What a committed ledger makes public](ledger-redaction.md#what-a-committed-ledger-makes-public).
 
 The values are written out, not left implicit. If a later release changes a built-in default, a
 file made by `config init` keeps the old value until you edit it.

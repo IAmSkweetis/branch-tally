@@ -56,7 +56,7 @@ sent to GitHub.
 
 Reports do show session ids, agent and skill names, worktree names and timestamps. `--redact` hides
 those identifiers in the output (see the [CLI reference](cli.md#redaction)). It is off by default.
-The ledger `record` writes hashes session, agent and request ids by default, but keeps branch
+The ledger `record` writes hashes session, agent and request ids by default, but keeps most branch
 names, models and timestamps readable; [Ledger Redaction](ledger-redaction.md) lists exactly what
 a committed ledger makes public. The only network calls
 branch-tally makes are `prices update`, which downloads a public price list, `update`, which asks
