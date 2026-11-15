@@ -18,6 +18,8 @@ mod prices;
 mod project;
 mod pyrepr;
 mod report;
+#[cfg(test)]
+mod tls_test;
 mod update;
 
 fn main() -> ExitCode {

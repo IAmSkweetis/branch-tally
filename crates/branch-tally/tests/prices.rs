@@ -1,6 +1,7 @@
 //! End-to-end tests for the price table: lookup order, the `prices` subcommand and the unpriced
-//! warning. No test reaches the real network: `prices update` talks to a loopback server through
-//! the test-only `BRANCH_TALLY_PRICES_URL` variable.
+//! warning. No test reaches the real network. `BRANCH_TALLY_PRICES_URL` accepts `https://` only
+//! (#98), so these tests prove a plain-http value is refused without a connection. The fetch
+//! success and failure paths run over loopback TLS in the unit tests in `src/prices.rs`.
 
 #![expect(
     clippy::unwrap_used,
@@ -15,9 +16,7 @@ mod common;
 
 use common::{World, stderr, stdout};
 use std::fs;
-use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::thread::JoinHandle;
 
 /// A table that prices every `priced-models` model at one dollar per million tokens, dated in
 /// the future so no other table can be mistaken for it.
@@ -44,14 +43,6 @@ output = 1.0
 const CACHE: &str =
     "as_of = \"2029-05-06\"\n\n[models.\"claude-mystery-9\"]\ninput = 2.0\noutput = 2.0\n";
 
-const FEED: &str = r#"{
-  "sample_spec": {"litellm_provider": "x"},
-  "claude-test-1": {"litellm_provider": "anthropic", "mode": "chat",
-    "input_cost_per_token": 3e-6, "output_cost_per_token": 15e-6,
-    "cache_read_input_token_cost": 3e-7, "cache_creation_input_token_cost": 3.75e-6},
-  "claude-broken-1": {"litellm_provider": "anthropic", "mode": "chat"}
-}"#;
-
 impl World {
     /// Where `prices update` writes the cache file in this world.
     fn cache_file(&self) -> std::path::PathBuf {
@@ -65,7 +56,7 @@ impl World {
         fs::write(dir.join("prices.toml"), text).unwrap();
     }
 
-    /// Runs `args` with the price feed pointed at `url` (the test-only `BRANCH_TALLY_PRICES_URL`).
+    /// Runs `args` with the price feed pointed at `url` (`BRANCH_TALLY_PRICES_URL`).
     fn run_with_feed(&self, url: &str, args: &[&str]) -> std::process::Output {
         self.command(&self.repo, args)
             .env("BRANCH_TALLY_PRICES_URL", url)
@@ -82,43 +73,6 @@ fn json(world: &World, extra: &[&str]) -> serde_json::Value {
     let mut payload: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
     world.normalize(&mut payload);
     payload
-}
-
-/// Serves `status` and `body` to one request on a loopback port; returns the URL and the thread.
-fn serve_once(status: &str, body: &str) -> (String, JoinHandle<()>) {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let url = format!("http://{}/prices.json", listener.local_addr().unwrap());
-    let response = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    );
-    let handle = std::thread::spawn(move || {
-        // Poll rather than block, so a client that never connects fails its own assertions
-        // instead of hanging the suite.
-        listener.set_nonblocking(true).unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-        let mut stream = loop {
-            match listener.accept() {
-                Ok((stream, _)) => break stream,
-                Err(_) if std::time::Instant::now() < deadline => {
-                    std::thread::sleep(std::time::Duration::from_millis(20));
-                }
-                Err(_) => return,
-            }
-        };
-        stream.set_nonblocking(false).unwrap();
-        let mut seen = Vec::new();
-        let mut buf = [0u8; 1024];
-        while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
-            let n = stream.read(&mut buf).unwrap();
-            if n == 0 {
-                break;
-            }
-            seen.extend_from_slice(&buf[..n]);
-        }
-        stream.write_all(response.as_bytes()).unwrap();
-    });
-    (url, handle)
 }
 
 #[test]
@@ -222,62 +176,86 @@ fn unpriced_models_are_named_in_a_stderr_warning_with_the_table_date() {
     assert_eq!(err.lines().count(), 1, "{err}");
 }
 
-#[test]
-fn prices_update_writes_the_dated_cache_from_the_feed() {
-    let world = World::scenario("priced-models");
-    let (url, server) = serve_once("200 OK", FEED);
-    let out = world.run_with_feed(&url, &["prices", "update"]);
-    server.join().unwrap();
-    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
-    let text = fs::read_to_string(world.cache_file()).unwrap();
-    assert!(!text.contains('\r'));
-    assert!(text.contains("[models.\"claude-test-1\"]"), "{text}");
-    assert!(!text.contains("claude-broken-1"));
-    let said = stdout(&out);
-    assert!(
-        said.contains(&world.cache_file().display().to_string()),
-        "{said}"
-    );
-    assert!(said.contains("models: 1\n"), "{said}");
-    assert!(said.contains("skipped"), "{said}");
-    assert!(said.contains("claude-broken-1"), "{said}");
-
-    // The cache now wins over the bundled table in reports.
-    let got = json(&world, &[]);
-    assert_eq!(got["priceTable"]["source"], "cache");
-    let as_of = got["priceTable"]["asOf"].as_str().unwrap();
-    assert!(
-        as_of.len() == 10 && as_of.chars().filter(|c| *c == '-').count() == 2,
-        "{as_of}"
-    );
+/// A loopback listener standing in for a plain-http feed; `contacted` is true if anything
+/// connected to it.
+struct Bait {
+    listener: TcpListener,
+    url: String,
 }
 
-#[test]
-fn a_failing_feed_exits_1_and_leaves_an_existing_cache_untouched() {
-    let world = World::scenario("priced-models");
-    fs::create_dir_all(world.cache_file().parent().unwrap()).unwrap();
-    fs::write(world.cache_file(), CACHE).unwrap();
-    for (status, body) in [
-        ("500 Internal Server Error", "boom"),
-        ("200 OK", "not json"),
-    ] {
-        let (url, server) = serve_once(status, body);
-        let out = world.run_with_feed(&url, &["prices", "update"]);
-        server.join().unwrap();
-        assert_eq!(out.status.code(), Some(1), "{status}");
-        assert_eq!(stdout(&out), "");
-        assert!(!stderr(&out).contains("boom"));
-        assert_eq!(fs::read_to_string(world.cache_file()).unwrap(), CACHE);
+impl Bait {
+    fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}/prices.json", listener.local_addr().unwrap());
+        Self { listener, url }
+    }
+
+    fn contacted(&self) -> bool {
+        self.listener.accept().is_ok()
     }
 }
 
 #[test]
-fn an_unreachable_feed_exits_1_without_creating_a_cache() {
+fn an_http_feed_url_is_refused_without_a_fetch_or_a_cache_write() {
+    let world = World::scenario("priced-models");
+    let bait = Bait::start();
+    let out = world.run_with_feed(&bait.url, &["prices", "update"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+    let err = stderr(&out);
+    assert!(err.contains("BRANCH_TALLY_PRICES_URL"), "{err}");
+    assert!(err.contains("https://"), "{err}");
+    assert_eq!(err.lines().count(), 1, "{err}");
+    assert!(!bait.contacted(), "the loopback server was contacted");
+    assert!(!world.cache_file().exists());
+}
+
+#[test]
+fn a_refused_feed_url_leaves_an_existing_cache_untouched() {
+    let world = World::scenario("priced-models");
+    fs::create_dir_all(world.cache_file().parent().unwrap()).unwrap();
+    fs::write(world.cache_file(), CACHE).unwrap();
+    let bait = Bait::start();
+    let out = world.run_with_feed(&bait.url, &["prices", "update"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(!bait.contacted());
+    assert_eq!(fs::read_to_string(world.cache_file()).unwrap(), CACHE);
+}
+
+#[test]
+fn every_non_https_scheme_is_refused_and_a_control_char_value_is_not_echoed_raw() {
+    let world = World::empty();
+    for url in [
+        "ftp://example.invalid/p.json",
+        "file:///etc/hostname",
+        "example.invalid/p.json",
+        "HTTP://127.0.0.1:9/p.json",
+        "http://x/\u{1b}[2Jspoof\u{202e}",
+    ] {
+        let out = world.run_with_feed(url, &["prices", "update"]);
+        assert_eq!(out.status.code(), Some(1), "{url:?}");
+        let err = stderr(&out);
+        assert!(err.contains("BRANCH_TALLY_PRICES_URL"), "{err}");
+        assert!(
+            !err.contains('\u{1b}') && !err.contains('\u{202e}'),
+            "{err:?}"
+        );
+        assert_eq!(err.lines().count(), 1, "{err:?}");
+        assert!(!world.cache_file().exists());
+    }
+}
+
+#[test]
+fn an_https_feed_that_cannot_be_reached_exits_1_without_creating_a_cache() {
     let world = World::empty();
     // Bind then drop, so the port is closed.
     let url = {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
-        format!("http://{}/prices.json", l.local_addr().unwrap())
+        format!(
+            "https://localhost:{}/prices.json",
+            l.local_addr().unwrap().port()
+        )
     };
     let out = world.run_with_feed(&url, &["prices", "update"]);
     assert_eq!(out.status.code(), Some(1));

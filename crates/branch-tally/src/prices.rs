@@ -22,8 +22,10 @@ use crate::cli::{PricesCommand, ShowArgs};
 const FEED_URL: &str =
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 
-/// Test-only: replaces [`FEED_URL`] so end-to-end tests can point `prices update` at a loopback
-/// server. Not documented for users and not a supported interface.
+/// Replaces [`FEED_URL`], for a mirror or a proxy. The value must be an `https://` URL: anything
+/// else is refused before any connection (#98), and the download agent is `https_only`, so a
+/// redirect to plain http fails too. There is no way to trust another CA from here: tests that
+/// need a local server run it over TLS in this module's unit tests.
 const FEED_URL_ENV: &str = "BRANCH_TALLY_PRICES_URL";
 
 /// The largest feed accepted. The real file is a few MB; this only stops a runaway response.
@@ -142,13 +144,31 @@ pub(crate) fn run(command: &PricesCommand) -> Result<String, String> {
             let cache = cache_path().ok_or(
                 "Could not determine the cache directory (set LOCALAPPDATA, XDG_CACHE_HOME or HOME)",
             )?;
-            let url = std::env::var(FEED_URL_ENV).unwrap_or_else(|_| FEED_URL.to_owned());
+            let url = match std::env::var(FEED_URL_ENV) {
+                Ok(url) => check_feed_url(&url, Some(FEED_URL_ENV))?,
+                Err(_) => FEED_URL.to_owned(),
+            };
             let as_of = today_utc(SystemTime::now());
-            let outcome = update(&HttpFeed { url }, &as_of, &cache)?;
+            let outcome = update(&HttpFeed::new(url), &as_of, &cache)?;
             Ok(outcome.describe(&cache))
         }
         PricesCommand::Show(args) => show(args),
     }
+}
+
+/// Accepts `url` only when it starts with `https://` (case-insensitive scheme). `var` names the
+/// environment variable it came from. The value is never echoed: it is user-controlled text.
+fn check_feed_url(url: &str, var: Option<&str>) -> Result<String, String> {
+    let https = url
+        .get(.."https://".len())
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https://"));
+    if https {
+        return Ok(url.to_owned());
+    }
+    let source = var.map_or_else(|| "the price feed URL".to_owned(), str::to_owned);
+    Err(format!(
+        "{source} must be an https:// URL; refusing to fetch prices over any other scheme"
+    ))
 }
 
 fn show(args: &ShowArgs) -> Result<String, String> {
@@ -246,17 +266,35 @@ fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// HTTP implementation of the core's [`PriceFeed`] seam.
 struct HttpFeed {
     url: String,
+    agent: ureq::Agent,
+}
+
+impl HttpFeed {
+    fn new(url: String) -> Self {
+        let agent = ureq::Agent::config_builder()
+            .timeout_connect(Some(Duration::from_secs(10)))
+            .timeout_global(Some(Duration::from_secs(60)))
+            .https_only(true)
+            .build()
+            .into();
+        Self { url, agent }
+    }
+
+    /// Test-only: an agent that trusts the loopback fixture CA, still https-only.
+    #[cfg(test)]
+    fn with_fixture_ca(url: String) -> Self {
+        Self {
+            url,
+            agent: crate::tls_test::fixture_agent(),
+        }
+    }
 }
 
 impl PriceFeed for HttpFeed {
     fn fetch(&self) -> Result<String, FeedError> {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .timeout_connect(Some(Duration::from_secs(10)))
-            .timeout_global(Some(Duration::from_secs(60)))
-            .build()
-            .into();
         let unavailable = |why: String| FeedError::Unavailable(why);
-        let mut response = agent
+        let mut response = self
+            .agent
             .get(&self.url)
             .header(
                 "User-Agent",
@@ -397,6 +435,108 @@ mod tests {
                 .filter(|c| *c != '\n')
                 .any(branch_tally_core::text::is_unsafe_control),
             "{text:?}"
+        );
+    }
+
+    // --- the feed over loopback TLS (these replace the old plain-http e2e tests, #98) ---
+
+    use crate::tls_test::serve_tls_once;
+
+    const FEED: &str = r#"{
+      "sample_spec": {"litellm_provider": "x"},
+      "claude-test-1": {"litellm_provider": "anthropic", "mode": "chat",
+        "input_cost_per_token": 3e-6, "output_cost_per_token": 15e-6,
+        "cache_read_input_token_cost": 3e-7, "cache_creation_input_token_cost": 3.75e-6},
+      "claude-broken-1": {"litellm_provider": "anthropic", "mode": "chat"}
+    }"#;
+
+    #[test]
+    fn a_tls_feed_writes_the_dated_cache_and_reports_what_it_skipped() {
+        let server = serve_tls_once("200 OK", "Content-Type: application/json\r\n", FEED);
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("branch-tally").join("prices.toml");
+        let done = update(
+            &HttpFeed::with_fixture_ca(server.url.clone()),
+            "2030-04-05",
+            &cache,
+        )
+        .unwrap();
+        assert!(server.finish());
+        let text = std::fs::read_to_string(&cache).unwrap();
+        assert!(!text.contains('\r'));
+        assert!(text.contains("[models.\"claude-test-1\"]"), "{text}");
+        assert!(!text.contains("claude-broken-1"));
+        let said = done.describe(&cache);
+        assert!(said.contains(&cache.display().to_string()), "{said}");
+        assert!(said.contains("models: 1\n"), "{said}");
+        assert!(said.contains("skipped"), "{said}");
+        assert!(said.contains("claude-broken-1"), "{said}");
+    }
+
+    #[test]
+    fn a_failing_tls_feed_leaves_an_existing_cache_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("prices.toml");
+        std::fs::write(&cache, "keep").unwrap();
+        for (status, body) in [
+            ("500 Internal Server Error", "boom"),
+            ("200 OK", "not json"),
+        ] {
+            let server = serve_tls_once(status, "", body);
+            let err = update(
+                &HttpFeed::with_fixture_ca(server.url.clone()),
+                "2030-04-05",
+                &cache,
+            )
+            .unwrap_err();
+            assert!(server.finish());
+            assert!(!err.contains("boom"), "{err}");
+            assert_eq!(std::fs::read_to_string(&cache).unwrap(), "keep", "{status}");
+        }
+    }
+
+    #[test]
+    fn a_redirect_from_the_tls_feed_to_plain_http_is_refused() {
+        let bait = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        bait.set_nonblocking(true).unwrap();
+        let target = format!("http://{}/prices.json", bait.local_addr().unwrap());
+        let server = serve_tls_once("302 Found", &format!("Location: {target}\r\n"), "");
+        let err = HttpFeed::with_fixture_ca(server.url.clone())
+            .fetch()
+            .unwrap_err();
+        assert!(matches!(err, FeedError::Unavailable(_)), "{err:?}");
+        assert!(server.finish());
+        assert!(bait.accept().is_err(), "the http target was contacted");
+    }
+
+    #[test]
+    fn the_shipped_feed_agent_does_not_trust_the_fixture_ca() {
+        let server = serve_tls_once("200 OK", "", "{}");
+        assert!(HttpFeed::new(server.url.clone()).fetch().is_err());
+        let _ = server.finish();
+    }
+
+    #[test]
+    fn only_https_urls_pass_the_scheme_check() {
+        assert!(check_feed_url("https://mirror.example/p.json", None).is_ok());
+        assert!(check_feed_url("HTTPS://mirror.example/p.json", None).is_ok());
+        for bad in [
+            "http://m/p.json",
+            "ftp://m",
+            "file:///x",
+            "m/p.json",
+            "",
+            "htp://m",
+        ] {
+            let err = check_feed_url(bad, Some(FEED_URL_ENV)).unwrap_err();
+            assert!(err.contains(FEED_URL_ENV), "{err}");
+            assert!(err.contains("https://"), "{err}");
+            assert!(!err.contains(bad) || bad.is_empty(), "{err}");
+        }
+        assert!(
+            !check_feed_url("\u{1b}[2J", Some("X"))
+                .unwrap_err()
+                .contains('\u{1b}')
         );
     }
 }
