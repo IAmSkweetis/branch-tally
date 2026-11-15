@@ -38,8 +38,8 @@ The file is TOML. Every key is optional.
 | --- | ---- | ------- | ----- | ------- |
 | `mode` | string: `"claim"`, `"strict"` or `"timeline"` | `"claim"` | `--mode`, `--strict`, `--timeline` | How calls are assigned to branches. See [Attribution modes](cli.md#attribution-modes). |
 | `work-branch` | string (a regex) | not set | `--work-branch` | In timeline mode, which branches count as work branches. Not set means every branch except the default branch and `worktree-agent-*`. Ignored in the other modes. |
-| `format` | string: `"md"` or `"json"` | `"md"` | `--format`, `--md`, `--json` | Output format of `report` and `project`. |
-| `cost` | boolean | `true` | `--cost`, `--no-cost` | Show the estimated-cost column in Markdown output. |
+| `format` | string: `"md"` or `"json"` | `"md"` | `--format`, `--md`, `--json` | Output format of `report` and `project`. `report --pr` always writes Markdown: `"json"` here gives way to `--pr`, with a note on stderr. |
+| `cost` | boolean | `true` | `--cost`, `--no-cost` | Show estimated costs in `report`: the cost column in Markdown, the cost keys in JSON. See [Output formats](cli.md#output-formats). |
 | `redact` | boolean | `false` | `--redact`, `--no-redact` | Hide identifiers in the report. See [Redaction](cli.md#redaction). |
 | `redact-names` | boolean | `true` | `--redact-names`, `--keep-names` | With `redact = true`, replace agent and skill names with generic labels (`true`) or keep the real names (`false`). No effect when `redact` is off. |
 
@@ -128,7 +128,7 @@ mode = "claim"
 # Output format: "md" or "json".
 format = "md"
 
-# Show the estimated-cost column: true or false.
+# Show estimated costs (the Markdown cost column and the JSON cost keys): true or false.
 cost = true
 
 # Redact identifiers in the report: session ids become s1, s2, ... and timestamps become dates.

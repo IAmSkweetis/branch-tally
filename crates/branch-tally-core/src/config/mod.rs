@@ -269,7 +269,7 @@ mode = \"claim\"
 # Output format: \"md\" or \"json\".
 format = \"md\"
 
-# Show the estimated-cost column: true or false.
+# Show estimated costs (the Markdown cost column and the JSON cost keys): true or false.
 cost = true
 
 # Redact identifiers in the report: session ids become s1, s2, ... and timestamps become dates.

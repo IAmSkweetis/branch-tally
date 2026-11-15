@@ -357,13 +357,104 @@ fn no_cost_drops_the_cost_column_in_markdown() {
 }
 
 #[test]
-fn no_cost_does_not_change_json() {
+fn no_cost_drops_every_cost_key_from_json() {
     let world = World::scenario("subagent");
-    let plain = world.run(&["report", "feat/x", "--json"]).stdout;
-    let no_cost = world
-        .run(&["report", "feat/x", "--json", "--no-cost"])
-        .stdout;
-    assert_eq!(plain, no_cost);
+    let out = world.run(&["report", "feat/x", "--json", "--no-cost"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let text = stdout(&out);
+    for key in [
+        "totalCostUSD",
+        "totalCostIsFloor",
+        "unpricedModels",
+        "priceTable",
+        "costUSD",
+        "costIsFloor",
+    ] {
+        assert!(!text.contains(key), "{key} must be absent:\n{text}");
+    }
+    let plain = stdout(&world.run(&["report", "feat/x", "--json"]));
+    assert!(plain.contains("totalCostUSD"));
+}
+
+#[test]
+fn config_cost_false_drops_json_cost_keys_and_cost_flag_restores_them() {
+    let world = World::scenario("subagent");
+    world.write_default_config("cost = false\n");
+    let off = stdout(&world.run(&["report", "feat/x", "--json"]));
+    assert!(!off.contains("totalCostUSD"), "{off}");
+    let on = world.run(&["report", "feat/x", "--json", "--cost"]);
+    assert_eq!(on.status.code(), Some(0), "{}", stderr(&on));
+    assert!(stdout(&on).contains("totalCostUSD"));
+}
+
+fn assert_usage_error(args: &[&str]) {
+    let world = World::empty();
+    let out = world.run(args);
+    assert_eq!(out.status.code(), Some(2), "{args:?}: {}", stderr(&out));
+    assert_eq!(out.stdout, Vec::<u8>::new(), "{args:?}");
+    assert!(stderr(&out).contains("error:"), "{args:?}");
+}
+
+#[test]
+fn json_with_pr_is_a_usage_error() {
+    assert_usage_error(&["report", "--json", "--pr"]);
+    assert_usage_error(&["report", "--format", "json", "--pr"]);
+    assert_usage_error(&["report", "--json", "--pr", "5"]);
+}
+
+#[test]
+fn ledger_without_from_ledger_is_a_usage_error() {
+    assert_usage_error(&["report", "--ledger", "x.jsonl"]);
+}
+
+#[test]
+fn dry_run_without_pr_is_a_usage_error() {
+    assert_usage_error(&["report", "--dry-run"]);
+}
+
+const OVERRIDE_NOTE: &str = "note: config format = \"json\" was overridden by --pr";
+
+#[test]
+fn config_json_yields_to_pr_with_a_stderr_note() {
+    let world = World::scenario("subagent");
+    world.write_default_config("format = \"json\"\n");
+    // No gh on PATH: the run fails at gh, but only after the note, and nothing JSON is printed.
+    let empty = tempfile::tempdir().expect("tempdir");
+    let mut cmd = world.command(&world.repo, &["report", "feat/x", "--pr", "5", "--dry-run"]);
+    cmd.env("PATH", empty.path());
+    let out = cmd.output().expect("run");
+    let err = stderr(&out);
+    assert!(err.contains(OVERRIDE_NOTE), "{err}");
+    // The run got past the note to the PR step and failed there: a runtime error (1), never a
+    // usage error (2), and the error is the missing gh rather than some earlier failure.
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    assert!(err.contains("could not run `gh`"), "{err}");
+    assert!(stdout(&out).is_empty(), "{}", stdout(&out));
+}
+
+#[cfg(unix)]
+#[test]
+fn config_json_with_pr_dry_run_prints_the_markdown_body() {
+    use std::os::unix::fs::PermissionsExt;
+    let world = World::scenario("subagent");
+    world.write_default_config("format = \"json\"\n");
+    let bin = tempfile::tempdir().expect("tempdir");
+    let gh = bin.path().join("gh");
+    fs::write(&gh, "#!/bin/sh\necho '{\"body\":\"\"}'\n").expect("write gh");
+    fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).expect("chmod");
+    let path = format!(
+        "{}:{}",
+        bin.path().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let mut cmd = world.command(&world.repo, &["report", "feat/x", "--pr", "5", "--dry-run"]);
+    cmd.env("PATH", path);
+    let out = cmd.output().expect("run");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let body = stdout(&out);
+    assert!(body.contains("Est. cost"), "{body}");
+    assert!(!body.trim_start().starts_with('{'));
+    assert!(stderr(&out).contains(OVERRIDE_NOTE));
 }
 
 #[test]

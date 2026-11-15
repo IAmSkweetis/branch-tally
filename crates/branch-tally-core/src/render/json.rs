@@ -10,8 +10,8 @@ use std::cmp::Reverse;
 use std::fmt::Write as _;
 
 use crate::model::{
-    Costs, HeuristicBreakdown, PriceTableSource, RowCost, SubagentSummary, Summary, Unstamped,
-    WorkBranchRule,
+    Bucket, Costs, HeuristicBreakdown, PriceTableSource, RowCost, SubagentSummary, Summary,
+    Unstamped, WorkBranchRule,
 };
 
 /// Python `json.dumps` string escaping with `ensure_ascii=True`.
@@ -193,7 +193,7 @@ fn unstamped(u: &Unstamped, o: &mut String) {
 /// reports without dispatched subagents keep the reference's shape. Totals come from the
 /// accessors and count rolled-up records only; `unattributed*` span every attributed record, not
 /// only this branch's; `unlinkedInTotal*` are the unlinked calls inside this report's total.
-fn subagents(sub: &SubagentSummary, costs: &Costs, o: &mut String) {
+fn subagents(sub: &SubagentSummary, costs: &Costs, cost: bool, o: &mut String) {
     if sub.is_empty() {
         return;
     }
@@ -219,9 +219,11 @@ fn subagents(sub: &SubagentSummary, costs: &Costs, o: &mut String) {
         "    \"unlinkedInTotalTokens\": {},",
         sub.unlinked_in_total_tokens
     );
-    let (cost, floor) = row_cost(Some(&costs.subagent_total));
-    let _ = writeln!(o, "    \"costUSD\": {cost},");
-    let _ = writeln!(o, "    \"costIsFloor\": {floor},");
+    if cost {
+        let (cost, floor) = row_cost(Some(&costs.subagent_total));
+        let _ = writeln!(o, "    \"costUSD\": {cost},");
+        let _ = writeln!(o, "    \"costIsFloor\": {floor},");
+    }
     if sub.rows.is_empty() {
         o.push_str("    \"rows\": []\n");
     } else {
@@ -265,11 +267,15 @@ fn subagents(sub: &SubagentSummary, costs: &Costs, o: &mut String) {
                 } else {
                     v.to_string()
                 };
-                let _ = writeln!(o, "        \"{key}\": {v},");
+                // The last key of the row, so it carries no comma when the cost keys are off.
+                let comma = if cost || key != "thinking" { "," } else { "" };
+                let _ = writeln!(o, "        \"{key}\": {v}{comma}");
             }
-            let (cost, floor) = row_cost(costs.subagent_row(i));
-            let _ = writeln!(o, "        \"costUSD\": {cost},");
-            let _ = writeln!(o, "        \"costIsFloor\": {floor}");
+            if cost {
+                let (cost, floor) = row_cost(costs.subagent_row(i));
+                let _ = writeln!(o, "        \"costUSD\": {cost},");
+                let _ = writeln!(o, "        \"costIsFloor\": {floor}");
+            }
             o.push_str(if i + 1 == sub.rows.len() {
                 "      }\n"
             } else {
@@ -281,13 +287,50 @@ fn subagents(sub: &SubagentSummary, costs: &Costs, o: &mut String) {
     o.push_str("  },\n");
 }
 
+/// The `models` object, last in the report: per-model token counts, and `costUSD` when `cost`.
+fn models_object(models: &[&(String, Bucket)], costs: &Costs, cost: bool, o: &mut String) {
+    if models.is_empty() {
+        o.push_str("  \"models\": {}\n");
+    } else {
+        o.push_str("  \"models\": {\n");
+        for (i, (model, b)) in models.iter().enumerate() {
+            let _ = writeln!(o, "    {}: {{", string(model));
+            let _ = writeln!(o, "      \"calls\": {},", b.calls);
+            let _ = writeln!(o, "      \"input\": {},", b.input);
+            let _ = writeln!(o, "      \"cacheWrite5m\": {},", b.cache_write_5m);
+            let _ = writeln!(o, "      \"cacheWrite1h\": {},", b.cache_write_1h);
+            let _ = writeln!(o, "      \"cacheRead\": {},", b.cache_read);
+            let _ = writeln!(o, "      \"output\": {},", b.output);
+            if cost {
+                let _ = writeln!(o, "      \"thinking\": {},", b.thinking);
+                let model_cost = costs.cost_for(model).map_or("null".to_owned(), float);
+                let _ = writeln!(o, "      \"costUSD\": {model_cost}");
+            } else {
+                let _ = writeln!(o, "      \"thinking\": {}", b.thinking);
+            }
+            o.push_str(if i + 1 == models.len() {
+                "    }\n"
+            } else {
+                "    },\n"
+            });
+        }
+        o.push_str("  }\n");
+    }
+}
+
 /// The report as JSON (`as_json` in the reference).
 ///
 /// `totalCalls` is `Summary::total.calls` (the reference's `len(mine)`, the same number as the
 /// sum of per-model calls) and `totalCostUSD` is `Costs::total`. Sessions are sorted by `first`
 /// and models by descending output, both stably.
+///
+/// With `cost` false (`--no-cost`, or `cost = false` in the config) every cost-derived key is
+/// omitted, the same way [`markdown`](super::markdown) drops its cost column: `totalCostUSD`,
+/// `totalCostIsFloor`, `unpricedModels`, `priceTable`, and every `costUSD` and `costIsFloor`
+/// (per model, in `subagents` and in each subagent row). Everything else is unchanged and the
+/// output is still valid JSON. With `cost` true the output is byte-identical to the reference's.
 #[must_use]
-pub fn json(summary: &Summary, costs: &Costs) -> String {
+pub fn json(summary: &Summary, costs: &Costs, cost: bool) -> String {
     let mut sessions: Vec<_> = summary.sessions.iter().collect();
     sessions.sort_by(|a, b| a.1.first.cmp(&b.1.first));
     let mut models: Vec<_> = summary.by_model.iter().collect();
@@ -302,21 +345,26 @@ pub fn json(summary: &Summary, costs: &Costs) -> String {
         o.push_str("  \"redacted\": true,\n");
     }
     let _ = writeln!(o, "  \"totalCalls\": {},", summary.total.calls);
-    let _ = writeln!(o, "  \"totalCostUSD\": {},", float(costs.total));
-    // Not in the reference (#5): a partial total is flagged, and the table that priced it named.
     let heur = &summary.footnote.heuristics;
-    let _ = writeln!(
-        o,
-        "  \"totalCostIsFloor\": {},",
-        costs.is_floor() || heur.any_ambiguous() || summary.footnote.totals_overflowed
-    );
+    if cost {
+        let _ = writeln!(o, "  \"totalCostUSD\": {},", float(costs.total));
+        // Not in the reference (#5): a partial total is flagged, and the table that priced it
+        // named.
+        let _ = writeln!(
+            o,
+            "  \"totalCostIsFloor\": {},",
+            costs.is_floor() || heur.any_ambiguous() || summary.footnote.totals_overflowed
+        );
+    }
     // Not in the reference (#96): present only when a total saturated, so plain reports keep its
     // shape. The totals are then a floor and unreliable.
     if summary.footnote.totals_overflowed {
         o.push_str("  \"totalsOverflowed\": true,\n");
     }
     let unpriced: Vec<_> = costs.by_model.iter().filter(|(_, c)| c.is_none()).collect();
-    if unpriced.is_empty() {
+    if !cost {
+        // No cost was asked for, so nothing about pricing is reported either.
+    } else if unpriced.is_empty() {
         o.push_str("  \"unpricedModels\": [],\n");
     } else {
         o.push_str("  \"unpricedModels\": [\n");
@@ -327,12 +375,14 @@ pub fn json(summary: &Summary, costs: &Costs) -> String {
         }
         o.push_str("  ],\n");
     }
-    price_table(costs, &mut o);
+    if cost {
+        price_table(costs, &mut o);
+    }
 
     heuristics(heur, &mut o);
     work_branch(summary.work_branch.as_ref(), &mut o);
     unstamped(&summary.unstamped, &mut o);
-    subagents(&summary.subagents, costs, &mut o);
+    subagents(&summary.subagents, costs, cost, &mut o);
 
     if sessions.is_empty() {
         o.push_str("  \"sessions\": [],\n");
@@ -366,29 +416,7 @@ pub fn json(summary: &Summary, costs: &Costs) -> String {
         o.push_str("  ],\n");
     }
 
-    if models.is_empty() {
-        o.push_str("  \"models\": {}\n");
-    } else {
-        o.push_str("  \"models\": {\n");
-        for (i, (model, b)) in models.iter().enumerate() {
-            let _ = writeln!(o, "    {}: {{", string(model));
-            let _ = writeln!(o, "      \"calls\": {},", b.calls);
-            let _ = writeln!(o, "      \"input\": {},", b.input);
-            let _ = writeln!(o, "      \"cacheWrite5m\": {},", b.cache_write_5m);
-            let _ = writeln!(o, "      \"cacheWrite1h\": {},", b.cache_write_1h);
-            let _ = writeln!(o, "      \"cacheRead\": {},", b.cache_read);
-            let _ = writeln!(o, "      \"output\": {},", b.output);
-            let _ = writeln!(o, "      \"thinking\": {},", b.thinking);
-            let cost = costs.cost_for(model).map_or("null".to_owned(), float);
-            let _ = writeln!(o, "      \"costUSD\": {cost}");
-            o.push_str(if i + 1 == models.len() {
-                "    }\n"
-            } else {
-                "    },\n"
-            });
-        }
-        o.push_str("  }\n");
-    }
+    models_object(&models, costs, cost, &mut o);
     o.push('}');
     o
 }

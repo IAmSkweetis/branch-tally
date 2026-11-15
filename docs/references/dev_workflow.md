@@ -503,7 +503,10 @@ The default is every branch except the repository's default branch and `worktree
 
 The same choices are `--mode claim|strict|timeline` and `--format md|json`; `--strict`,
 `--timeline`, `--md` and `--json` stay as shorthands, and a shorthand cannot be combined with its
-long form, even when they agree (exit 2). `--cost` pairs with `--no-cost`, `--redact` with
+long form, even when they agree (exit 2). On `report`, `--pr` excludes `--json` and `--format json`
+(exit 2; a config `format = "json"` yields to `--pr` with a stderr note), `--dry-run` needs `--pr`
+and `--ledger` needs `--from-ledger` (exit 2). `--cost` pairs with `--no-cost` (which drops the
+cost column in Markdown and every cost key in JSON), `--redact` with
 `--no-redact` and `--keep-names` with `--redact-names` (#9; the manual's
 [CLI reference](../manual/src/cli.md#redaction) describes them). `--work-branch` is a usage error
 unless the *effective* mode is timeline, whether that came from `--mode timeline`, `--timeline` or a
