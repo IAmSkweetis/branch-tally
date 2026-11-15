@@ -181,8 +181,11 @@ expected behaviour directly, next to the same issue number. `malformed-and-keyle
   `distinctSalts`; `liveMatch` as `no-salt`, `salt-unreadable`, `fingerprint-mismatch` or
   `partially-matched`; each absent when not a cause), and absent otherwise, so goldens are
   unchanged. Markdown adds a "Total may count some calls twice" statement after the floor
-  statements. It is an overcount, not a floor, so it never says "at least". The project report has
-  no such path. Tests: `tests/render_double_count.rs`.
+  statements. It is an overcount, not a floor, so it never says "at least". The `redact` advice
+  appears only when unredacted lines exist; a salts-only mix says the lines were hashed under
+  different salts. The project report (`ProjectReport.double_count`) prints the same statement
+  above its table, the same `doubleCount` JSON object, and a short SVG footer line. Tests:
+  `tests/render_double_count.rs`.
 - Output divergence #6 (subagent rollup): when `Summary.subagents` is not empty, the JSON report has
   a top-level `subagents` object (`calls`, `tokens`, `dispatched`, `workspaces`, `worktrees`,
   `unattributedCalls`, `unattributedTokens`, `unlinkedInTotalCalls`, `unlinkedInTotalTokens`,

@@ -190,8 +190,9 @@ fn unstamped(u: &Unstamped, o: &mut String) {
 }
 
 /// The `doubleCount` object (#67): present only when the total may count some calls twice, so
-/// plain reports keep their shape. An overcount, not a floor. Counts and enum names only.
-fn double_count(risk: Option<&DoubleCountRisk>, o: &mut String) {
+/// plain reports keep their shape. A pure data mirror of the model: counts and enum names only.
+/// An overcount, not a floor.
+pub(super) fn double_count(risk: Option<&DoubleCountRisk>, o: &mut String) {
     let Some(risk) = risk else {
         return;
     };

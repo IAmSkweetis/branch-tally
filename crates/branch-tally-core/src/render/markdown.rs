@@ -186,23 +186,31 @@ fn overflow_statement(overflowed: bool, o: &mut Vec<String>) {
     o.push(String::new());
 }
 
-/// When the total may count some calls twice (decision 0005, "Mixing is counted and noted"), say
-/// so and why. This is an overcount, not a floor, so it never says "at least". Counts only: no
-/// ids, paths, salts or fingerprints. Pushes nothing when there is no risk.
-fn double_count_statement(risk: Option<&DoubleCountRisk>, o: &mut Vec<String>) {
-    let Some(risk) = risk else {
-        return;
-    };
+/// The statement that a total may count some calls twice (decision 0005, "Mixing is counted and
+/// noted"), shared by the summary and project reports. An overcount, not a floor, so it never
+/// says "at least". Counts are ledger-wide, so they are phrased as what the ledger holds. Counts
+/// only: no ids, paths, salts or fingerprints.
+pub(super) fn double_count_text(risk: &DoubleCountRisk) -> String {
     let mut causes: Vec<String> = Vec::new();
     if let Some(m) = &risk.mixed_ledger {
-        causes.push(format!(
-            "the ledger mixes {} unredacted and {} redacted line(s) under {} salt(s), so a call \
-             recorded in both forms is counted twice; run `branch-tally ledger redact` to \
-             collapse them",
-            n(m.unredacted_lines),
-            n(m.redacted_lines),
-            n(m.distinct_salts),
-        ));
+        if m.unredacted_lines > 0 {
+            causes.push(format!(
+                "the ledger holds {} unredacted and {} redacted line(s) under {} salt(s), so a \
+                 call recorded in both forms is counted twice; run `branch-tally ledger redact` \
+                 to collapse them",
+                n(m.unredacted_lines),
+                n(m.redacted_lines),
+                n(m.distinct_salts),
+            ));
+        } else {
+            causes.push(format!(
+                "the ledger holds {} redacted line(s) hashed under {} different salts (for \
+                 example, two machines each created one), so a call recorded under each is \
+                 counted twice",
+                n(m.redacted_lines),
+                n(m.distinct_salts),
+            ));
+        }
     }
     if let Some(f) = &risk.live_match {
         let why = match f {
@@ -220,11 +228,18 @@ fn double_count_statement(risk: Option<&DoubleCountRisk>, o: &mut Vec<String>) {
              may be counted twice"
         ));
     }
-    o.push(format!(
+    format!(
         "**Total may count some calls twice**: {}. This is an overcount, not a floor.",
         causes.join("; ")
-    ));
-    o.push(String::new());
+    )
+}
+
+/// Pushes the statement and a blank line when there is a risk; nothing otherwise.
+fn double_count_statement(risk: Option<&DoubleCountRisk>, o: &mut Vec<String>) {
+    if let Some(risk) = risk {
+        o.push(double_count_text(risk));
+        o.push(String::new());
+    }
 }
 
 /// The bold footnote statements, in order: floor, overflow, double-count risk.
