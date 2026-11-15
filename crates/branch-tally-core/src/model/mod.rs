@@ -25,8 +25,8 @@ pub use costs::{Costs, PriceTableInfo, PriceTableSource, RowCost};
 pub use project::{BranchRow, ProjectReport, ProjectTotals, SeriesPoint, SharedOverlap};
 pub use subagent::{Dispatch, SubagentRow, SubagentSummary, SubagentTags, Workspace};
 pub use summary::{
-    Bucket, DefaultBranchSource, Footnote, HeuristicBreakdown, HeuristicCount, Mode, SessionRow,
-    Summary, Unstamped, WorkBranchRule,
+    Bucket, DefaultBranchSource, DoubleCountRisk, Footnote, HeuristicBreakdown, HeuristicCount,
+    LiveMatchFailure, MixedLedger, Mode, SessionRow, Summary, Unstamped, WorkBranchRule,
 };
 pub use timestamp::{InvalidTimestamp, Timestamp};
 
