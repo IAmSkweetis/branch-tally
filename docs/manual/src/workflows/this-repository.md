@@ -166,7 +166,7 @@ so the pull request opens with its table already in the body. That skill:
    just token-record                    # branch-tally record
    git add .tally/ledger.jsonl          # and .tally/captures.jsonl, if it changed
    git commit -m "chore: record token usage for this branch"
-   just token-report --from-ledger > <tmp>/report.md   # branch-tally report --from-ledger
+   just token-report --from-ledger --md > <tmp>/report.md   # branch-tally report --from-ledger --md
    ```
 
    `<tmp>` is a directory outside the repository. Both recipes run the **installed release
@@ -266,7 +266,7 @@ sequenceDiagram
     O->>BT: just token-record
     BT->>O: append to .tally/ledger.jsonl
     O->>O: commit .tally/
-    O->>BT: just token-report --from-ledger
+    O->>BT: just token-report --from-ledger --md
     BT->>O: table between the markers
     O->>O: splice the table into the PR body
     O->>GH: git push feature branch

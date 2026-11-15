@@ -75,7 +75,7 @@ PR: `record` attributes by branch, and `report --from-ledger` reads the ledger.
 just token-record                    # runs the installed `branch-tally record`
 git add .tally/ledger.jsonl          # and .tally/captures.jsonl too, if it exists
 git commit -m "chore: record token usage for this branch"
-just token-report --from-ledger > <tmp>/report.md   # the table, bracketed by the token-report markers
+just token-report --from-ledger --md > <tmp>/report.md   # the table, bracketed by the token-report markers
 ```
 
 Only add the `.tally/` files that changed. If `record` changed nothing, skip the commit. The commit

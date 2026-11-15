@@ -31,10 +31,10 @@ class SpliceError(Exception):
 def _region(text: str, what: str) -> tuple[int, int]:
     """Line indexes (start, end) of the first start line and the first end line after it."""
     lines = text.splitlines()
-    start = next((i for i, ln in enumerate(lines) if ln.strip() == START), None)
+    start = next((i for i, ln in enumerate(lines) if ln.rstrip() == START), None)
     if start is None:
         raise SpliceError(f"{what} has no {START} line")
-    end = next((i for i in range(start + 1, len(lines)) if lines[i].strip() == END), None)
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].rstrip() == END), None)
     if end is None:
         raise SpliceError(f"{what} has no {END} line after the start marker")
     return start, end

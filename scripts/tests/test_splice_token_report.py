@@ -43,6 +43,20 @@ class SpliceTests(unittest.TestCase):
         self.assertTrue(out.startswith(f"text {START} inline\n"))
         self.assertIn("| `x` |", out)
 
+    def test_indented_marker_example_is_not_a_marker(self) -> None:
+        # Matches `report --pr`: trailing whitespace is allowed, leading indentation is not.
+        example = f"    {START}\n    example\n    {END}\n\n"
+        out = sp.splice(example + BODY, REPORT)
+        self.assertTrue(out.startswith(example))
+        self.assertIn("| `x` |", out)
+        self.assertNotIn("_Not yet recorded._", out)
+
+    def test_trailing_whitespace_on_a_marker_is_allowed(self) -> None:
+        body = BODY.replace(f"{START}\n", f"{START}  \n")
+        out = sp.splice(body, REPORT)
+        self.assertIn("| `x` |", out)
+        self.assertNotIn("_Not yet recorded._", out)
+
     def test_crlf_body_is_handled(self) -> None:
         body = BODY.replace("\n", "\r\n")
         out = sp.splice(body, REPORT)
