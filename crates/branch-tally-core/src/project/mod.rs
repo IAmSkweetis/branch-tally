@@ -204,5 +204,6 @@ pub fn build(
         totals,
         series,
         undated_branches,
+        double_count: None,
     }
 }
