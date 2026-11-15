@@ -29,8 +29,8 @@ not write the feature itself. It:
 5. hands the merged branch to the user to try on real transcripts (dogfooding), and leaves every
    worktree in place until the pull request has merged.
 
-When the pull request is opened, the branch gains one more commit: the ledger lines that record
-what the branch cost (see [Publishing the report](#publishing-the-report)).
+Before the branch is first pushed, it gains one more commit: the ledger lines that record what
+the branch cost (see [Publishing the report](#publishing-the-report)).
 
 ```mermaid
 gitGraph
@@ -154,13 +154,27 @@ lists the heuristics used, with the calls and tokens each one assigned.
 ## Publishing the report
 
 When the work is merged into the feature branch and the full gate (`just ci`) is green, the user
-runs `/create-gh-pr`. That skill:
+runs `/create-gh-pr`. The skill records the branch's usage **before the branch is first pushed**,
+so the pull request opens with its table already in the body. That skill:
 
 1. checks the branch is not `main`, `gh` is signed in, the tree is clean apart from `.tally/`, and
-   `main` has not moved;
-2. pushes the feature branch (only the feature branch, never a subagent's);
-3. opens the pull request with `gh pr create`. The body starts from the PR template, whose last
-   section is:
+   `main` has not moved. It doesn't push yet;
+2. records the branch's usage, commits the ledger and renders the report from it, straight away,
+   while every worktree still exists:
+
+   ```sh
+   just token-record                    # branch-tally record
+   git add .tally/ledger.jsonl          # and .tally/captures.jsonl, if it changed
+   git commit -m "chore: record token usage for this branch"
+   just token-report --from-ledger > <tmp>/report.md   # branch-tally report --from-ledger
+   ```
+
+   `<tmp>` is a directory outside the repository. Both recipes run the **installed release
+   binary**, not a build of the branch under review, so the number comes from a published release.
+   When `record` appends nothing, the skill skips the commit. No pull request is needed yet:
+   `record` attributes by branch, and `report --from-ledger` prints the table to stdout between
+   the `token-report` markers;
+3. writes the PR body from the PR template, whose last section is:
 
    ```markdown
    ## Token usage
@@ -170,21 +184,28 @@ runs `/create-gh-pr`. That skill:
    <!-- token-report:end -->
    ```
 
-4. records the branch's usage, commits the ledger and publishes the report from it, straight away,
-   while every worktree still exists:
+   and, once the user confirms the title and body, replaces the placeholder with the table:
 
    ```sh
-   just token-record                    # branch-tally record
-   git add .tally/ledger.jsonl          # and .tally/captures.jsonl, if it changed
-   git commit -m "chore: record token usage for this branch"
-   git push
-   just token-report --pr --from-ledger # branch-tally report --pr --from-ledger
+   uv run scripts/splice_token_report.py <body-file> <tmp>/report.md
    ```
 
-   Both recipes run the **installed release binary**, not a build of the branch under review, so
-   the number comes from a published release. When `record` appends nothing, the skill skips the
-   commit and push. `report --pr --from-ledger` finds the branch's open PR and replaces the
-   placeholder between the markers with the table.
+   The script exits non-zero and leaves the body untouched when either file lacks the markers, as
+   it does when the ledger has no lines for the branch. The skill then leaves the placeholder in
+   place and reports why. Under the markers it adds one line, which a later `report --pr` leaves
+   alone:
+
+   ```markdown
+   _Recorded before review: usage from later rounds is not included, so this is a floor._
+   ```
+
+4. pushes the feature branch (only the feature branch, never a subagent's) and opens the pull
+   request with the finished body:
+
+   ```sh
+   git push -u origin <branch>
+   gh pr create --title "<title>" --body-file <body-file> --label "<kind>"
+   ```
 
 The skill reads the total as printed. It says "at least $X" when some calls could not be
 attributed with certainty or a model has no price. A report from the ledger also prints
@@ -195,6 +216,37 @@ total without the "at least" label, so an unlabelled number is not presented as 
 
 `record` must run on the machine that did the work, within Claude Code's transcript retention
 period, from sessions whose working directory was this repository.
+
+### Why the usage is recorded before the first push
+
+Every push to an open pull request starts its checks again, and the repository's ruleset, which
+requires one approving review, dismisses that approval on every push. Recording after the pull
+request is open would mean a push that holds only `.tally/` lines. That push re-runs every check
+for no change to the code, and it throws away an approval that a reviewer has no reason to give
+again: an automated reviewer can skip a commit that only touches `.tally/`, and then the approval
+never returns. Recording first means no push to a pull request is ever only token usage, whichever
+reviewer the repository uses.
+
+The cost is completeness. The table covers the branch up to the commit that recorded it, not the
+rounds that follow, which is why the body says the number is a floor.
+
+### Later rounds
+
+Review fixes, a merge of a moved `main`, or any other work after the pull request opens records
+that round's usage and commits it **with the round's work**, in the same push:
+
+```sh
+just token-record
+git add .tally/ledger.jsonl            # if record changed it
+git commit -m "chore: record token usage for this branch"
+git push                               # one push: the round's work and its ledger lines
+just token-report --pr --from-ledger   # optional: refresh the table in the PR body
+```
+
+`report --pr --from-ledger` finds the branch's open pull request and replaces what sits between
+the markers. That edits the body, not the branch, and an edit doesn't cancel the checks a push
+started: only the PR-title check runs on an edited pull request, in its own workflow. The last
+round's own usage is still missing from the table, so the floor line stays.
 
 ```mermaid
 sequenceDiagram
@@ -211,13 +263,15 @@ sequenceDiagram
     A-->>O: report: branch and commits
     O->>O: git merge --no-ff each branch, run tests
     User->>O: /create-gh-pr
-    O->>GH: git push feature branch
-    O->>GH: gh pr create (template with token-report markers)
     O->>BT: just token-record
     BT->>O: append to .tally/ledger.jsonl
-    O->>GH: commit .tally/, git push
-    O->>BT: just token-report --pr --from-ledger
-    BT->>GH: gh pr edit: table between the markers
+    O->>O: commit .tally/
+    O->>BT: just token-report --from-ledger
+    BT->>O: table between the markers
+    O->>O: splice the table into the PR body
+    O->>GH: git push feature branch
+    O->>GH: gh pr create (body has the table)
+    Note over O,GH: later rounds push work and ledger together
     User->>GH: squash merge
     User->>O: /worktree-cleanup
     O->>O: remove worktrees and branches
