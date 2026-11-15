@@ -176,6 +176,13 @@ expected behaviour directly, next to the same issue number. `malformed-and-keyle
   (`totalsOverflowed: true`, absent otherwise); Markdown adds the same statement and labels the
   total, the branch cost and the chart "at least", and the SVG footer says "totals overflowed,
   unreliable". `report` also sets the footnote flag when the unstamped count saturates.
+- Output divergence (#67, double count): when `footnote.double_count` is set the JSON report has a
+  top-level `doubleCount` object (`mixedLedger` of `unredactedLines`, `redactedLines`,
+  `distinctSalts`; `liveMatch` as `no-salt`, `salt-unreadable`, `fingerprint-mismatch` or
+  `partially-matched`; each absent when not a cause), and absent otherwise, so goldens are
+  unchanged. Markdown adds a "Total may count some calls twice" statement after the floor
+  statements. It is an overcount, not a floor, so it never says "at least". The project report has
+  no such path. Tests: `tests/render_double_count.rs`.
 - Output divergence #6 (subagent rollup): when `Summary.subagents` is not empty, the JSON report has
   a top-level `subagents` object (`calls`, `tokens`, `dispatched`, `workspaces`, `worktrees`,
   `unattributedCalls`, `unattributedTokens`, `unlinkedInTotalCalls`, `unlinkedInTotalTokens`,
