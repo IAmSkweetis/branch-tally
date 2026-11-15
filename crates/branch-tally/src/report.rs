@@ -526,8 +526,27 @@ fn note_ledger(ledger: &LedgerReport) {
         ));
     }
     note_ledger_stats(&ledger.ledger_stats);
+    if let Some(why) = live_unmatched_reason(ledger.live_redaction) {
+        stderr(&format!(
+            "note: live calls could not be matched against the redacted ledger lines ({why}); \
+             the total and the repository-wide counts may count a call twice"
+        ));
+    }
     if let Some(live) = &ledger.live_read_stats {
         note_skipped(live);
+    }
+}
+
+/// Fixed text for why live calls could not be matched to redacted ledger lines; `None` when they
+/// could, or there was nothing to match. Never carries a salt, fingerprint, path or id.
+fn live_unmatched_reason(m: branch_tally_core::report::LiveRedactionMatch) -> Option<&'static str> {
+    use branch_tally_core::report::LiveRedactionMatch as M;
+    match m {
+        M::NotNeeded | M::Matched => None,
+        M::NoSalt => Some("no salt in .tally/"),
+        M::SaltUnreadable => Some("the salt is unreadable"),
+        M::FingerprintMismatch => Some("the local salt matches none of the redacted lines"),
+        M::PartiallyMatched => Some("the local salt matches only some of the redacted lines"),
     }
 }
 

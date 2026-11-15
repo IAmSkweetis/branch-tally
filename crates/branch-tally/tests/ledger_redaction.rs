@@ -305,3 +305,56 @@ fn a_mixed_ledger_prints_the_note_for_report_and_project() {
         assert!(err.contains("branch-tally ledger redact"), "{err}");
     }
 }
+
+fn live_report(world: &World) -> std::process::Output {
+    let out = world.run(&["report", BRANCH, "--from-ledger", "--with-live"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    out
+}
+
+const NO_MATCH: &str = "could not be matched against the redacted ledger lines";
+
+#[test]
+fn live_matching_failures_are_noted_and_a_match_is_silent() {
+    let world = opted_in();
+    record(&world, &[]);
+    let quiet = live_report(&world);
+    assert!(!stderr(&quiet).contains(NO_MATCH), "{}", stderr(&quiet));
+
+    let salt = salt_of(&world);
+    let good = fs::read_to_string(&salt).unwrap();
+    let ledger = ledger_of(&world);
+    let original = fs::read_to_string(&ledger).unwrap();
+
+    let cases: [(&str, &str); 4] = [
+        ("none", "no salt in .tally/"),
+        ("garbage", "the salt is unreadable"),
+        ("other", "the local salt matches none of the redacted lines"),
+        (
+            "partial",
+            "the local salt matches only some of the redacted lines",
+        ),
+    ];
+    for (case, expected) in cases {
+        fs::write(&ledger, &original).unwrap();
+        match case {
+            "none" => fs::remove_file(&salt).unwrap(),
+            "garbage" => fs::write(&salt, "not a salt\n").unwrap(),
+            "other" => fs::write(&salt, "ab".repeat(32) + "\n").unwrap(),
+            _ => {
+                let first = lines(&ledger)[0]["redaction"].as_str().unwrap().to_owned();
+                fs::write(&ledger, original.replacen(&first, &"0".repeat(16), 1)).unwrap();
+            }
+        }
+        let out = live_report(&world);
+        let err = stderr(&out);
+        assert!(err.contains(NO_MATCH), "{case}: {err}");
+        assert!(err.contains(expected), "{case}: {err}");
+        assert!(err.contains("count a call twice"), "{case}: {err}");
+        assert!(!err.contains(&"ab".repeat(8)), "{case}: leaked salt text");
+        // Without --with-live nothing is unioned, so nothing is noted.
+        let ledger_only = world.run(&["report", BRANCH, "--from-ledger"]);
+        assert!(!stderr(&ledger_only).contains(NO_MATCH), "{case}");
+        fs::write(&salt, &good).unwrap();
+    }
+}
