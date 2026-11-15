@@ -1,7 +1,8 @@
 # Config reference
 
-A config file holds your standing defaults for `report`'s options, so you don't have to pass the
-same flags every time. It is optional: with no file, every setting has a built-in default.
+A config file holds your standing defaults for `report`'s and `record`'s options, so you don't have
+to pass the same flags every time. It is optional: with no file, every setting has a built-in
+default.
 
 ## Precedence
 
@@ -42,6 +43,8 @@ The file is TOML. Every key is optional.
 | `cost` | boolean | `true` | `--cost`, `--no-cost` | Show estimated costs in `report`: the cost column in Markdown, the cost keys in JSON. See [Output formats](cli.md#output-formats). |
 | `redact` | boolean | `false` | `--redact`, `--no-redact` | Hide identifiers in the report. See [Redaction](cli.md#redaction). |
 | `redact-names` | boolean | `true` | `--redact-names`, `--keep-names` | With `redact = true`, replace agent and skill names with generic labels (`true`) or keep the real names (`false`). No effect when `redact` is off. |
+| `ledger-redact` | boolean | `true` | `--ledger-redact`, `--no-ledger-redact` (on `record`) | Hash the request, session and agent ids and the worktree names that `record` writes to the ledger, with the salt in `.tally/salt`. `false` writes them raw. See [Ledger Redaction](ledger-redaction.md). |
+| `ledger-redact-names` | boolean | `false` | `--ledger-redact-names`, `--no-ledger-redact-names` (on `record` and `ledger redact`) | With `ledger-redact = true`, also hash agent and skill names. No effect when `ledger-redact` is off, except on `ledger redact`, which always hashes. |
 
 An example that reports in timeline mode, counts only `feat/` and `fix/` branches as work, and
 redacts by default:
@@ -52,8 +55,13 @@ work-branch = "^(feat|fix)/"
 redact = true
 ```
 
-`record` reads the same file but uses only `mode` and `work-branch`; the output settings don't
-apply to it. [`project`](project.md) also reads it and uses `mode` and `format`. As with
+`redact` and `redact-names` change only what a report prints. `ledger-redact` and
+`ledger-redact-names` change only what `record` writes to the ledger, and `report` ignores them.
+The two pairs are independent: by default the ledger is hashed and the report is not redacted.
+
+`record` reads the same file but uses only `mode`, `work-branch`, `ledger-redact` and
+`ledger-redact-names`; the output settings don't apply to it. `ledger redact` uses only
+`ledger-redact-names`. [`project`](project.md) also reads it and uses `mode` and `format`. As with
 `report --from-ledger`, `mode` there doesn't change any number, because the ledger already holds
 each call's branch; in `strict` mode the report leaves out the attribution heuristics. `project`
 ignores `cost`, `redact` and `redact-names`. A bad config file stops `project` just as it stops
@@ -71,7 +79,7 @@ there is one, the key. The message never quotes the file's content.
 | Problem | Message |
 | ------- | ------- |
 | Not valid TOML | `config file <path> is not valid TOML: …` |
-| Unknown key | ``config file <path>: unknown key `foo` (expected mode, work-branch, format, cost, redact, redact-names)`` |
+| Unknown key | ``config file <path>: unknown key `foo` (expected mode, work-branch, format, cost, redact, redact-names, ledger-redact, ledger-redact-names)`` |
 | Wrong value | ``config file <path>: key `format` must be "md" or "json"`` (and likewise for each key) |
 | `work-branch` is not a valid regex | ``config file <path>: key `work-branch` is not a valid regular expression`` |
 | `--config` file missing | `config file <path> does not exist` |
@@ -88,7 +96,8 @@ branch-tally config show --config ./team.toml
 
 Prints the path consulted, `found: yes` or `found: no`, and one `key = value (source)` line for
 each of `mode`, `work-branch`, `format`, `cost`, `redact` and `redact-names`. The source is
-`config file` or `default`. With a config file that sets `mode`, `work-branch` and `redact`:
+`config file` or `default`. It does not list `ledger-redact` or `ledger-redact-names`. With a config
+file that sets `mode`, `work-branch` and `redact`:
 
 ```text
 config file: /home/you/.config/branch-tally/config.toml
@@ -138,7 +147,19 @@ redact = false
 # With redact = true: replace agent and skill names with generic labels (true), or keep the real
 # names (false).
 redact-names = true
+
+# `record` redacts identifiers in the ledger it writes (session ids, branch names, paths): true or
+# false. Turning it off writes them in the clear.
+ledger-redact = true
+
+# With ledger-redact = true: also hash agent and skill names (true), or keep them readable (false).
+ledger-redact-names = false
 ```
+
+The comment above `ledger-redact` overstates it. Branch names are not hashed, and the ledger never
+holds a path in either setting. What it does hash is the request, session and agent ids and the
+worktree names; see
+[What a committed ledger makes public](ledger-redaction.md#what-a-committed-ledger-makes-public).
 
 The values are written out, not left implicit. If a later release changes a built-in default, a
 file made by `config init` keeps the old value until you edit it.

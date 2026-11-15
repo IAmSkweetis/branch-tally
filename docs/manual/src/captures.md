@@ -72,7 +72,8 @@ directory, `.` by default). `--ledger` does not move it.
 
 No message content, no working directory and no path of any kind. The hook resolves its working
 directory to a branch name with git, then stores only the branch. That makes the file safe to
-commit, but it does hold real session ids, agent ids and branch names, and `--redact` does not
+commit, but it does hold real session ids, agent ids and branch names. Unlike the ledger, it is
+not hashed: [ledger redaction](ledger-redaction.md) does not apply to it, and `--redact` does not
 change the file. `--redact` hides identifiers in [report output](cli.md#redaction) only.
 
 ### Committing it
