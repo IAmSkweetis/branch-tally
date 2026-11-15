@@ -249,12 +249,13 @@ impl KeyedRedact {
     }
 
     /// A requested branch name as the ledger would store it: `worktree-agent-<id>` becomes
-    /// `worktree-agent-<hash(id)>`, every other name is unchanged, and an id that is already a
-    /// hash is not hashed again.
+    /// `worktree-agent-<hash(id)>` and every other name is unchanged. It always hashes: whether a
+    /// stored line was already hashed is the line's `redaction` stamp's business, not the id's
+    /// shape.
     #[must_use]
     pub fn redact_branch(&self, branch: &str) -> String {
         match branch.strip_prefix(AGENT_BRANCH_PREFIX) {
-            Some(id) if !id.is_empty() && !is_hash(id) => {
+            Some(id) if !id.is_empty() => {
                 format!("{AGENT_BRANCH_PREFIX}{}", self.salt.hash(id))
             }
             _ => branch.to_owned(),
@@ -286,8 +287,24 @@ impl Redact for KeyedRedact {
             return entry;
         }
         let mut entry = entry;
-        entry.branch = self.redact_branch(&entry.branch);
-        entry.recorded_for = self.redact_branch(&entry.recorded_for);
+        let stamped = entry.redaction.is_some();
+        // A stamped line's branches are hashed only where they are visibly raw, so a repair
+        // never hashes a hash.
+        let branch = |b: &str| {
+            if !stamped || branch_is_raw(b) {
+                self.redact_branch(b)
+            } else {
+                b.to_owned()
+            }
+        };
+        entry.branch = branch(&entry.branch);
+        entry.recorded_for = branch(&entry.recorded_for);
+        if stamped && ids_hashed(&entry) {
+            // Written by an earlier build: ids hashed, only a branch was left raw. Repaired
+            // above; the ids must not be hashed again.
+            entry.redaction = Some(self.salt.fingerprint());
+            return entry;
+        }
         entry.request_id = self.salt.request_id(&entry.request_id);
         entry.session_id = self.salt.session_id(&entry.session_id);
         entry.agent_id = entry.agent_id.as_ref().map(|id| self.salt.agent_id(id));
@@ -314,12 +331,28 @@ fn is_hash(text: &str) -> bool {
 /// ids are hashes. A stamp over raw ids (a forgery or a bug) is not believed.
 fn is_hashed_line(entry: &LedgerEntry) -> bool {
     entry.redaction.is_some()
-        && is_hash(entry.request_id.as_str())
+        && ids_hashed(entry)
+        && !branch_is_raw(&entry.branch)
+        && !branch_is_raw(&entry.recorded_for)
+}
+
+/// Whether the request, session and agent ids are all hashes.
+fn ids_hashed(entry: &LedgerEntry) -> bool {
+    is_hash(entry.request_id.as_str())
         && is_hash(entry.session_id.as_str())
         && entry
             .agent_id
             .as_ref()
             .is_none_or(|id| is_hash(id.as_str()))
+}
+
+/// Whether a stored branch is visibly a raw agent branch: `worktree-agent-<x>` with `<x>` not a
+/// hash. The shape is only used to detect a raw value written by an earlier build; it is never a
+/// reason to skip hashing one.
+fn branch_is_raw(branch: &str) -> bool {
+    branch
+        .strip_prefix(AGENT_BRANCH_PREFIX)
+        .is_some_and(|id| !id.is_empty() && !is_hash(id))
 }
 
 /// What `ledger redact` did.
