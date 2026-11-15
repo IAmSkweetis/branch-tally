@@ -546,7 +546,6 @@ impl Confirmer for TerminalConfirmer {
         }
         ask(
             prompt,
-            self.mirror,
             self.interactive,
             &mut io::stdin().lock(),
             &mut io::stderr(),
@@ -555,24 +554,14 @@ impl Confirmer for TerminalConfirmer {
 }
 
 /// Ask `prompt` on `err` and read the answer from `input`. Without a terminal the answer is no,
-/// and the message says how to proceed.
-fn ask(
-    prompt: &str,
-    mirror: bool,
-    interactive: bool,
-    input: &mut dyn BufRead,
-    err: &mut dyn Write,
-) -> bool {
+/// and the message says how to proceed. A mirror with no terminal never gets here:
+/// [`TerminalConfirmer::confirm`] refuses it first, because `--yes` cannot apply to a mirror.
+fn ask(prompt: &str, interactive: bool, input: &mut dyn BufRead, err: &mut dyn Write) -> bool {
     if !interactive {
-        let hint = if mirror {
-            format!(
-                "{BASE_URL_ENV} is set to a non-default release source, which needs interactive \
-                 confirmation even with --yes; refusing without a terminal."
-            )
-        } else {
-            "Not a terminal, so no confirmation was possible; pass --yes to proceed.".to_owned()
-        };
-        let _ = writeln!(err, "{prompt} {hint}");
+        let _ = writeln!(
+            err,
+            "{prompt} Not a terminal, so no confirmation was possible; pass --yes to proceed."
+        );
         return false;
     }
     let _ = write!(err, "{prompt} [y/N] ");
@@ -1352,17 +1341,7 @@ mod tests {
     }
 
     #[test]
-    fn a_mirror_without_a_terminal_is_refused_naming_the_variable() {
-        let mut err = Vec::new();
-        let agreed = ask("Update?", true, false, &mut io::empty().take(0), &mut err);
-        assert!(!agreed);
-        let said = String::from_utf8(err).unwrap();
-        assert!(said.contains(BASE_URL_ENV), "{said}");
-        assert!(!said.contains("pass --yes"), "{said}");
-    }
-
-    #[test]
-    fn a_mirror_with_a_terminal_asks_and_accepts_only_yes() {
+    fn a_terminal_prompt_accepts_only_yes() {
         for (answer, expected) in [
             ("y\n", true),
             ("YES\n", true),
@@ -1370,22 +1349,16 @@ mod tests {
             ("\n", false),
         ] {
             let mut err = Vec::new();
-            let got = ask("Update?", true, true, &mut answer.as_bytes(), &mut err);
+            let got = ask("Update?", true, &mut answer.as_bytes(), &mut err);
             assert_eq!(got, expected, "{answer:?}");
             assert!(String::from_utf8(err).unwrap().contains("[y/N]"));
         }
     }
 
     #[test]
-    fn the_default_base_keeps_the_existing_no_terminal_message() {
+    fn no_terminal_declines_and_says_to_pass_yes() {
         let mut err = Vec::new();
-        assert!(!ask(
-            "Update?",
-            false,
-            false,
-            &mut io::empty().take(0),
-            &mut err
-        ));
+        assert!(!ask("Update?", false, &mut io::empty().take(0), &mut err));
         assert!(String::from_utf8(err).unwrap().contains("pass --yes"));
     }
 
