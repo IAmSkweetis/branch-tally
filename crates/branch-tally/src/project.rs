@@ -29,6 +29,7 @@ pub(crate) fn run(args: &ProjectArgs) -> Result<(), Failure> {
             cost: None,
             redact: None,
             redact_names: None,
+            ..Flags::default()
         },
         None,
     )?;
