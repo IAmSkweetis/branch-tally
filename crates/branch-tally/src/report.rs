@@ -395,6 +395,13 @@ pub(crate) fn ledger_redact(args: &LedgerRedactArgs) -> Result<(), String> {
             outcome.unparseable
         ));
     }
+    if outcome.foreign_salt_unrepaired > 0 {
+        stderr(&format!(
+            "note: {} line(s) hashed under another salt still carry a raw agent branch name and \
+             were left unchanged; they can't be repaired without that salt",
+            outcome.foreign_salt_unrepaired
+        ));
+    }
     if names && outcome.already_redacted > 0 {
         stderr(
             "note: lines already redacted without names are not re-hashed; the names opt-in \
@@ -567,6 +574,13 @@ fn note_ledger(ledger: &LedgerReport) {
         ));
     }
     note_ledger_stats(&ledger.ledger_stats);
+    if ledger.collapsed_lines > 0 {
+        stderr(&format!(
+            "note: {} ledger line(s) held the same call under both the raw and hashed spelling \
+             of an agent branch and were counted once",
+            ledger.collapsed_lines
+        ));
+    }
     if let Some(why) = live_unmatched_reason(ledger.live_redaction) {
         stderr(&format!(
             "note: live calls could not be matched against the redacted ledger lines ({why}); \
