@@ -137,7 +137,6 @@ fn is_plain_file(meta: &Metadata) -> bool {
     not_reparse(meta) && meta.file_type().is_file()
 }
 
-/// Whether a name is a single plain component.
 /// 32 bytes from the operating system's CSPRNG.
 pub(super) fn random_bytes() -> std::io::Result<[u8; 32]> {
     use ring::rand::SecureRandom;
@@ -157,6 +156,7 @@ pub(super) fn hex(bytes: &[u8]) -> String {
     })
 }
 
+/// Whether a name is a single plain component.
 fn is_plain_name(name: &str) -> bool {
     !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\', '\0', ':'])
 }
@@ -450,6 +450,33 @@ impl TallyDir {
     /// [`LedgerError::Refused`] when `name` is a link or not a regular file;
     /// [`LedgerError::Write`] when the write or rename fails.
     pub fn replace(&self, name: &str, bytes: &[u8]) -> Result<(), LedgerError> {
+        self.replace_with(name, bytes, None, &|| {})
+    }
+
+    /// [`TallyDir::replace`] that first checks `name` still holds exactly `expected`, and
+    /// otherwise removes its temporary file and fails with [`LedgerError::ChangedDuringRewrite`].
+    /// A write that lands between that check and the rename is not detected.
+    ///
+    /// # Errors
+    /// As [`TallyDir::replace`], plus [`LedgerError::ChangedDuringRewrite`].
+    pub fn replace_if_unchanged(
+        &self,
+        name: &str,
+        bytes: &[u8],
+        expected: &[u8],
+    ) -> Result<(), LedgerError> {
+        self.replace_with(name, bytes, Some(expected), &|| {})
+    }
+
+    /// `replace` with the unchanged check and a seam that runs after the temporary file is
+    /// written and before the check.
+    pub(super) fn replace_with(
+        &self,
+        name: &str,
+        bytes: &[u8],
+        expected: Option<&[u8]>,
+        between: &dyn Fn(),
+    ) -> Result<(), LedgerError> {
         let path = self.file_path(name);
         if !is_plain_name(name) {
             return Err(refused(&path, "the name is not a single plain component"));
@@ -468,11 +495,29 @@ impl TallyDir {
         let mut file = self
             .open_creating(&temp, &|dir, n| dir.open_new(n), &std::thread::sleep)
             .map_err(write_err)?;
-        let written = file
-            .write_all(bytes)
-            .and_then(|()| file.sync_all())
-            .and_then(|()| self.rename(&temp, name));
+        let written = file.write_all(bytes).and_then(|()| file.sync_all());
         if let Err(source) = written {
+            drop(file);
+            self.remove_quietly(&temp);
+            return Err(write_err(source));
+        }
+        between();
+        if let Some(expected) = expected {
+            let unchanged = match self.read(name) {
+                Ok(now) => now.as_deref().unwrap_or_default() == expected,
+                Err(e) => {
+                    drop(file);
+                    self.remove_quietly(&temp);
+                    return Err(e);
+                }
+            };
+            if !unchanged {
+                drop(file);
+                self.remove_quietly(&temp);
+                return Err(LedgerError::ChangedDuringRewrite { path });
+            }
+        }
+        if let Err(source) = self.rename(&temp, name) {
             drop(file);
             self.remove_quietly(&temp);
             return Err(write_err(source));

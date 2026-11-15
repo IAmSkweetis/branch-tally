@@ -461,9 +461,21 @@ pub enum LedgerError {
     },
     /// `.tally/salt` exists but is not a salt. It is never replaced: that would orphan every
     /// line already redacted under it.
-    #[error("{} is not a valid salt (expected 64 lowercase hex characters)", path.display())]
+    #[error(
+        "{} is empty or damaged: it is not a salt (64 lowercase hex characters). It is never \
+         replaced automatically. It can be deleted to have a new one created; lines already \
+         hashed with the old salt will then read as a different salt",
+        path.display()
+    )]
     MalformedSalt {
         /// The salt path.
+        path: PathBuf,
+    },
+    /// The ledger changed between being read and being replaced by `ledger redact`, for example
+    /// a concurrent `record` appended to it. Nothing was replaced and no temporary file is left.
+    #[error("{} changed while it was being rewritten; nothing was replaced, run it again", path.display())]
+    ChangedDuringRewrite {
+        /// The ledger path.
         path: PathBuf,
     },
 }
