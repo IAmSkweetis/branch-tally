@@ -121,8 +121,23 @@ fn update_options(args: &UpdateArgs, default_base: bool) -> UpdateOptions {
 /// The line announcing a non-default release source. The value comes from the environment, so
 /// control characters are neutralised.
 fn mirror_notice(base: &str) -> String {
-    let base = branch_tally_core::text::replace_control_chars(base);
+    let shown = without_userinfo(base);
+    let base = branch_tally_core::text::replace_control_chars(&shown);
     format!("release source: {base} (from {BASE_URL_ENV}, not the default release location)")
+}
+
+/// `base` with any `user:password@` removed from its authority, so a credential in the mirror URL
+/// is never printed.
+fn without_userinfo(base: &str) -> String {
+    let Some((scheme, rest)) = base.split_once("://") else {
+        return base.to_owned();
+    };
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(end);
+    match authority.rsplit_once('@') {
+        Some((_, host)) => format!("{scheme}://{host}{tail}"),
+        None => base.to_owned(),
+    }
 }
 
 /// Accept only `https://` and `file://` mirrors, before any network call.
@@ -1337,6 +1352,31 @@ mod tests {
                 .chars()
                 .any(branch_tally_core::text::is_unsafe_control),
             "{notice:?}"
+        );
+    }
+
+    #[test]
+    fn the_notice_never_prints_url_credentials() {
+        let notice = mirror_notice("https://user:secret@mirror.example/releases");
+        assert!(
+            notice.contains("https://mirror.example/releases"),
+            "{notice}"
+        );
+        assert!(!notice.contains("secret"), "{notice}");
+        assert!(!notice.contains("user"), "{notice}");
+        assert_eq!(
+            without_userinfo("https://tok@mirror.example:8443/r?x=1"),
+            "https://mirror.example:8443/r?x=1"
+        );
+        // An `@` after the authority is part of the path, not a credential.
+        assert_eq!(
+            without_userinfo("https://mirror.example/a@b/releases"),
+            "https://mirror.example/a@b/releases"
+        );
+        assert_eq!(without_userinfo("file:///srv/rel@1"), "file:///srv/rel@1");
+        assert_eq!(
+            without_userinfo("https://mirror.example/releases"),
+            "https://mirror.example/releases"
         );
     }
 

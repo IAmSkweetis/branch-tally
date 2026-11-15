@@ -852,8 +852,9 @@ In order, it:
 
 A failure at any step leaves the installed binary as it was. To use `update` in a script or CI job,
 pass `--yes`. That works only with the default release location: with a
-[release mirror](#release-mirror) set, a run without a terminal is refused with exit 1, even with
-`--yes`.
+[release mirror](#release-mirror) set, a run without a terminal that would install a release is
+refused with exit 1, even with `--yes`. One that finds nothing to install still reports up to date
+with exit 0.
 
 ### What it prints
 
@@ -865,7 +866,7 @@ One line on stdout when it succeeds, or on stderr when it fails:
 | Already on the target | `branch-tally is up to date (v0.6.0)` | `0` |
 | Without `--version`, the latest release is older than the running one (also with `--check` or `--force`) | `the latest release (v0.6.0) is older than the running version (v0.7.0); nothing installed. To go back to an older release, pin it with --version` | `0` |
 | You answered no, or stdin is not a terminal and `--yes` was not given (with the default release location) | `update v0.6.0 -> v0.7.0 declined; nothing changed` | `0` |
-| A [release mirror](#release-mirror) is set and stdin is not a terminal, with or without `--yes` | `BRANCH_TALLY_INSTALL_BASE_URL is set to a non-default release source, which requires interactive confirmation even with --yes; refusing without a terminal, nothing was installed.` | `1` |
+| A [release mirror](#release-mirror) is set, stdin is not a terminal and a release would be installed, with or without `--yes` | `BRANCH_TALLY_INSTALL_BASE_URL is set to a non-default release source, which requires interactive confirmation even with --yes; refusing without a terminal, nothing was installed.` | `1` |
 | `--check` found another version | ``update available: v0.6.0 -> v0.7.0; run `branch-tally update` to install it`` | `0` |
 | A refusal or an error | see below | `1` |
 | A bad command line | a usage message | `2` |
@@ -948,12 +949,14 @@ release source: https://mirror.example/releases (from BRANCH_TALLY_INSTALL_BASE_
 
 Control characters and Unicode bidirectional-text controls in the URL are replaced with `�`
 (U+FFFD) in that line, so the value can't send escape sequences to your terminal or disguise
-itself.
+itself. A `user:password@` in the URL is left out of that line, so a credential in the mirror URL
+is never printed.
 
 A mirror also changes confirmation. `update` asks `Update branch-tally vA -> vB? [y/N]` even when
 `--yes` is given, so a release source that comes from the environment is always confirmed by a
-person. When stdin is not a terminal it can't ask, so it refuses: it prints this on stderr, installs
-nothing and exits 1.
+person. When stdin is not a terminal and there is a release to install, it can't ask, so it
+refuses: it prints this on stderr, installs nothing and exits 1. When it finds nothing to install,
+it reports up to date with exit 0 before it would ask.
 
 ```text
 BRANCH_TALLY_INSTALL_BASE_URL is set to a non-default release source, which requires interactive confirmation even with --yes; refusing without a terminal, nothing was installed.
