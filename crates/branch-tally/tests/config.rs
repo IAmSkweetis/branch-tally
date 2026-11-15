@@ -390,6 +390,28 @@ fn config_init_path_writes_there_creating_parent_directories() {
 }
 
 #[test]
+fn config_init_without_a_config_directory_says_how_to_set_one() {
+    // #72: the message once carried a run of spaces left over from a joined line.
+    let w = world();
+    let out = w
+        .command(&w.repo, &["config", "init"])
+        .env_remove("APPDATA")
+        .env_remove("XDG_CONFIG_HOME")
+        .env_remove("HOME")
+        .output()
+        .expect("run branch-tally");
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    let err = stderr(&out);
+    assert!(
+        err.contains(
+            "Could not determine the config directory \
+             (set APPDATA, XDG_CONFIG_HOME or HOME, or pass --path)"
+        ),
+        "{err:?}"
+    );
+}
+
+#[test]
 fn config_init_never_overwrites_an_existing_file() {
     let w = world();
     let path = w.write_default_config("mode = \"strict\"\n");
