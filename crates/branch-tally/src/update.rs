@@ -258,6 +258,11 @@ fn fetch_http(url: &str, cap: u64, https_only: bool) -> Result<Vec<u8>, FetchErr
         .https_only(https_only)
         .build()
         .into();
+    fetch_with(&agent, url, cap)
+}
+
+/// The GET itself, on a caller-built agent so tests can add a trusted CA.
+fn fetch_with(agent: &ureq::Agent, url: &str, cap: u64) -> Result<Vec<u8>, FetchError> {
     let mut response = agent
         .get(url)
         .header(
@@ -1191,6 +1196,25 @@ mod tests {
             server.heads(),
             Vec::<String>::new(),
             "the server was contacted"
+        );
+    }
+
+    #[test]
+    fn an_https_download_that_redirects_to_plain_http_is_refused() {
+        let target = FakeServer::start(200, "payload");
+        let redirect = crate::tls_test::serve_tls_once(
+            "302 Found",
+            &format!("Location: {}/x\r\n", target.url),
+            "",
+        );
+        let agent = crate::tls_test::fixture_agent();
+        let err = fetch_with(&agent, &redirect.url, 100).unwrap_err();
+        assert!(matches!(err, FetchError::Failed(_)), "{err:?}");
+        assert!(redirect.finish(), "the https server was never reached");
+        assert_eq!(
+            target.heads(),
+            Vec::<String>::new(),
+            "http target contacted"
         );
     }
 
