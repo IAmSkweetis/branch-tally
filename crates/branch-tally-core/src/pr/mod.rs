@@ -35,6 +35,16 @@ pub enum PrError {
     NoOpenPr {
         /// The branch searched for.
         branch: String,
+        /// Open PRs for the branch that were ignored (fork PRs); 0 when none.
+        ignored: usize,
+    },
+    /// More than one open same-repository PR has the branch as its head.
+    #[error("more than one open PR for branch {branch:?}: {numbers:?}")]
+    AmbiguousPr {
+        /// The branch searched for.
+        branch: String,
+        /// Every matching PR number, sorted.
+        numbers: Vec<u64>,
     },
     /// A `gh` call failed.
     #[error(transparent)]
@@ -47,19 +57,19 @@ pub enum PrOutcome {
     /// The body already holds exactly this report.
     UpToDate {
         /// The PR number.
-        number: String,
+        number: u64,
     },
     /// Dry run: the body that would be written.
     DryRun {
         /// The PR number.
-        number: String,
+        number: u64,
         /// The updated body, LF line endings.
         body: String,
     },
     /// The body was written.
     Written {
         /// The PR number.
-        number: String,
+        number: u64,
     },
 }
 
@@ -77,19 +87,26 @@ pub trait Gh {
 ///
 /// # Errors
 ///
-/// [`PrError`] when no PR is found or a gh call fails.
+/// [`PrError`] when no single PR is found or a gh call fails.
+/// `repo` is `OWNER/REPO`, passed to every gh call as `--repo`.
 pub fn update_pr(
     gh: &dyn Gh,
     branch: &str,
     report: &str,
-    number: Option<&str>,
+    repo: &str,
+    number: Option<u64>,
     dry_run: bool,
 ) -> Result<PrOutcome, PrError> {
     let number = match number {
-        Some(n) => n.to_owned(),
-        None => find_open_pr(gh, branch)?,
+        Some(n) => n,
+        None => find_open_pr(gh, branch, repo)?,
     };
-    let viewed = run_json(gh, &["pr", "view", &number, "--json", "body"], None)?;
+    let num = number.to_string();
+    let viewed = run_json(
+        gh,
+        &["pr", "view", &num, "--repo", repo, "--json", "body"],
+        None,
+    )?;
     let body = viewed
         .get("body")
         .and_then(serde_json::Value::as_str)
@@ -104,26 +121,71 @@ pub fn update_pr(
             body: updated,
         });
     }
-    gh.run(&["pr", "edit", &number, "--body-file", "-"], Some(&updated))?;
+    gh.run(
+        &["pr", "edit", &num, "--repo", repo, "--body-file", "-"],
+        Some(&updated),
+    )?;
     Ok(PrOutcome::Written { number })
 }
 
-fn find_open_pr(gh: &dyn Gh, branch: &str) -> Result<String, PrError> {
+/// The one open same-repository PR whose head is `branch`. Fork PRs are never chosen: they must be
+/// named with an explicit number, and how many were skipped is reported.
+fn find_open_pr(gh: &dyn Gh, branch: &str, repo: &str) -> Result<u64, PrError> {
     let args = [
-        "pr", "list", "--head", branch, "--state", "open", "--json", "number", "--limit", "1",
+        "pr",
+        "list",
+        "--repo",
+        repo,
+        "--head",
+        branch,
+        "--state",
+        "open",
+        "--json",
+        "number,headRepositoryOwner,isCrossRepository",
+        "--limit",
+        "100",
     ];
     let found = run_json(gh, &args, Some("[]"))?;
-    let number = found
-        .as_array()
-        .ok_or_else(|| bad_output(&args))?
-        .first()
-        .map(|first| first.get("number").and_then(serde_json::Value::as_u64));
-    match number {
-        None => Err(PrError::NoOpenPr {
+    let entries = found.as_array().ok_or_else(|| bad_output(&args))?;
+    let repo_owner = repo.split('/').next().unwrap_or_default();
+    let mut kept = Vec::new();
+    let mut ignored = 0_usize;
+    for entry in entries {
+        let number = entry
+            .get("number")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| bad_output(&args))?;
+        let cross = entry
+            .get("isCrossRepository")
+            .and_then(serde_json::Value::as_bool)
+            .ok_or_else(|| bad_output(&args))?;
+        // A fork whose repository was deleted has no owner; it is ignored either way.
+        let owner = entry
+            .get("headRepositoryOwner")
+            .and_then(|o| o.get("login"))
+            .and_then(serde_json::Value::as_str);
+        if cross {
+            ignored += 1;
+            continue;
+        }
+        let owner = owner.ok_or_else(|| bad_output(&args))?;
+        if owner.eq_ignore_ascii_case(repo_owner) {
+            kept.push(number);
+        } else {
+            ignored += 1;
+        }
+    }
+    kept.sort_unstable();
+    match kept.as_slice() {
+        [] => Err(PrError::NoOpenPr {
             branch: branch.to_owned(),
+            ignored,
         }),
-        Some(Some(n)) => Ok(n.to_string()),
-        Some(None) => Err(bad_output(&args).into()),
+        [n] => Ok(*n),
+        _ => Err(PrError::AmbiguousPr {
+            branch: branch.to_owned(),
+            numbers: kept,
+        }),
     }
 }
 
