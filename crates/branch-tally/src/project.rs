@@ -3,9 +3,9 @@
 //!
 //! Errors are returned as the message to print; `main` writes it to stderr and exits 1.
 
-use std::io::Write;
 use std::path::Path;
 
+use branch_tally_core::atomic::{self, OsSuffix, SuffixSource};
 use branch_tally_core::config::{Flags, Format};
 use branch_tally_core::git::{Git, SystemGit};
 use branch_tally_core::ledger::{self, Ledger, TallyDir};
@@ -96,21 +96,88 @@ fn read_ledger(flag: Option<&Path>, cwd: &Path) -> Result<Ledger, String> {
 /// Writes `bytes` to `target` whole or not at all: a sibling temp file, then a rename. UTF-8 and
 /// LF as given. The parent directory is not created.
 fn write_atomic(target: &Path, bytes: &[u8]) -> Result<(), String> {
-    let fail = |e: std::io::Error| format!("cannot write graph {}: {e}", target.display());
-    let name = target
-        .file_name()
-        .ok_or_else(|| format!("cannot write graph {}: not a file path", target.display()))?;
-    let mut tmp_name = std::ffi::OsString::from(".");
-    tmp_name.push(name);
-    tmp_name.push(format!(".{}.tmp", std::process::id()));
-    let tmp = target.with_file_name(tmp_name);
-    let written = std::fs::File::create(&tmp).and_then(|mut f| {
-        f.write_all(bytes)?;
-        f.sync_all()
-    });
-    if let Err(e) = written.and_then(|()| std::fs::rename(&tmp, target)) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(fail(e));
+    write_atomic_with(target, bytes, &mut OsSuffix)
+}
+
+/// [`write_atomic`] with the temp-name source injected, so a test can plant a file or symlink at
+/// the exact name the writer would pick.
+fn write_atomic_with(
+    target: &Path,
+    bytes: &[u8],
+    suffixes: &mut dyn SuffixSource,
+) -> Result<(), String> {
+    if target.file_name().is_none() {
+        return Err(format!(
+            "cannot write graph {}: not a file path",
+            target.display()
+        ));
     }
-    Ok(())
+    atomic::write_atomic_with(target, bytes, suffixes)
+        .map_err(|e| format!("cannot write graph {}: {e}", target.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+
+    /// Yields fixed suffixes and counts how many were asked for.
+    struct Fixed {
+        names: Vec<&'static str>,
+        asked: usize,
+    }
+    impl SuffixSource for Fixed {
+        fn next_suffix(&mut self) -> io::Result<String> {
+            let next = self.names.get(self.asked).copied();
+            self.asked += 1;
+            next.map(str::to_owned)
+                .ok_or_else(|| io::Error::other("exhausted"))
+        }
+    }
+
+    fn fixed() -> Fixed {
+        Fixed {
+            names: vec!["aaaa", "bbbb"],
+            asked: 0,
+        }
+    }
+
+    /// The temp name the old writer used, which an attacker could predict.
+    fn old_name(dir: &Path) -> std::path::PathBuf {
+        dir.join(format!(".graph.svg.{}.tmp", std::process::id()))
+    }
+
+    #[test]
+    fn a_planted_file_at_the_temp_name_is_not_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("graph.svg");
+        let planted = dir.path().join(".graph.svg.aaaa.tmp");
+        std::fs::write(&planted, "victim").unwrap();
+        std::fs::write(old_name(dir.path()), "victim-old").unwrap();
+        let mut suffixes = fixed();
+        write_atomic_with(&target, b"<svg/>", &mut suffixes).unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "<svg/>");
+        assert_eq!(std::fs::read_to_string(&planted).unwrap(), "victim");
+        assert_eq!(
+            std::fs::read_to_string(old_name(dir.path())).unwrap(),
+            "victim-old"
+        );
+        assert_eq!(suffixes.asked, 2, "the collision must pick a fresh name");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_planted_symlink_at_the_temp_name_is_not_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        let victim = dir.path().join("victim.txt");
+        std::fs::write(&victim, "victim").unwrap();
+        let target = dir.path().join("graph.svg");
+        std::os::unix::fs::symlink(&victim, dir.path().join(".graph.svg.aaaa.tmp")).unwrap();
+        std::os::unix::fs::symlink(&victim, old_name(dir.path())).unwrap();
+        let mut suffixes = fixed();
+        write_atomic_with(&target, b"<svg/>", &mut suffixes).unwrap();
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "victim");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "<svg/>");
+        assert_eq!(suffixes.asked, 2);
+    }
 }
