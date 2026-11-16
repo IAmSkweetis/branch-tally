@@ -152,6 +152,12 @@ fn check_repo(
             )
         })
         .collect();
+    if report.pending > 0 {
+        lines.push(format!(
+            "note: {} pending line(s), usage uncertain",
+            report.pending
+        ));
+    }
     if base_prices != head_files.prices {
         lines.push("warning: .tally/prices.toml differs from base".to_owned());
     }
