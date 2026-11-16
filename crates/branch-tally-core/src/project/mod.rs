@@ -7,8 +7,8 @@
 //!
 //! Pending lines (decision 0006) are in no row, total, overlap or series point: a resolved
 //! request counts under its resolution's branch only, and an unresolved one is in no figure here.
-//! `ProjectReport` has no field to surface the unresolved ones; the caller reads them from
-//! `Ledger::unresolved_pending`.
+//! `ProjectReport::pending` counts the unresolved ones (from `Ledger::unresolved_pending`), so
+//! they are surfaced and never added to a figure.
 //!
 //! Rows are keyed by `recorded_for`. A request claimed by two branches is stored once per branch:
 //! rows keep their own totals, the project total counts each request id once (the first stored
@@ -210,6 +210,7 @@ pub fn build(
         series,
         undated_branches,
         double_count: double_count_risk(ledger.stats()),
+        pending: ledger.unresolved_pending(),
     }
 }
 

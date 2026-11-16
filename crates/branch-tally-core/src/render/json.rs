@@ -191,7 +191,7 @@ fn unstamped(u: &Unstamped, o: &mut String) {
 
 /// The `pending` object (ADR 0006): unresolved default-branch ledger lines, repository-wide and
 /// outside the totals. Omitted when there are none, like `unstamped`.
-fn pending(p: &Pending, o: &mut String) {
+pub(super) fn pending(p: &Pending, o: &mut String) {
     if p.lines == 0 {
         return;
     }

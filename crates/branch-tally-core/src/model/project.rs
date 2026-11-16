@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{Bucket, HeuristicBreakdown, RowCost, Timestamp};
+use super::{Bucket, HeuristicBreakdown, Pending, RowCost, Timestamp};
 
 /// One recording (`recorded_for`) in the project: its own totals, uncorrected for overlap.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -121,6 +121,12 @@ pub struct ProjectReport {
     /// Omitted from JSON when `None`; absent in older serialized data.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub double_count: Option<super::DoubleCountRisk>,
+    /// Unresolved pending ledger lines (ADR 0006): default-branch usage not yet attributed to a
+    /// branch. Repository-wide and in no row, total, overlap or series point, which is why it is a
+    /// sibling of `totals` and not a field of it. Zero when there are none. Absent in older
+    /// serialized data.
+    #[serde(default)]
+    pub pending: Pending,
 }
 
 impl ProjectReport {
@@ -173,6 +179,27 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn project_pending_defaults_zero_when_absent_and_round_trips() {
+        let mut v = serde_json::to_value(ProjectReport::default()).unwrap();
+        v.as_object_mut().unwrap().remove("pending");
+        let old: ProjectReport = serde_json::from_value(v).unwrap();
+        assert_eq!(old.pending, Pending::default());
+
+        let pending = Pending {
+            lines: 2,
+            calls: 5,
+            tokens: 700,
+        };
+        let r = ProjectReport {
+            pending,
+            ..ProjectReport::default()
+        };
+        let back: ProjectReport =
+            serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        assert_eq!(back.pending, pending);
+    }
 
     fn priced() -> RowCost {
         RowCost {
