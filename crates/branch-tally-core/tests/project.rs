@@ -662,6 +662,40 @@ fn unresolved_pending_line_is_in_no_row_total_or_series_point() {
 }
 
 #[test]
+fn unresolved_pending_is_counted_in_the_report_pending_field_and_in_no_total() {
+    let f = Fixture::new();
+    f.record_pending(
+        "main",
+        &[
+            plain("p1", "priced", Some("2026-01-02T00:00:00Z")),
+            plain("p2", "priced", Some("2026-01-02T00:00:00Z")),
+        ],
+    );
+    f.record(
+        "feat/a",
+        &[plain("a1", "priced", Some("2026-01-03T00:00:00Z"))],
+    );
+    let report = build(&f);
+    assert_eq!(report.pending.lines, 2);
+    assert_eq!(report.pending.calls, 2);
+    assert_eq!(report.pending.tokens, 4_000_000);
+    assert_eq!(report.totals.usage.calls, 1);
+}
+
+#[test]
+fn a_ledger_without_pending_lines_reports_zero_pending() {
+    let f = Fixture::new();
+    f.record(
+        "feat/a",
+        &[plain("a1", "priced", Some("2026-01-03T00:00:00Z"))],
+    );
+    assert_eq!(
+        build(&f).pending,
+        branch_tally_core::model::Pending::default()
+    );
+}
+
+#[test]
 fn overlap_and_dedupe_stay_correct_beside_a_resolved_pending_request() {
     let f = Fixture::new();
     let shared = plain("shared", "priced", Some("2026-01-02T00:00:00Z"));

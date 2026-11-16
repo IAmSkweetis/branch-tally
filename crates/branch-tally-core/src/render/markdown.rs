@@ -612,17 +612,25 @@ fn uncertain_usage_notes(summary: &Summary, o: &mut Vec<String>) {
     }
 
     // ADR 0006: default-branch usage still waiting for its branch. Uncertain, so outside the totals.
-    if summary.pending.lines > 0 {
-        o.push(format!(
+    if let Some(note) = pending_text(&summary.pending) {
+        o.push(note);
+        o.push(String::new());
+    }
+}
+
+/// The ADR 0006 pending-usage note, or `None` when there are no unresolved pending lines. Shared
+/// by the summary and the project report so both word it identically.
+pub(super) fn pending_text(p: &crate::model::Pending) -> Option<String> {
+    (p.lines > 0).then(|| {
+        format!(
             "<sub>{} pending ledger line(s), {} call(s) / {} tokens, were recorded on the default \
              branch and could not yet be attributed to a branch with certainty; they are not in \
              these totals.</sub>",
-            n(summary.pending.lines),
-            n(summary.pending.calls),
-            n(summary.pending.tokens),
-        ));
-        o.push(String::new());
-    }
+            n(p.lines),
+            n(p.calls),
+            n(p.tokens),
+        )
+    })
 }
 
 /// The collapsed attribution table, sorted by descending tokens (stably).
