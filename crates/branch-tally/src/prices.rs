@@ -9,6 +9,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use branch_tally_core::atomic::{self, OsSuffix, SuffixSource};
 use branch_tally_core::git::{Git, SystemGit, normalize_path};
 use branch_tally_core::ledger::{LedgerError, TallyDir};
 use branch_tally_core::model::PriceTableSource;
@@ -251,16 +252,19 @@ pub(crate) fn update(feed: &dyn PriceFeed, as_of: &str, cache: &Path) -> Result<
 }
 
 fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_atomically_with(path, bytes, &mut OsSuffix)
+}
+
+/// [`write_atomically`] with the temp-name source injected, so a test can plant a file or symlink
+/// at the exact name the writer would pick.
+fn write_atomically_with(
+    path: &Path,
+    bytes: &[u8],
+    suffixes: &mut dyn SuffixSource,
+) -> io::Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
     std::fs::create_dir_all(dir)?;
-    let mut tmp_name = path.file_name().map(OsString::from).unwrap_or_default();
-    tmp_name.push(format!(".tmp-{}", std::process::id()));
-    let tmp = dir.join(tmp_name);
-    let result = std::fs::write(&tmp, bytes).and_then(|()| std::fs::rename(&tmp, path));
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    result
+    atomic::write_atomic_with(path, bytes, suffixes)
 }
 
 /// HTTP implementation of the core's [`PriceFeed`] seam.
@@ -349,6 +353,78 @@ mod tests {
 
     const GOOD: &str = r#"{"claude-a-1": {"litellm_provider": "anthropic", "mode": "chat",
         "input_cost_per_token": 1e-6, "output_cost_per_token": 5e-6}}"#;
+
+    /// Yields fixed suffixes and counts how many were asked for.
+    struct Fixed {
+        names: Vec<&'static str>,
+        asked: usize,
+    }
+    impl SuffixSource for Fixed {
+        fn next_suffix(&mut self) -> io::Result<String> {
+            let next = self.names.get(self.asked).copied();
+            self.asked += 1;
+            next.map(str::to_owned)
+                .ok_or_else(|| io::Error::other("exhausted"))
+        }
+    }
+
+    fn fixed() -> Fixed {
+        Fixed {
+            names: vec!["aaaa", "bbbb"],
+            asked: 0,
+        }
+    }
+
+    /// The temp name the old writer used, which an attacker could predict.
+    fn old_name(dir: &Path) -> PathBuf {
+        dir.join(format!("prices.toml.tmp-{}", std::process::id()))
+    }
+
+    #[test]
+    fn a_planted_file_at_the_temp_name_is_not_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let cache = sub.join("prices.toml");
+        let planted = sub.join(".prices.toml.aaaa.tmp");
+        std::fs::write(&planted, "victim").unwrap();
+        std::fs::write(old_name(&sub), "victim-old").unwrap();
+        let mut suffixes = fixed();
+        write_atomically_with(&cache, b"new", &mut suffixes).unwrap();
+        assert_eq!(std::fs::read_to_string(&cache).unwrap(), "new");
+        assert_eq!(std::fs::read_to_string(&planted).unwrap(), "victim");
+        assert_eq!(
+            std::fs::read_to_string(old_name(&sub)).unwrap(),
+            "victim-old"
+        );
+        assert_eq!(suffixes.asked, 2, "the collision must pick a fresh name");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_planted_symlink_at_the_temp_name_is_not_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        let victim = dir.path().join("victim.txt");
+        std::fs::write(&victim, "victim").unwrap();
+        let sub = dir.path().join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let cache = sub.join("prices.toml");
+        std::os::unix::fs::symlink(&victim, sub.join(".prices.toml.aaaa.tmp")).unwrap();
+        std::os::unix::fs::symlink(&victim, old_name(&sub)).unwrap();
+        let mut suffixes = fixed();
+        write_atomically_with(&cache, b"new", &mut suffixes).unwrap();
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "victim");
+        assert_eq!(std::fs::read_to_string(&cache).unwrap(), "new");
+        assert_eq!(suffixes.asked, 2);
+    }
+
+    #[test]
+    fn the_cache_directory_is_created_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("a").join("b").join("prices.toml");
+        write_atomically(&cache, b"x").unwrap();
+        assert_eq!(std::fs::read_to_string(&cache).unwrap(), "x");
+    }
 
     fn at(secs: u64) -> SystemTime {
         UNIX_EPOCH + Duration::from_secs(secs)

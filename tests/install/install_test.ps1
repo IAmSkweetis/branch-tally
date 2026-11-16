@@ -734,6 +734,13 @@ Test-Case 'Get-Remote refuses a non-https hop' ($src -like '*refusing to follow 
 Test-Case 'Get-Remote compares the file scheme case-insensitively' ($src.Contains("StartsWith('file://', [System.StringComparison]::OrdinalIgnoreCase)"))
 Test-Case 'the version check uses \z, not $' ($src.Contains('[0-9]+\.[0-9]+\.[0-9]+\z') -and -not $src.Contains('[0-9]+\.[0-9]+\.[0-9]+$'''))
 
+# 11b. Staging is exclusive and unpredictable: CreateNew (never follows or overwrites a planted path)
+# on a random name, not one derived from the process id. The Windows run cannot guess a random name to
+# plant a file at, so this is a source check; the CreateNew semantics are .NET's.
+Test-Case 'staging creates the file with CreateNew' ($src.Contains('[System.IO.FileMode]::CreateNew'))
+Test-Case 'staging name is random, not derived from the PID' ($src.Contains('[Guid]::NewGuid()') -and -not $src.Contains('.branch-tally.new.$PID'))
+Test-Case 'staging does not use Copy-Item into the destination' (-not $src.Contains('Copy-Item -LiteralPath $bin -Destination $staged'))
+
 # 12. The help names the new parameter.
 $helpText = [IO.File]::ReadAllText($installer)
 Test-Case 'help documents -RequireAttestation' ($helpText -like '*-RequireAttestation*' -and $helpText -like '*BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION*')
