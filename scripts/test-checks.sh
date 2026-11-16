@@ -283,6 +283,7 @@ tally_run() {
     TALLY_CHECK_RETRY_DELAY=${TALLY_CHECK_RETRY_DELAY-0} sh "$tally_sh" "$@" 2>&1)
 }
 tally_bin tb-ok 0 "note: 2 new ledger line(s) recorded for branch other" \
+  "note: 3 pending line(s), usage uncertain" \
   "warning: .tally/prices.toml differs from base"
 tally_bin tb-viol 1 "error: bad line"
 tally_bin tb-inject 0 "::error::pwned" "warning: ::error::nested" "::add-mask::secret"
@@ -293,6 +294,10 @@ total=$((total + 1))
 out=$(tally_run "$scratch/tb-ok" 1)
 rc=$?
 [ "$rc" -eq 0 ] || { wrong=$((wrong + 1)); echo "WRONG: tally-check passing run exited $rc: $out" >&2; }
+case $out in
+  *"::notice::3 pending line(s), usage uncertain"*) ;;
+  *) wrong=$((wrong + 1)); echo "WRONG: tally-check did not translate the pending note: to ::notice::: $out" >&2 ;;
+esac
 case $out in
   *"::notice::2 new ledger line(s) recorded for branch other"*) ;;
   *) wrong=$((wrong + 1)); echo "WRONG: tally-check did not translate note: to ::notice::: $out" >&2 ;;

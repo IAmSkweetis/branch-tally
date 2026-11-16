@@ -78,6 +78,19 @@ git commit -m "chore: record token usage for this branch"
 just token-report --from-ledger --md > <tmp>/report.md   # the table, bracketed by the token-report markers
 ```
 
+Then make sure no pending line belonging to this branch is left unresolved (lines recorded while
+`main` was checked out, see [0006](../../../docs/decisions/0006-pending-ledger-lines.md)).
+`record` on this branch resolves them as it runs, so the commands above normally already did. If
+in doubt, run `branch-tally ledger resolve --dry-run` and then `branch-tally ledger resolve`, and
+commit the appended lines with the rest of `.tally/ledger.jsonl`. Never delete or edit a pending
+line to make a check pass. Any that stay pending (`ledger check` prints
+`note: N pending line(s), usage uncertain`) are usage the tool could not attribute: say so in the
+PR body under the table, for example `N pending ledger line(s) could not be attributed; their usage
+is uncertain and not in the total`, rather than hiding them. The subcommand and the pending
+behaviour exist only in a release that includes #131. With an older installed binary, `record` on
+`main` wrote plain base-branch lines that `tally-check` will fail: tell the user, and don't claim
+the PR benefits.
+
 Only add the `.tally/` files that changed. If `record` changed nothing, skip the commit. The commit
 must be a valid Conventional Commit (`chore:`), because the `commit-messages` check runs on it.
 `<tmp>` is outside the repository. Step 4 splices `report.md` into the body.
