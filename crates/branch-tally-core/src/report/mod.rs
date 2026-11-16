@@ -34,6 +34,9 @@ pub struct Report {
     /// Set by [`run`] when the default ledger exists but could not be read (refused or
     /// unreadable). Pending usage is then unknown, not zero: the report proceeds and says so here.
     pub pending_unavailable: Option<crate::ledger::LedgerError>,
+    /// Set by [`run`] when it read the default ledger for pending usage: what that read counted and
+    /// skipped. A skipped line may have been a pending one, so the caller reports it.
+    pub pending_ledger_stats: Option<crate::ledger::ReadStats>,
     /// Set by [`run_from_ledger`]: where the numbers came from. `None` for a live report.
     pub ledger: Option<LedgerReport>,
     /// What reading `.tally/captures.jsonl` counted. All zeros when there is no captures file.
@@ -468,6 +471,7 @@ fn finish(
         read_stats,
         worktrees_unavailable: None,
         pending_unavailable: None,
+        pending_ledger_stats: None,
         ledger: None,
         capture_stats: crate::ledger::CaptureReadStats::default(),
     }
@@ -664,10 +668,10 @@ pub fn run(
     );
     // Pending lines outside what this report counts (decision 0006). An unreadable ledger leaves
     // them unknown: the report proceeds with zero and says so, never reads it as "none".
-    let (pending, pending_unavailable) =
+    let (pending, pending_ledger_stats, pending_unavailable) =
         match pending::live_pending(git, repo_dir, &live.main_checkout, &sel.selected) {
-            Ok(p) => (p, None),
-            Err(e) => (crate::model::Pending::default(), Some(e)),
+            Ok((p, stats)) => (p, stats, None),
+            Err(e) => (crate::model::Pending::default(), None, Some(e)),
         };
     // Nothing counted is an error, unless pending lines remain: those are reported, not hidden.
     if sel.selected.is_empty() && pending.lines == 0 {
@@ -679,6 +683,7 @@ pub fn run(
     let mut report = finish(&branch, options, sel, live.stats, table);
     report.worktrees_unavailable = live.unavailable;
     report.pending_unavailable = pending_unavailable;
+    report.pending_ledger_stats = pending_ledger_stats;
     report.capture_stats = live.captures.stats().clone();
     report.summary.pending = pending;
     Ok(report)
@@ -1119,8 +1124,8 @@ pub fn record_at(
     };
     Ok(Recorded {
         pending_written: if pending { outcome.appended } else { 0 },
-        resolutions_appended: resolution.map_or(0, |(_, a)| a.appended),
-        resolution: resolution.map(|(s, _)| s),
+        resolutions_appended: resolution.as_ref().map_or(0, |r| r.appended.appended),
+        resolution: resolution.map(|r| r.stats),
         branch,
         outcome,
         selected: sel.selected.len() as u64,

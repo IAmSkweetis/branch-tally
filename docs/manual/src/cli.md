@@ -198,7 +198,8 @@ and `<!-- token-report:end -->` markers. It has, in order:
    thinking and estimated cost per model, then the total;
 2. the session table: each session's id, where it ran (main checkout or worktree), its named
    agents, its UTC time span, calls and tokens (in millions);
-3. a bold "Token total is at least …" line, when some calls were ambiguous;
+3. a bold "Token total is at least …" line, when some calls were ambiguous or unresolved
+   [pending usage](ledger.md#pending-usage-in-reports) sits outside the totals;
 4. a bold "Totals overflowed and are unreliable" statement, when a total was too large to hold
    (see [Overflowed totals](#overflowed-totals));
 5. a bold "Total may count some calls twice" statement, when a report from the ledger may count a

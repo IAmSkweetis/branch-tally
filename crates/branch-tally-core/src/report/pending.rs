@@ -42,6 +42,9 @@ pub struct ResolveOutcome {
     pub worktrees_unavailable: Option<GitError>,
     /// What reading `.tally/captures.jsonl` counted.
     pub capture_stats: crate::ledger::CaptureReadStats,
+    /// What reading the ledger counted and skipped. A skipped line may have been a pending one,
+    /// so the caller reports it (Governance II). All zeros when nothing was read.
+    pub ledger_stats: crate::ledger::ReadStats,
 }
 
 /// Resolves the pending ledger lines that target `branch` (default: the current branch) by
@@ -82,13 +85,14 @@ pub fn resolve_at(
         read_stats: ReadStats::default(),
         worktrees_unavailable: None,
         capture_stats: crate::ledger::CaptureReadStats::default(),
+        ledger_stats: crate::ledger::ReadStats::default(),
     };
     if !on_default_branch {
         let live = super::read_live(git, source, projects_root, repo_dir)?;
         outcome.read_stats = live.stats;
         outcome.worktrees_unavailable = live.unavailable;
         outcome.capture_stats = live.captures.stats().clone();
-        let (stats, appended) = Resolving {
+        let ran = Resolving {
             git,
             repo_dir,
             target,
@@ -104,8 +108,9 @@ pub fn resolve_at(
             &live.main_checkout,
             &live.worktrees,
         )?;
-        outcome.stats = stats;
-        outcome.appended = appended;
+        outcome.stats = ran.stats;
+        outcome.appended = ran.appended;
+        outcome.ledger_stats = ran.ledger_stats;
     }
     Ok(outcome)
 }
@@ -130,14 +135,19 @@ impl Resolving<'_> {
         captures: &[CaptureEvent],
         main: &Path,
         worktrees: &[Worktree],
-    ) -> Result<(PendingStats, AppendOutcome), ReportError> {
+    ) -> Result<Ran, ReportError> {
         let (root, path) = super::ledger_location(self.git, self.repo_dir, self.target)?;
         let ledger = match &root {
             Some(root) => crate::ledger::read_default(root)?,
             None => crate::ledger::read(&path)?,
         };
+        let ledger_stats = ledger.stats().clone();
         if !ledger.entries().iter().any(|e| e.pending) {
-            return Ok((PendingStats::default(), AppendOutcome::default()));
+            // Still carries the read stats: a skipped line may have been a pending one.
+            return Ok(Ran {
+                ledger_stats,
+                ..Ran::default()
+            });
         }
         let salts = matching_salts(&super::salt_homes(root.as_deref(), &path, main), &ledger);
         let evidence = gather(
@@ -162,8 +172,20 @@ impl Resolving<'_> {
                 None => crate::ledger::append_entries(&path, &resolution.entries, self.clock)?,
             }
         };
-        Ok((resolution.stats, appended))
+        Ok(Ran {
+            stats: resolution.stats,
+            appended,
+            ledger_stats,
+        })
     }
+}
+
+/// What [`Resolving::run`] did, and what its ledger read counted and skipped.
+#[derive(Debug, Default)]
+pub(super) struct Ran {
+    pub stats: PendingStats,
+    pub appended: AppendOutcome,
+    pub ledger_stats: crate::ledger::ReadStats,
 }
 
 /// The salts in `homes` whose fingerprint is on a ledger line. A pending line can only be matched
@@ -223,20 +245,28 @@ fn gather(
     out
 }
 
-/// The work branch of the record's session's first capture at or after the record's `ts`. Sessions
-/// are compared raw: hashing is one-to-one, so the hashed forms agree exactly when these do.
-/// Captures sharing that instant must agree; an unusable or unparseable one gives no evidence.
+/// The branch of the record's session's first capture *on a work branch* at or after the record's
+/// `ts` (decision 0006): a capture still on the default branch, detached, or on an agent branch
+/// places nothing and does not hide a later one. Sessions are compared raw: hashing is one-to-one,
+/// so the hashed forms agree exactly when these do. Work-branch captures sharing that first instant
+/// must agree; an unparseable capture gives no evidence.
 fn captured_work_branch(
     captures: &[CaptureEvent],
     a: &AttributedRecord,
     is_work: &dyn Fn(&str) -> bool,
 ) -> Option<String> {
+    let usable = |branch: &str| {
+        !branch.is_empty()
+            && branch != "HEAD"
+            && !branch.starts_with("worktree-agent-")
+            && is_work(branch)
+    };
     let ts = a.record.ts.as_ref()?.instant();
     let mut mine: Vec<(i128, &str)> = captures
         .iter()
         .filter(|c| c.session_id == a.record.session_id)
         .filter_map(|c| Some((c.ts.parse::<Timestamp>().ok()?.instant(), c.branch.as_str())))
-        .filter(|(t, _)| *t >= ts)
+        .filter(|(t, b)| *t >= ts && usable(b))
         .collect();
     mine.sort_by_key(|(t, _)| *t);
     let first = mine.first()?.0;
@@ -245,11 +275,7 @@ fn captured_work_branch(
         .take_while(|(t, _)| *t == first)
         .map(|(_, b)| *b);
     let branch = branches.next()?;
-    let usable = !branch.is_empty()
-        && branch != "HEAD"
-        && !branch.starts_with("worktree-agent-")
-        && is_work(branch);
-    (usable && branches.all(|b| b == branch)).then(|| branch.to_owned())
+    branches.all(|b| b == branch).then(|| branch.to_owned())
 }
 
 /// The ids under which a ledger line could hold the calls `ids` name: each raw id, and its hashed
@@ -279,7 +305,8 @@ pub(super) fn pending_outside(
 }
 
 /// The default ledger's unresolved pending lines that a live report's selection does not already
-/// count. Zero when there is no checkout or no ledger.
+/// count, with what reading the ledger counted and skipped. Zero, and no stats, when there is no
+/// checkout; zero when there is no ledger.
 ///
 /// # Errors
 /// The ledger exists but was refused or could not be read: pending usage is then unknown, which
@@ -289,9 +316,9 @@ pub(super) fn live_pending(
     repo_dir: &Path,
     main: &Path,
     selected: &[crate::model::SelectedRecord],
-) -> Result<Pending, crate::ledger::LedgerError> {
+) -> Result<(Pending, Option<crate::ledger::ReadStats>), crate::ledger::LedgerError> {
     let Ok(root) = git.toplevel(repo_dir) else {
-        return Ok(Pending::default());
+        return Ok((Pending::default(), None));
     };
     let ledger = crate::ledger::read_default(&root)?;
     let path = root.join(crate::ledger::LEDGER_PATH);
@@ -300,5 +327,8 @@ pub(super) fn live_pending(
         selected.iter().map(|s| &s.attributed.record.request_id),
         &salts,
     );
-    Ok(pending_outside(&ledger, &counted))
+    Ok((
+        pending_outside(&ledger, &counted),
+        Some(ledger.stats().clone()),
+    ))
 }

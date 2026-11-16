@@ -315,8 +315,11 @@ ledger exists but can't be read, the report still prints and says so on stderr:
 `note: the ledger could not be read, so pending usage is unknown and not in this report`.
 
 Some of the pending usage may belong to the branch being reported, so a total beside it is partial.
-When there are unresolved pending lines, the total cost reads "at least" and the JSON sets
-`totalCostIsFloor` to `true`.
+When there are unresolved pending lines, the total cost reads "at least", a bold "Token total is
+at least …" line says how many pending tokens are outside it (also with `--no-cost`), and the JSON
+sets `totalCostIsFloor` to `true`. A live `report` and `ledger resolve` also print
+`note: skipped N ledger line(s): …` when the ledger they read had lines they could not use, since a
+skipped line may have been a pending one.
 
 A report that counts no calls but finds unresolved pending lines is still printed, live or from
 the ledger, with or without `--with-live`. Its totals are zero and the pending line says how much

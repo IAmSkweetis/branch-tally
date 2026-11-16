@@ -162,6 +162,24 @@ fn a_live_report_says_pending_usage_is_unknown_when_the_default_ledger_is_refuse
     assert_eq!(fs::read_to_string(&victim).unwrap(), VICTIM_TEXT);
 }
 
+#[test]
+fn a_live_report_notes_skipped_default_ledger_lines() {
+    // The live report reads the default ledger for pending usage; a skipped line may have been a
+    // pending one, so it says so (#131, Governance II).
+    let world = World::scenario("main-then-branch");
+    fs::create_dir(world.repo.join(".tally")).unwrap();
+    fs::write(world.repo.join(".tally").join("ledger.jsonl"), "not json\n").unwrap();
+    let out = world.run(&["report", BRANCH]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stderr(&out)
+            .lines()
+            .any(|l| l == "note: skipped 1 ledger line(s): 1 malformed"),
+        "{}",
+        stderr(&out)
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn a_symlinked_prices_toml_is_refused() {

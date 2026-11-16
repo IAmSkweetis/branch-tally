@@ -104,6 +104,34 @@ fn ledger_resolve_dry_run_writes_nothing_and_says_would_resolve() {
 }
 
 #[test]
+fn ledger_resolve_notes_skipped_ledger_lines() {
+    // A malformed line might have been a pending one, so resolving says it skipped it.
+    let world = World::scenario("main-then-branch");
+    assert_eq!(record_on_main(&world).status.code(), Some(0));
+    let ledger = ledger_path(&world);
+    let mut text = fs::read_to_string(&ledger).unwrap();
+    text.push_str("not json\n");
+    fs::write(&ledger, text).unwrap();
+    let out = world.run(&[
+        "ledger",
+        "resolve",
+        "--branch",
+        BRANCH,
+        "--dry-run",
+        "--ledger",
+        ledger.to_str().unwrap(),
+    ]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stderr(&out)
+            .lines()
+            .any(|l| l == "note: skipped 1 ledger line(s): 1 malformed"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[test]
 fn ledger_resolve_appends_resolutions_and_a_second_run_appends_none() {
     let world = World::scenario("main-then-branch");
     assert_eq!(record_on_main(&world).status.code(), Some(0));

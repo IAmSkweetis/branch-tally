@@ -235,6 +235,9 @@ fn note_report(report: &Report) {
         // The reference treats this as "no worktrees"; say so rather than do it silently.
         stderr("note: git worktree list was unavailable, so worktree recovery was skipped");
     }
+    if let Some(stats) = &report.pending_ledger_stats {
+        note_ledger_skipped(stats);
+    }
     if report.pending_unavailable.is_some() {
         // Governance II: an unreadable ledger is not an empty one, so pending usage is unknown.
         stderr(
@@ -343,6 +346,7 @@ pub(crate) fn ledger_resolve(args: &LedgerResolveArgs) -> Result<(), String> {
     }
     note_skipped(&outcome.read_stats);
     note_captures(&outcome.capture_stats);
+    note_ledger_skipped(&outcome.ledger_stats);
     if outcome.worktrees_unavailable.is_some() {
         stderr("note: git worktree list was unavailable, so worktree recovery was skipped");
     }
@@ -734,8 +738,10 @@ fn live_unmatched_reason(m: branch_tally_core::report::LiveRedactionMatch) -> Op
     }
 }
 
-/// Governance II: the ledger lines that could not be used, and conflicting requests. Counts only.
-pub(crate) fn note_ledger_stats(stats: &branch_tally_core::ledger::ReadStats) {
+/// Governance II: the ledger lines that were skipped (malformed, unsupported version) or kept
+/// undated. Counts only. Printed wherever a ledger is read, since a skipped line may have been a
+/// pending one.
+pub(crate) fn note_ledger_skipped(stats: &branch_tally_core::ledger::ReadStats) {
     note_undated(stats.malformed_timestamps);
     let skipped = [
         (stats.malformed, "malformed"),
@@ -753,6 +759,11 @@ pub(crate) fn note_ledger_stats(stats: &branch_tally_core::ledger::ReadStats) {
             detail.join(", ")
         ));
     }
+}
+
+/// Governance II: the ledger lines that could not be used, and conflicting requests. Counts only.
+pub(crate) fn note_ledger_stats(stats: &branch_tally_core::ledger::ReadStats) {
+    note_ledger_skipped(stats);
     if stats.is_mixed() {
         let mut note = format!(
             "note: ledger holds {} unredacted line(s) and {} redacted line(s) under {} salt(s); \

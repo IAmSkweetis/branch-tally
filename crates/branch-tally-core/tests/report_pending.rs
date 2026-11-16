@@ -334,6 +334,35 @@ fn resolve_at_on_the_default_branch_is_a_no_op_without_reading_transcripts() {
 }
 
 #[test]
+fn resolve_at_and_the_live_report_report_skipped_ledger_lines() {
+    // A malformed line might have been a pending one: its count is carried out, not dropped.
+    let repo = Repo::new();
+    repo.record("main", cut_session()[..2].to_vec(), RecordRedaction::Off);
+    let mut ledger = std::fs::OpenOptions::new()
+        .append(true)
+        .open(repo.ledger())
+        .unwrap();
+    std::io::Write::write_all(&mut ledger, b"not json\n").unwrap();
+    let out = repo.resolve("feat/x", cut_session(), true);
+    assert_eq!(out.ledger_stats.malformed, 1);
+    let live = run(
+        &repo.git(),
+        &FakeSource(cut_session()),
+        Path::new("/projects"),
+        &repo.root(),
+        Some("feat/x"),
+        &Options::new(Mode::Strict),
+        PriceTable::bundled(),
+    )
+    .unwrap();
+    assert_eq!(
+        live.pending_ledger_stats.map(|s| s.malformed),
+        Some(1),
+        "the live report must carry the default ledger's skipped lines"
+    );
+}
+
+#[test]
 fn resolve_at_dry_run_counts_and_writes_nothing() {
     let repo = Repo::new();
     repo.record("main", cut_session()[..2].to_vec(), RecordRedaction::Off);
@@ -504,6 +533,29 @@ fn a_capture_resolves_a_session_the_transcript_cannot_place() {
     assert!(
         resolved
             .iter()
+            .all(|l| l.contains("\"basis\":\"captured\""))
+    );
+}
+
+#[test]
+fn an_earlier_capture_on_the_default_branch_does_not_hide_the_work_branch_capture() {
+    // Decision 0006: the evidence is the session's first capture *with a work branch* at or after
+    // the call. A capture still on `main` (second 3) comes first but places nothing.
+    let repo = Repo::new();
+    repo.record("main", uncut_session(), RecordRedaction::Off);
+    append_captures(
+        &repo.root(),
+        &[capture("s1", "main", 3), capture("s1", "feat/x", 4)],
+    )
+    .unwrap();
+    let r = repo.record("feat/x", uncut_session(), RecordRedaction::Off);
+    let stats = r.resolution.unwrap();
+    assert_eq!((stats.resolved, stats.no_work_branch), (2, 0));
+    let lines = repo.lines();
+    assert!(
+        lines
+            .iter()
+            .filter(|l| l.contains("\"resolved\""))
             .all(|l| l.contains("\"basis\":\"captured\""))
     );
 }

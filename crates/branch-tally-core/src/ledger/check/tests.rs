@@ -239,6 +239,34 @@ fn a_resolution_that_changes_the_origin_is_a_mismatch() {
 }
 
 #[test]
+fn a_resolution_is_matched_to_the_pending_line_the_reader_keeps() {
+    // Two conflicting pending lines for one key: the reader keeps the later `recorded_at`, which
+    // here comes first in the file. A resolution copying that winner is faithful.
+    let base = [
+        entry("r1", "main")
+            .pending()
+            .output(5)
+            .with("recorded_at", serde_json::json!("2026-01-03T00:00:00Z")),
+        entry("r1", "main")
+            .pending()
+            .output(6)
+            .with("recorded_at", serde_json::json!("2026-01-02T00:00:00Z")),
+    ];
+    let head = [
+        entry("r1", "main")
+            .pending()
+            .output(5)
+            .with("recorded_at", serde_json::json!("2026-01-03T00:00:00Z")),
+        entry("r1", "main")
+            .pending()
+            .output(6)
+            .with("recorded_at", serde_json::json!("2026-01-02T00:00:00Z")),
+        entry("r1", "feat/x").resolves("main").output(5),
+    ];
+    assert_eq!(rules(&run(&base, &head)), Vec::<Rule>::new());
+}
+
+#[test]
 fn a_resolution_whose_branch_differs_from_its_recorded_for_is_a_mismatch() {
     // A resolution names one destination (decision 0006): `branch` must equal `recorded_for`.
     let r = run(

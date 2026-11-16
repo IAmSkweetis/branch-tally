@@ -245,7 +245,18 @@ impl ResolutionIndex {
                 continue;
             };
             if entry.pending {
-                index.pending.insert(entry.key(), entry.clone());
+                // Conflicting pending lines for one key: keep the one the reader keeps, which is
+                // the one a resolution was built from.
+                match index.pending.entry(entry.key()) {
+                    std::collections::hash_map::Entry::Occupied(mut held) => {
+                        if entry.wins_over(held.get()) {
+                            held.insert(entry.clone());
+                        }
+                    }
+                    std::collections::hash_map::Entry::Vacant(slot) => {
+                        slot.insert(entry.clone());
+                    }
+                }
             }
             if entry.resolved.is_some() {
                 index

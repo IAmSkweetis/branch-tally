@@ -156,19 +156,45 @@ fn work_branch_note(rule: Option<&WorkBranchRule>) -> String {
     }
 }
 
-/// When some calls could not be attributed with certainty, the token total is only a floor
-/// (Governance II): say so, and how much was ambiguous. Pushes nothing otherwise.
-fn floor_statement(h: &HeuristicBreakdown, total_tokens: u64, o: &mut Vec<String>) {
-    if !h.any_ambiguous() {
-        return;
-    }
-    o.push(format!(
-        "**Token total is at least {}**: {} token(s) in {} call(s) could not be attributed to a \
-         branch with certainty.",
-        n(total_tokens),
-        n(h.ambiguous.tokens),
-        n(h.ambiguous.calls),
-    ));
+/// When some calls could not be attributed with certainty, or pending usage sits outside the
+/// totals (decision 0006), the token total is only a floor (Governance II): say so, and how much.
+/// Pushes nothing otherwise, and the ambiguous-only wording is unchanged.
+fn floor_statement(
+    h: &HeuristicBreakdown,
+    pending: &crate::model::Pending,
+    total_tokens: u64,
+    o: &mut Vec<String>,
+) {
+    let pending_text = |lead: &str| {
+        format!(
+            "{} token(s) in {} pending call(s) recorded on the default branch {lead}",
+            n(pending.tokens),
+            n(pending.calls),
+        )
+    };
+    let text = match (h.any_ambiguous(), pending.any()) {
+        (false, false) => return,
+        (true, with_pending) => {
+            let mut t = format!(
+                "**Token total is at least {}**: {} token(s) in {} call(s) could not be attributed \
+                 to a branch with certainty.",
+                n(total_tokens),
+                n(h.ambiguous.tokens),
+                n(h.ambiguous.calls),
+            );
+            if with_pending {
+                t.push(' ');
+                t.push_str(&pending_text("are not in it either."));
+            }
+            t
+        }
+        (false, true) => format!(
+            "**Token total is at least {}**: {}",
+            n(total_tokens),
+            pending_text("may belong to this branch and are not in it."),
+        ),
+    };
+    o.push(text);
     o.push(String::new());
 }
 
@@ -262,7 +288,7 @@ fn double_count_statement(risk: Option<&DoubleCountRisk>, floor: bool, o: &mut V
 /// whether a shown cost is labelled "at least" for an unpriced model.
 fn statements(summary: &Summary, cost_floor: bool, o: &mut Vec<String>) {
     let f = &summary.footnote;
-    floor_statement(&f.heuristics, summary.total.tokens(), o);
+    floor_statement(&f.heuristics, &summary.pending, summary.total.tokens(), o);
     overflow_statement(f.totals_overflowed, o);
     let floor =
         cost_floor || f.heuristics.any_ambiguous() || f.totals_overflowed || summary.pending.any();

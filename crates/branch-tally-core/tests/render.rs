@@ -1529,6 +1529,63 @@ fn pending_usage_labels_the_total_cost_a_floor_in_markdown_and_json() {
 }
 
 #[test]
+fn pending_usage_labels_the_token_total_a_floor_without_cost() {
+    // With cost hidden, the token total is the only figure: pending usage outside it must still
+    // mark it "at least" (Governance II), and nothing changes when nothing is pending.
+    use branch_tally_core::model::Pending;
+    let (mut s, c) = sample();
+    assert!(!markdown(&s, &c, false).contains("Token total is at least"));
+    s.pending = Pending {
+        lines: 3,
+        calls: 5,
+        tokens: 4_321,
+    };
+    let md = markdown(&s, &c, false);
+    let total = s.total.tokens().to_string();
+    let grouped: String = total
+        .chars()
+        .rev()
+        .collect::<Vec<_>>()
+        .chunks(3)
+        .map(|c| c.iter().collect::<String>())
+        .collect::<Vec<_>>()
+        .join(",")
+        .chars()
+        .rev()
+        .collect();
+    let expected = format!(
+        "**Token total is at least {grouped}**: 4,321 token(s) in 5 pending call(s) recorded on \
+         the default branch may belong to this branch and are not in it."
+    );
+    assert!(md.contains(&expected), "{expected}\n---\n{md}");
+}
+
+#[test]
+fn ambiguous_and_pending_usage_share_one_token_floor_statement() {
+    use branch_tally_core::model::{HeuristicCount, Pending};
+    let (mut s, c) = sample();
+    s.footnote.heuristics.ambiguous = HeuristicCount {
+        calls: 2,
+        tokens: 7_000,
+    };
+    s.pending = Pending {
+        lines: 3,
+        calls: 5,
+        tokens: 4_321,
+    };
+    let md = markdown(&s, &c, false);
+    assert!(
+        md.contains(
+            "**Token total is at least 4,655**: 7,000 token(s) in 2 call(s) could not be \
+             attributed to a branch with certainty. 4,321 token(s) in 5 pending call(s) recorded \
+             on the default branch are not in it either."
+        ),
+        "{md}"
+    );
+    assert_eq!(md.matches("Token total is at least").count(), 1, "{md}");
+}
+
+#[test]
 fn json_has_a_top_level_pending_key_only_when_there_is_some() {
     use branch_tally_core::model::Pending;
     use serde_json::Value;
