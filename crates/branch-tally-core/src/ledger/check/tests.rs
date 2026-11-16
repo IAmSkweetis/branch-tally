@@ -11,6 +11,7 @@ struct Line {
     pending: bool,
     resolved_from: Option<&'static str>,
     output: u64,
+    extra: Vec<(&'static str, serde_json::Value)>,
 }
 
 fn entry(rid: &'static str, recorded_for: &'static str) -> Line {
@@ -20,6 +21,7 @@ fn entry(rid: &'static str, recorded_for: &'static str) -> Line {
         pending: false,
         resolved_from: None,
         output: 5,
+        extra: Vec::new(),
     }
 }
 
@@ -34,6 +36,10 @@ impl Line {
     }
     fn output(mut self, n: u64) -> Self {
         self.output = n;
+        self
+    }
+    fn with(mut self, key: &'static str, value: serde_json::Value) -> Self {
+        self.extra.push((key, value));
         self
     }
     fn text(&self) -> String {
@@ -57,6 +63,9 @@ impl Line {
         }
         if let Some(from) = self.resolved_from {
             v["resolved"] = serde_json::json!({ "from": from });
+        }
+        for (key, value) in &self.extra {
+            v[*key] = value.clone();
         }
         v.to_string()
     }
@@ -199,4 +208,79 @@ fn a_request_resolved_to_two_branches_conflicts() {
         ],
     );
     assert_eq!(rules(&r), vec![Rule::ConflictingResolution]);
+}
+
+#[test]
+fn a_new_pending_line_not_recorded_for_the_base_branch_fails() {
+    let r = run(&[], &[entry("r1", "feat/x").pending()]);
+    assert_eq!(rules(&r), vec![Rule::PendingNotOnBase]);
+}
+
+#[test]
+fn a_pending_line_for_another_branch_is_not_counted_as_a_pending_note() {
+    let r = run(&[], &[entry("r1", "feat/y").pending()]);
+    assert_eq!(r.pending, 0);
+}
+
+#[test]
+fn a_resolution_that_changes_the_origin_is_a_mismatch() {
+    let r = run(
+        &[],
+        &[
+            entry("r1", "main")
+                .pending()
+                .with("origin", serde_json::json!("main")),
+            entry("r1", "feat/x")
+                .resolves("main")
+                .with("origin", serde_json::json!({"worktree": "w"})),
+        ],
+    );
+    assert_eq!(rules(&r), vec![Rule::ResolutionMismatch]);
+}
+
+#[test]
+fn a_resolution_that_changes_the_subagent_or_agent_id_is_a_mismatch() {
+    let tags =
+        |name: &str| serde_json::json!({"workspace": "main", "subagent": name, "agent_id": "a1"});
+    let r = run(
+        &[],
+        &[
+            entry("r1", "main").pending().with("subagent", tags("one")),
+            entry("r1", "feat/x")
+                .resolves("main")
+                .with("subagent", tags("two")),
+        ],
+    );
+    assert_eq!(rules(&r), vec![Rule::ResolutionMismatch]);
+    let r = run(
+        &[],
+        &[
+            entry("r1", "main").pending().with("agent_id", "a1".into()),
+            entry("r1", "feat/x")
+                .resolves("main")
+                .with("agent_id", "a2".into()),
+        ],
+    );
+    assert_eq!(rules(&r), vec![Rule::ResolutionMismatch]);
+}
+
+#[test]
+fn a_faithful_resolution_of_a_fully_populated_pending_line_is_clean() {
+    let tags = serde_json::json!({"workspace": "main", "subagent": "one", "agent_id": "a1"});
+    let r = run(
+        &[],
+        &[
+            entry("r1", "main")
+                .pending()
+                .with("origin", serde_json::json!("main"))
+                .with("subagent", tags.clone())
+                .with("agent_id", "a1".into()),
+            entry("r1", "feat/x")
+                .resolves("main")
+                .with("origin", serde_json::json!("main"))
+                .with("subagent", tags)
+                .with("agent_id", "a1".into()),
+        ],
+    );
+    assert!(r.is_clean(), "{:?}", r.violations);
 }

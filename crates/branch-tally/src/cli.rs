@@ -103,8 +103,9 @@ pub(crate) enum LedgerCommand {
     /// field. New lines recorded for a branch that is neither the head branch nor the base
     /// branch are noted on stderr, not failed. A difference in `.tally/prices.toml` is a
     /// warning. A new base-branch line marked pending (written by `record` on the default
-    /// branch, see `ledger resolve`) is a note, not a failure. Violations are listed on stderr (file, line, rule; never line text) and the
-    /// exit status is 1.
+    /// branch, see `ledger resolve`) is a note, not a failure; a pending line recorded for any
+    /// other branch fails. Violations are listed on stderr (file, line, rule; never line text)
+    /// and the exit status is 1.
     Check(LedgerCheckArgs),
 
     /// Rewrite the ledger's unredacted lines with the keyed hash (the one exception to append-only).

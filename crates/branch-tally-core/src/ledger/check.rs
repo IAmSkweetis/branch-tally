@@ -51,12 +51,16 @@ pub enum Rule {
     /// A new resolution line has no pending line for `(request_id, resolved.from)` on base or
     /// head.
     OrphanResolution,
-    /// A new resolution line's usage, model, `ts`, session or redaction differ from the pending
-    /// line it resolves.
+    /// A new resolution line differs from the pending line it resolves in any field other than
+    /// the ones a resolution sets (`recorded_for`, `branch`, `basis`, `kept_by`, `recorded_at`,
+    /// `pending`, `resolved`).
     ResolutionMismatch,
     /// A new resolution line names a different branch than another resolution of the same
     /// request, on base or head.
     ConflictingResolution,
+    /// A new line with `pending` set is not recorded for the base branch: only `record` on the
+    /// default branch writes pending lines.
+    PendingNotOnBase,
 }
 
 /// One broken rule.
@@ -261,11 +265,16 @@ impl ResolutionIndex {
         let Some(pending) = self.pending.get(&key) else {
             return Some(Rule::OrphanResolution);
         };
-        let same = pending.usage == entry.usage
-            && pending.model == entry.model
-            && pending.ts == entry.ts
-            && pending.session_id == entry.session_id
-            && pending.redaction == entry.redaction;
+        // Compare the whole entry: only the fields a resolution legitimately sets may differ.
+        let mut expected = pending.clone();
+        expected.recorded_for.clone_from(&entry.recorded_for);
+        expected.branch.clone_from(&entry.branch);
+        expected.basis = entry.basis;
+        expected.kept_by = entry.kept_by;
+        expected.recorded_at.clone_from(&entry.recorded_at);
+        expected.pending = entry.pending;
+        expected.resolved.clone_from(&entry.resolved);
+        let same = expected == *entry;
         if !same {
             return Some(Rule::ResolutionMismatch);
         }
@@ -309,6 +318,8 @@ fn check_ledger_line(raw: &[u8], line: u64, input: &CheckInput<'_>, state: &mut 
     };
     if entry.pending && entry.resolved.is_some() {
         flag(Rule::InvalidLineKind);
+    } else if entry.pending && entry.recorded_for != input.base_branch {
+        flag(Rule::PendingNotOnBase);
     } else if let Some(rule) = resolution.rule_for(&entry) {
         flag(rule);
     }

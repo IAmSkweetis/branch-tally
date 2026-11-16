@@ -204,6 +204,9 @@ fn describe(v: &Violation) -> String {
         Rule::ConflictingResolution => {
             "request resolved to a different branch elsewhere".to_owned()
         }
+        Rule::PendingNotOnBase => {
+            "pending line recorded for a branch other than the base".to_owned()
+        }
     };
     format!("{file}: {place}: {rule}")
 }
