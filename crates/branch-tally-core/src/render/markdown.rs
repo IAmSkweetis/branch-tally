@@ -590,6 +590,16 @@ pub fn markdown(summary: &Summary, costs: &Costs, show_cost: bool) -> String {
     o.push(note);
     o.push(String::new());
 
+    uncertain_usage_notes(summary, &mut o);
+
+    subagent_section(summary, costs, show_cost, &mut o);
+
+    attribution_details(summary, &mut o);
+    o.join("\n")
+}
+
+/// Footnotes for repository-wide usage outside this branch's total.
+fn uncertain_usage_notes(summary: &Summary, o: &mut Vec<String>) {
     // #60: usage no branch could claim. Repository-wide, so it is not part of this branch's total.
     if summary.unstamped.calls > 0 {
         o.push(format!(
@@ -601,10 +611,18 @@ pub fn markdown(summary: &Summary, costs: &Costs, show_cost: bool) -> String {
         o.push(String::new());
     }
 
-    subagent_section(summary, costs, show_cost, &mut o);
-
-    attribution_details(summary, &mut o);
-    o.join("\n")
+    // ADR 0006: default-branch usage still waiting for its branch. Uncertain, so outside the totals.
+    if summary.pending.lines > 0 {
+        o.push(format!(
+            "<sub>{} pending ledger line(s), {} call(s) / {} tokens recorded on the default branch \
+             before a branch was cut, are not yet attributed to any branch and are not in these \
+             totals.</sub>",
+            n(summary.pending.lines),
+            n(summary.pending.calls),
+            n(summary.pending.tokens),
+        ));
+        o.push(String::new());
+    }
 }
 
 /// The collapsed attribution table, sorted by descending tokens (stably).
