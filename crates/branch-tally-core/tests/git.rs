@@ -322,8 +322,14 @@ fn origin_repo_reads_origin_and_drops_credentials() {
             "https://u:tok@github.com/acme/widget.git",
         ],
     );
-    assert_eq!(SystemGit.origin_repo(&f.wt).expect("repo"), "acme/widget");
-    assert_eq!(SystemGit.origin_repo(&f.main).expect("repo"), "acme/widget");
+    assert_eq!(
+        SystemGit.origin_repo(&f.wt).expect("repo"),
+        "github.com/acme/widget"
+    );
+    assert_eq!(
+        SystemGit.origin_repo(&f.main).expect("repo"),
+        "github.com/acme/widget"
+    );
 }
 
 #[test]
