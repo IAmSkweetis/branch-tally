@@ -46,6 +46,15 @@ pub enum PrError {
         /// Every matching PR number, sorted.
         numbers: Vec<u64>,
     },
+    /// The PR list was as long as the request limit, so it may be truncated and no PR is chosen
+    /// from it.
+    #[error("{limit} or more open PRs listed for branch {branch:?}; the list may be truncated")]
+    TooManyPrs {
+        /// The branch searched for.
+        branch: String,
+        /// The `--limit` passed to gh.
+        limit: usize,
+    },
     /// `repo` is not `OWNER/REPO` or `HOST/OWNER/REPO` with every segment non-empty. Nothing is
     /// guessed at and no gh call is made.
     #[error("repository {repo:?} is not OWNER/REPO or HOST/OWNER/REPO")]
@@ -89,6 +98,9 @@ pub trait Gh {
     /// [`GhError`] when gh cannot start or exits unsuccessfully.
     fn run(&self, args: &[&str], stdin: Option<&str>) -> Result<String, GhError>;
 }
+
+/// The `--limit` passed to `gh pr list`. A list this long may be truncated, so it is never trusted.
+pub const PR_LIST_LIMIT: usize = 100;
 
 /// Splices `report` into the PR body, or reports why not (`update_pr`).
 ///
@@ -141,22 +153,31 @@ pub fn update_pr(
 /// The one open same-repository PR whose head is `branch`. Fork PRs are never chosen: they must be
 /// named with an explicit number, and how many were skipped is reported.
 fn find_open_pr(gh: &dyn Gh, branch: &str, repo: &str) -> Result<u64, PrError> {
+    // One argument, so a branch starting with `-` is never read as a flag.
+    let head = format!("--head={branch}");
+    let limit = PR_LIST_LIMIT.to_string();
     let args = [
         "pr",
         "list",
         "--repo",
         repo,
-        "--head",
-        branch,
+        &head,
         "--state",
         "open",
         "--json",
         "number,headRepositoryOwner,isCrossRepository",
         "--limit",
-        "100",
+        &limit,
     ];
     let found = run_json(gh, &args, Some("[]"))?;
     let entries = found.as_array().ok_or_else(|| bad_output(&args))?;
+    // A full page may have cut off the right PR or a second one: never decide from it.
+    if entries.len() >= PR_LIST_LIMIT {
+        return Err(PrError::TooManyPrs {
+            branch: branch.to_owned(),
+            limit: PR_LIST_LIMIT,
+        });
+    }
     let repo_owner = repo_owner(repo)?;
     let mut kept = Vec::new();
     let mut ignored = 0_usize;

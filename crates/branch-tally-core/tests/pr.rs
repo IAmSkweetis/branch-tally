@@ -2,7 +2,7 @@
 
 #![expect(clippy::panic, reason = "a wrong error variant fails the test loudly")]
 
-use branch_tally_core::pr::{FakeGh, GhError, PrError, PrOutcome, update_pr};
+use branch_tally_core::pr::{FakeGh, GhError, PR_LIST_LIMIT, PrError, PrOutcome, update_pr};
 use branch_tally_core::render::{END, START, wrap};
 
 fn list() -> Vec<&'static str> {
@@ -11,8 +11,7 @@ fn list() -> Vec<&'static str> {
         "list",
         "--repo",
         REPO,
-        "--head",
-        "feat/x",
+        "--head=feat/x",
         "--state",
         "open",
         "--json",
@@ -116,7 +115,7 @@ fn gh_failure_carries_args_and_detail() {
         panic!("wrong variant");
     };
     assert_eq!(detail, "boom");
-    assert!(args.starts_with("pr list --repo Acme/widgets --head feat/x"));
+    assert!(args.starts_with("pr list --repo Acme/widgets --head=feat/x"));
 }
 
 #[test]
@@ -254,4 +253,48 @@ fn malformed_repo_is_a_typed_error_and_makes_no_gh_call() {
             assert!(gh.calls().is_empty(), "{repo:?} reached gh");
         }
     }
+}
+
+fn many(count: usize, same_repo_number: u64) -> String {
+    let mut items: Vec<(u64, bool, &str)> = (1..count as u64)
+        .map(|n| (1000 + n, true, "mallory"))
+        .collect();
+    items.push((same_repo_number, false, "acme"));
+    pr_json(&items)
+}
+
+#[test]
+fn a_full_list_fails_as_possibly_truncated_even_with_one_same_repo_pr() {
+    assert_eq!(PR_LIST_LIMIT, 100);
+    let gh = FakeGh::new().on(&list(), Ok(&many(PR_LIST_LIMIT, 7)));
+    let err = update_pr(&gh, "feat/x", REPORT, REPO, None, false).unwrap_err();
+    assert!(
+        matches!(err, PrError::TooManyPrs { ref branch, limit } if branch == "feat/x" && limit == PR_LIST_LIMIT),
+        "{err:?}"
+    );
+    assert_eq!(gh.calls().len(), 1);
+}
+
+#[test]
+fn a_list_one_short_of_the_limit_is_decided_normally() {
+    let gh = FakeGh::new()
+        .on(&list(), Ok(&many(PR_LIST_LIMIT - 1, 7)))
+        .on(&view("7"), Ok(r#"{"body": "x"}"#))
+        .on(&edit("7"), Ok(""));
+    let out = update_pr(&gh, "feat/x", REPORT, REPO, None, false).unwrap();
+    assert_eq!(out, PrOutcome::Written { number: 7 });
+}
+
+#[test]
+fn a_branch_starting_with_a_dash_is_one_head_argument() {
+    let gh = FakeGh::new();
+    let _ = update_pr(&gh, "-x", REPORT, REPO, None, false);
+    let calls = gh.calls();
+    assert_eq!(calls.len(), 1);
+    assert!(
+        calls[0].args.contains(&"--head=-x".to_owned()),
+        "{:?}",
+        calls[0].args
+    );
+    assert!(!calls[0].args.contains(&"-x".to_owned()));
 }
