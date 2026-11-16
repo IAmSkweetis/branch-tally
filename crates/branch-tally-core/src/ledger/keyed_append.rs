@@ -45,6 +45,41 @@ pub fn append_keyed_default(
         mode,
         main,
         clock,
+        false,
+        &|| {},
+    )
+}
+
+/// [`append_keyed_default`] that marks every line it writes `pending` when `pending` is set: the
+/// branch being recorded is the repository's default branch (decision 0006).
+///
+/// # Errors
+/// As [`append_keyed_default`].
+#[expect(
+    clippy::too_many_arguments,
+    reason = "mirrors `append_keyed_default` plus the pending mark"
+)]
+pub fn append_keyed_default_pending(
+    root: &Path,
+    main_root: Option<&Path>,
+    names: bool,
+    records: &[SelectedRecord],
+    recorded_for: &str,
+    mode: Mode,
+    main: Option<&Path>,
+    clock: &dyn Clock,
+    pending: bool,
+) -> Result<AppendOutcome, LedgerError> {
+    append_keyed_default_with(
+        root,
+        main_root,
+        names,
+        records,
+        recorded_for,
+        mode,
+        main,
+        clock,
+        pending,
         &|| {},
     )
 }
@@ -64,6 +99,7 @@ pub(super) fn append_keyed_default_with(
     mode: Mode,
     main: Option<&Path>,
     clock: &dyn Clock,
+    pending: bool,
     between: &dyn Fn(),
 ) -> Result<AppendOutcome, LedgerError> {
     let Some(tally) = TallyDir::open(root)? else {
@@ -88,6 +124,7 @@ pub(super) fn append_keyed_default_with(
             mode,
             main,
             clock,
+            pending,
         },
         between,
     )?;
@@ -117,6 +154,38 @@ pub fn append_keyed_explicit(
     main: Option<&Path>,
     clock: &dyn Clock,
 ) -> Result<AppendOutcome, LedgerError> {
+    append_keyed_explicit_pending(
+        path,
+        salt_home,
+        names,
+        records,
+        recorded_for,
+        mode,
+        main,
+        clock,
+        false,
+    )
+}
+
+/// [`append_keyed_explicit`] with the pending mark of [`append_keyed_default_pending`].
+///
+/// # Errors
+/// As [`append_keyed_explicit`].
+#[expect(
+    clippy::too_many_arguments,
+    reason = "mirrors `append_keyed_explicit` plus the pending mark"
+)]
+pub fn append_keyed_explicit_pending(
+    path: &Path,
+    salt_home: &TallyDir,
+    names: bool,
+    records: &[SelectedRecord],
+    recorded_for: &str,
+    mode: Mode,
+    main: Option<&Path>,
+    clock: &dyn Clock,
+    pending: bool,
+) -> Result<AppendOutcome, LedgerError> {
     use std::io::Write;
 
     let write_err = |source| LedgerError::Write {
@@ -144,6 +213,7 @@ pub fn append_keyed_explicit(
             mode,
             main,
             clock,
+            pending,
         },
         &|| {},
     )?;
@@ -169,6 +239,7 @@ struct Input<'a> {
     mode: Mode,
     main: Option<&'a Path>,
     clock: &'a dyn Clock,
+    pending: bool,
 }
 
 impl Input<'_> {
@@ -181,6 +252,7 @@ impl Input<'_> {
             self.main,
             redactor,
             self.clock,
+            self.pending,
         )
     }
 }
