@@ -121,7 +121,9 @@ this branch; see [Unstamped calls](cli.md#unstamped-calls).
 
 - Put the table on your pull request: `branch-tally report --pr --dry-run` shows the new PR body,
   and `branch-tally report --pr` writes it. You need the [GitHub CLI](https://cli.github.com/)
-  installed and signed in, and an open PR for the branch.
+  installed and signed in, an `origin` remote on GitHub, and an open PR for the branch in that
+  repository. For a PR opened from a fork, pass its number: `branch-tally report --pr 42`. See
+  [Updating a pull request](cli.md#updating-a-pull-request).
 - Get machine-readable output with `--json`.
 - Choose how calls are assigned to branches with `--mode` (see
   [Attribution modes](cli.md#attribution-modes)).
