@@ -1484,9 +1484,9 @@ fn markdown_reports_pending_ledger_usage_only_when_there_is_some() {
         tokens: 4_321,
     };
     let md = markdown(&s, &c, false);
-    let line = "3 pending ledger line(s), 5 call(s) / 4,321 tokens recorded on the default branch \
-                before a branch was cut, are not yet attributed to any branch and are not in \
-                these totals.";
+    let line = "3 pending ledger line(s), 5 call(s) / 4,321 tokens, were recorded on the default \
+                branch and could not yet be attributed to a branch with certainty; they are not \
+                in these totals.";
     assert!(md.contains(line), "{md}");
     assert!(md.find("<sub>Branch").unwrap() < md.find(line).unwrap());
     assert!(md.find(line).unwrap() < md.find("<details>").unwrap());

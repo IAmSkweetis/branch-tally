@@ -614,9 +614,9 @@ fn uncertain_usage_notes(summary: &Summary, o: &mut Vec<String>) {
     // ADR 0006: default-branch usage still waiting for its branch. Uncertain, so outside the totals.
     if summary.pending.lines > 0 {
         o.push(format!(
-            "<sub>{} pending ledger line(s), {} call(s) / {} tokens recorded on the default branch \
-             before a branch was cut, are not yet attributed to any branch and are not in these \
-             totals.</sub>",
+            "<sub>{} pending ledger line(s), {} call(s) / {} tokens, were recorded on the default \
+             branch and could not yet be attributed to a branch with certainty; they are not in \
+             these totals.</sub>",
             n(summary.pending.lines),
             n(summary.pending.calls),
             n(summary.pending.tokens),
