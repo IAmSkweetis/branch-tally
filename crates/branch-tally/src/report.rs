@@ -497,6 +497,7 @@ fn update(
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        e @ PrError::InvalidRepo { .. } => e.to_string(),
         PrError::Gh(e) => e.to_string(),
     })?;
     match outcome {

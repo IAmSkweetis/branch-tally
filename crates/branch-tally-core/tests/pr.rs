@@ -201,3 +201,57 @@ fn missing_fields_are_bad_output_never_a_guess() {
         );
     }
 }
+
+fn list_for(repo: &'static str) -> Vec<&'static str> {
+    let mut args = list();
+    args[3] = repo;
+    args
+}
+
+#[test]
+fn enterprise_repo_matches_on_the_owner_segment_not_the_host() {
+    let repo = "ghe.example.com/acme/widget";
+    let gh = FakeGh::new()
+        .on(&list_for(repo), Ok(&pr_json(&[(5, false, "acme")])))
+        .on(
+            &["pr", "view", "5", "--repo", repo, "--json", "body"],
+            Ok(r#"{"body": "x"}"#),
+        )
+        .on(
+            &["pr", "edit", "5", "--repo", repo, "--body-file", "-"],
+            Ok(""),
+        );
+    let out = update_pr(&gh, "feat/x", REPORT, repo, None, false).unwrap();
+    assert_eq!(out, PrOutcome::Written { number: 5 });
+}
+
+#[test]
+fn enterprise_repo_still_counts_a_pr_owned_by_the_host_name_as_ignored() {
+    let repo = "ghe.example.com/acme/widget";
+    let gh = FakeGh::new().on(
+        &list_for(repo),
+        Ok(&pr_json(&[(5, false, "ghe.example.com")])),
+    );
+    let err = update_pr(&gh, "feat/x", REPORT, repo, None, false).unwrap_err();
+    assert!(
+        matches!(err, PrError::NoOpenPr { ignored: 1, .. }),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn malformed_repo_is_a_typed_error_and_makes_no_gh_call() {
+    for repo in [
+        "", "widget", "acme/", "/widget", "a//b", "a/b/c/d", "//", "h/a/",
+    ] {
+        for number in [None, Some(3)] {
+            let gh = FakeGh::new();
+            let err = update_pr(&gh, "feat/x", REPORT, repo, number, false).unwrap_err();
+            assert!(
+                matches!(err, PrError::InvalidRepo { repo: ref r } if r == repo),
+                "{repo:?}: {err:?}"
+            );
+            assert!(gh.calls().is_empty(), "{repo:?} reached gh");
+        }
+    }
+}
