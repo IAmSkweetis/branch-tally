@@ -26,7 +26,7 @@ pub use project::{BranchRow, ProjectReport, ProjectTotals, SeriesPoint, SharedOv
 pub use subagent::{Dispatch, SubagentRow, SubagentSummary, SubagentTags, Workspace};
 pub use summary::{
     Bucket, DefaultBranchSource, DoubleCountRisk, Footnote, HeuristicBreakdown, HeuristicCount,
-    LiveMatchFailure, MixedLedger, Mode, SessionRow, Summary, Unstamped, WorkBranchRule,
+    LiveMatchFailure, MixedLedger, Mode, Pending, SessionRow, Summary, Unstamped, WorkBranchRule,
 };
 pub use timestamp::{InvalidTimestamp, Timestamp};
 
