@@ -6,6 +6,7 @@
 //! `ledger::resolve_pending`, and appends what comes back. It never guesses: whatever the evidence
 //! cannot place stays pending and is counted by reason.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use super::{DefaultBranch, ReportError};
@@ -15,7 +16,9 @@ use crate::ledger::{
     AppendOutcome, Clock, EvidenceMap, LedgerTarget, PendingEvidence, PendingStats, Salt, TallyDir,
     TimelineEvidence,
 };
-use crate::model::{AttributedRecord, CaptureEvent, Dispatch, Record, Timestamp};
+use crate::model::{
+    AttributedRecord, Bucket, CaptureEvent, Dispatch, Pending, Record, RequestId, Timestamp,
+};
 use crate::sources::{ReadStats, Source};
 
 /// What [`resolve_at`] did.
@@ -160,7 +163,7 @@ impl Resolving<'_> {
 
 /// The salts in `homes` whose fingerprint is on a ledger line. A pending line can only be matched
 /// under the salt it was redacted with, so a salt no line names is never used.
-fn matching_salts(homes: &[PathBuf], ledger: &crate::ledger::Ledger) -> Vec<Salt> {
+pub(super) fn matching_salts(homes: &[PathBuf], ledger: &crate::ledger::Ledger) -> Vec<Salt> {
     let wanted = &ledger.stats().redaction_fingerprints;
     let mut out: Vec<Salt> = Vec::new();
     if wanted.is_empty() {
@@ -242,4 +245,75 @@ fn captured_work_branch(
         && !branch.starts_with("worktree-agent-")
         && is_work(branch);
     (usable && branches.all(|b| b == branch)).then(|| branch.to_owned())
+}
+
+/// The ids under which a ledger line could hold the calls `ids` name: each raw id, and its hashed
+/// form under every salt in `salts` (a redacted line is keyed by the hashed id).
+pub(super) fn stored_forms<'a>(
+    ids: impl Iterator<Item = &'a RequestId>,
+    salts: &[Salt],
+) -> HashSet<RequestId> {
+    let mut out = HashSet::new();
+    for id in ids {
+        for salt in salts {
+            out.insert(salt.request_id(id));
+        }
+        out.insert(id.clone());
+    }
+    out
+}
+
+/// The unresolved pending lines (as [`crate::ledger::Ledger::unresolved_pending`] counts them)
+/// minus those whose request the report already counts in its totals (decision 0006): `counted`
+/// holds the ids as a ledger line stores them. Deduplicated by request id.
+pub(super) fn pending_outside(
+    ledger: &crate::ledger::Ledger,
+    counted: &HashSet<RequestId>,
+) -> Pending {
+    let mut seen: HashSet<&RequestId> = HashSet::new();
+    let mut out = Pending::default();
+    for p in ledger.entries().iter().filter(|e| e.pending) {
+        let settled = ledger.entries().iter().any(|e| {
+            !e.pending && e.request_id == p.request_id && e.recorded_for != p.recorded_for
+        });
+        if settled || counted.contains(&p.request_id) || !seen.insert(&p.request_id) {
+            continue;
+        }
+        let u = &p.usage;
+        let bucket = Bucket {
+            input: u.input,
+            cache_write_5m: u.cache_write_5m,
+            cache_write_1h: u.cache_write_1h,
+            cache_read: u.cache_read,
+            output: u.output,
+            ..Bucket::default()
+        };
+        out.lines += 1;
+        out.calls += 1;
+        out.tokens = out.tokens.saturating_add(bucket.tokens());
+    }
+    out
+}
+
+/// The default ledger's unresolved pending lines that a live report's selection does not already
+/// count. Zero when there is no ledger, or it cannot be read ("none, or unknown").
+pub(super) fn live_pending(
+    git: &dyn Git,
+    repo_dir: &Path,
+    main: &Path,
+    selected: &[crate::model::SelectedRecord],
+) -> Pending {
+    let Ok(root) = git.toplevel(repo_dir) else {
+        return Pending::default();
+    };
+    let Ok(ledger) = crate::ledger::read_default(&root) else {
+        return Pending::default();
+    };
+    let path = root.join(crate::ledger::LEDGER_PATH);
+    let salts = matching_salts(&super::salt_homes(Some(&root), &path, main), &ledger);
+    let counted = stored_forms(
+        selected.iter().map(|s| &s.attributed.record.request_id),
+        &salts,
+    );
+    pending_outside(&ledger, &counted)
 }

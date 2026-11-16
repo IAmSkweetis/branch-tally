@@ -352,7 +352,8 @@ fn the_live_report_reads_the_default_ledger_for_pending_lines() {
         Path::new("/projects"),
         &repo.root(),
         Some("feat/x"),
-        &Options::default(),
+        // Strict: claim mode would count the session's undated pre-cut call, so it would not be pending.
+        &Options::new(Mode::Strict),
         PriceTable::bundled(),
     )
     .unwrap();
@@ -453,4 +454,142 @@ fn a_claim_mode_record_on_the_branch_covers_the_pending_lines_without_a_second_l
     assert_eq!((stats.resolved, stats.covered), (0, 2));
     assert_eq!(r.resolutions_appended, 0);
     assert_eq!(repo.report("feat/x", None).summary.pending.lines, 0);
+}
+
+// Decision 0006, Reporting: a pending line is in no branch's totals (the default branch's
+// included) and appears only in `Summary.pending`; a request the report already counts is left
+// out of `pending`.
+
+/// Rewrites the ledger line for `request` so it is an ordinary (not pending) line.
+fn unpend(repo: &Repo, request: &str) {
+    let needle = format!("\"{request}\"");
+    let text: Vec<String> = repo
+        .lines()
+        .into_iter()
+        .map(|l| {
+            if l.contains(&needle) {
+                l.replace(",\"pending\":true", "")
+            } else {
+                l
+            }
+        })
+        .collect();
+    std::fs::write(repo.ledger(), text.join("\n") + "\n").unwrap();
+}
+
+fn main_records() -> Vec<Record> {
+    vec![
+        rec("s1", "req-a", "main", Some(1)),
+        rec("s1", "req-b", "main", Some(2)),
+        rec("s1", "req-m", "main", Some(3)),
+    ]
+}
+
+fn live_run(repo: &Repo, mode: Mode, records: Vec<Record>) -> branch_tally_core::report::Report {
+    run(
+        &repo.git(),
+        &FakeSource(records),
+        Path::new("/projects"),
+        &repo.root(),
+        Some("feat/x"),
+        &Options::new(mode),
+        PriceTable::bundled(),
+    )
+    .unwrap()
+}
+
+fn ledger_with_live(
+    repo: &Repo,
+    branch: &str,
+    mode: Mode,
+    live: Vec<Record>,
+) -> branch_tally_core::report::Report {
+    run_from_ledger_at(
+        &repo.git(),
+        Some(&FakeSource(live) as &dyn Source),
+        Path::new("/projects"),
+        &repo.root(),
+        Some(branch),
+        &Options::new(mode),
+        &LedgerTarget::Default,
+        PriceTable::bundled(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_default_branch_ledger_report_leaves_pending_lines_out_of_its_totals() {
+    let repo = Repo::new();
+    repo.record("main", main_records(), RecordRedaction::Off);
+    unpend(&repo, "req-m");
+    let report = repo.report("main", None);
+    assert_eq!(report.summary.total.calls, 1, "only the ordinary line");
+    assert_eq!(report.summary.pending.calls, 2);
+    assert_eq!(report.summary.pending.tokens, 30);
+}
+
+#[test]
+fn a_default_branch_report_with_live_counts_a_live_call_once_and_not_as_pending() {
+    let repo = Repo::new();
+    repo.record("main", main_records(), RecordRedaction::Off);
+    unpend(&repo, "req-m");
+    let report = ledger_with_live(&repo, "main", Mode::Strict, main_records());
+    // Live strict selection counts all three for main, so none is also pending.
+    assert_eq!(report.summary.total.calls, 3);
+    assert_eq!(report.summary.pending.lines, 0);
+}
+
+#[test]
+fn a_live_report_does_not_count_a_pre_cut_call_it_attributes_forward_as_pending() {
+    let repo = Repo::new();
+    repo.record("main", cut_session(), RecordRedaction::Off);
+    let report = live_run(&repo, Mode::Timeline, cut_session());
+    assert_eq!(report.summary.total.calls, 3);
+    assert_eq!(report.summary.pending.lines, 0, "counted in the total");
+}
+
+#[test]
+fn a_live_report_leaves_a_call_it_does_not_count_in_pending() {
+    let repo = Repo::new();
+    repo.record("main", cut_session(), RecordRedaction::Off);
+    // Strict mode counts only the call stamped feat/x; the two pre-cut calls stay pending.
+    let report = live_run(&repo, Mode::Strict, cut_session());
+    assert_eq!(report.summary.total.calls, 1);
+    assert_eq!(report.summary.pending.lines, 2);
+}
+
+#[test]
+fn a_redacted_live_report_does_not_count_a_pre_cut_call_it_attributes_forward_as_pending() {
+    let repo = Repo::new();
+    let keyed = RecordRedaction::Keyed { names: false };
+    repo.record("main", cut_session(), keyed);
+    let report = live_run(&repo, Mode::Timeline, cut_session());
+    assert_eq!(report.summary.total.calls, 3);
+    assert_eq!(report.summary.pending.lines, 0, "hashed ids matched");
+}
+
+#[test]
+fn a_ledger_report_with_live_does_not_count_a_forward_attributed_call_as_pending() {
+    let repo = Repo::new();
+    repo.record("main", cut_session()[..2].to_vec(), RecordRedaction::Off);
+    repo.record(
+        "feat/x",
+        vec![cut_session()[2].clone()],
+        RecordRedaction::Off,
+    );
+    // The ledger holds only req-c for feat/x; live timeline attributes both pre-cut calls forward.
+    let report = ledger_with_live(&repo, "feat/x", Mode::Timeline, cut_session());
+    assert_eq!(report.summary.total.calls, 3);
+    assert_eq!(report.summary.pending.lines, 0);
+}
+
+#[test]
+fn a_redacted_ledger_report_with_live_does_not_count_a_forward_attributed_call_as_pending() {
+    let repo = Repo::new();
+    let keyed = RecordRedaction::Keyed { names: false };
+    repo.record("main", cut_session()[..2].to_vec(), keyed);
+    repo.record("feat/x", vec![cut_session()[2].clone()], keyed);
+    let report = ledger_with_live(&repo, "feat/x", Mode::Timeline, cut_session());
+    assert_eq!(report.summary.total.calls, 3);
+    assert_eq!(report.summary.pending.lines, 0);
 }
