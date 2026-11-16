@@ -593,3 +593,46 @@ fn a_redacted_ledger_report_with_live_does_not_count_a_forward_attributed_call_a
     assert_eq!(report.summary.total.calls, 3);
     assert_eq!(report.summary.pending.lines, 0);
 }
+
+#[test]
+fn a_default_branch_ledger_of_only_pending_lines_reports_zero_totals_and_the_pending() {
+    let repo = Repo::new();
+    repo.record("main", main_records(), RecordRedaction::Off);
+    let report = repo.report("main", None);
+    assert_eq!(report.summary.total.calls, 0);
+    assert_eq!(report.summary.pending.lines, 3);
+    assert_eq!(report.summary.pending.tokens, 45);
+    let md = markdown(&report.summary, &report.costs, true);
+    assert!(md.contains("pending ledger line"), "{md}");
+    let js = json(&report.summary, &report.costs, true);
+    assert!(js.contains("\"pending\": { \"lines\": 3"), "{js}");
+}
+
+#[test]
+fn a_live_report_with_no_counted_calls_but_pending_lines_still_reports_them() {
+    let repo = Repo::new();
+    repo.record("main", cut_session(), RecordRedaction::Off);
+    // Live transcripts hold only calls for another branch: nothing counted, two pending.
+    let other = vec![rec("s9", "req-z", "feat/z", Some(5))];
+    let report = live_run(&repo, Mode::Strict, other);
+    assert_eq!(report.summary.total.calls, 0);
+    assert_eq!(report.summary.pending.lines, 2);
+}
+
+#[test]
+fn no_records_and_no_pending_is_still_no_records() {
+    let repo = Repo::new();
+    let err = run(
+        &repo.git(),
+        &FakeSource(vec![rec("s9", "req-z", "feat/z", Some(5))]),
+        Path::new("/projects"),
+        &repo.root(),
+        Some("feat/x"),
+        &Options::new(Mode::Strict),
+        PriceTable::bundled(),
+    );
+    assert!(matches!(
+        err,
+        Err(branch_tally_core::report::ReportError::NoRecords { .. })
+    ));
+}

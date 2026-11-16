@@ -485,11 +485,11 @@ fn two_branches_claiming_each_others_requests_both_report_correctly_from_one_led
     assert_eq!(got.summary.footnote, want.summary.footnote);
     assert_eq!(got.costs.total, want.costs.total);
     // Decision 0006: `main` is the default branch, so its lines were written pending and are in no
-    // branch's totals. The ledger holds nothing else for it, so there is nothing to report.
-    assert!(matches!(
-        from_ledger(None, "main", &path),
-        Err(ReportError::NoRecords { .. })
-    ));
+    // branch's totals. The report has zero totals and carries what is unresolved as pending.
+    let main = from_ledger(None, "main", &path).unwrap();
+    assert_eq!(main.summary.total.calls, 0);
+    // `m` is also held for feat/a by an ordinary line, so only `c` is still pending.
+    assert_eq!(main.summary.pending.lines, 1);
     // Re-recording either appends nothing.
     assert_eq!(do_record(&source, "feat/a", &path, "x").outcome.appended, 0);
     assert_eq!(do_record(&source, "main", &path, "x").outcome.appended, 0);

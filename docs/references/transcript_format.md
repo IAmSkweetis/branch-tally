@@ -220,8 +220,10 @@ in two steps in `report/`:
   A request the report already counts in its totals (a pre-cut call that timeline or claim mode
   attributes forward before `record` has resolved it) is left out of `pending`. The comparison is
   on the stored id: for a redacted ledger the report's selected ids are also hashed under each
-  salt whose fingerprint is on a ledger line. A default-branch report from a ledger holding only
-  pending lines has no records, so it is `NoRecords`, not an empty total.
+  salt whose fingerprint is on a ledger line. A report
+  (ledger, with or without live, or the live `run`) that counts no records but has unresolved
+  pending lines is still built, with zero totals and the pending; `NoRecords` is returned only
+  when there are no records and no pending lines.
 - The live report (`run`) fills `Summary.pending` from the default ledger when one exists, minus
   the requests its own selection counts, and reports zero without a `.tally/`. An unreadable
   ledger also reads as zero there, which the field documents as "none or unknown".
