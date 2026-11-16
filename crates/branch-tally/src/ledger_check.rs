@@ -190,6 +190,14 @@ fn describe(v: &Violation) -> String {
         Rule::TokenOverCeiling { field } => {
             format!("token field {field} over the {MAX_TOKENS_PER_FIELD} ceiling")
         }
+        Rule::InvalidLineKind => "line is both pending and resolved".to_owned(),
+        Rule::OrphanResolution => "resolution has no matching pending line".to_owned(),
+        Rule::ResolutionMismatch => {
+            "resolution differs from the pending line it resolves".to_owned()
+        }
+        Rule::ConflictingResolution => {
+            "request resolved to a different branch elsewhere".to_owned()
+        }
     };
     format!("{file}: {place}: {rule}")
 }
