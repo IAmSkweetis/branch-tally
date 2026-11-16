@@ -241,7 +241,9 @@ mod tests {
         assert_ne!(a, b);
     }
 
-    #[cfg(unix)]
+    // Not on Apple platforms: APFS and HFS+ refuse a file name that is not valid UTF-8 (EILSEQ), so
+    // such a target cannot exist there for the helper to write.
+    #[cfg(all(unix, not(target_vendor = "apple")))]
     #[test]
     fn non_utf8_target_name_works() {
         use std::os::unix::ffi::OsStrExt;
