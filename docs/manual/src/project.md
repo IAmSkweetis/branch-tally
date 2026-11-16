@@ -53,6 +53,9 @@ stderr.
 
 There is one row for each branch that `record` was run for: the ledger's `recorded_for` field. A
 row's numbers are what `branch-tally report <branch> --from-ledger` shows for that branch.
+[Pending lines](ledger.md#usage-recorded-on-the-default-branch) are in no row, the default
+branch's included. Their usage counts toward a branch only through a resolution line, or another
+line recorded for that branch.
 
 | Column | Holds |
 | ------ | ----- |
