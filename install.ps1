@@ -436,8 +436,14 @@ function Install-BranchTally {
     New-Item -ItemType Directory -Force -Path $To | Out-Null
     $To = (Resolve-Path -LiteralPath $To).ProviderPath
     # Stage beside the destination, then rename over it, so an existing binary is replaced in one step.
-    $staged = Join-Path $To ".branch-tally.new.$PID.exe"
-    Copy-Item -LiteralPath $bin -Destination $staged
+    # The name is random and the file is created with CreateNew, which fails rather than follow or
+    # overwrite a path another user planted in $To.
+    $staged = Join-Path $To (".branch-tally.new.{0}.exe" -f [Guid]::NewGuid().ToString('N'))
+    $inStream = New-Object System.IO.FileStream($bin, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+      $dst = New-Object System.IO.FileStream($staged, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+      try { $inStream.CopyTo($dst) } finally { $dst.Dispose() }
+    } finally { $inStream.Dispose() }
     $final = Join-Path $To 'branch-tally.exe'
     try {
       Move-Item -LiteralPath $staged -Destination $final -Force

@@ -4,6 +4,7 @@
 //! the types in [`model`]. Nothing here looks up a home directory or an environment variable;
 //! callers pass the directories in.
 
+pub mod atomic;
 pub mod attribution;
 pub mod config;
 pub mod git;

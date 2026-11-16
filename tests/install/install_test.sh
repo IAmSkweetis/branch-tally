@@ -67,7 +67,7 @@ chmod +x "$shell_under_test"
 TOOLBIN=$T/toolbin
 TOOLBIN_NOCURL=$T/toolbin-nocurl
 mkdir -p "$TOOLBIN" "$TOOLBIN_NOCURL"
-for tool in sh dash bash ksh busybox awk sed tr wc cat mktemp rm cp mv chmod mkdir tar grep ls env head dirname \
+for tool in sh dash bash ksh busybox awk sed tr wc cat mktemp rm cp mv chmod mkdir tar grep ls ln env head dirname \
   sha256sum shasum gzip basename sleep; do
   src=$(command -v "$tool" 2>/dev/null) || continue
   case $src in /*) ;; *) continue ;; esac
@@ -961,6 +961,47 @@ sh_run --help
 check "--help documents the API base variable" contains "$out" "BRANCH_TALLY_INSTALL_API_URL"
 check "--help mentions GH_TOKEN" contains "$out" "GH_TOKEN"
 check "--help explains the mirror fallback" contains "$out" "not confirmed by GitHub"
+
+# 17j. Staging must not follow or overwrite a pre-planted path. The wrapper shell plants a symlink at
+# the old predictable staging name (.branch-tally.new.<pid>) and then execs the installer, which
+# keeps the wrapper's pid, so $$ here is the pid the old code used.
+fresh planted
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mkdir -p "$D"
+printf 'victim-original\n' > "$S/victim"
+# shellcheck disable=SC2016 # the single-quoted script is meant to expand in the child shell
+run_install V="$S/victim" D="$D" "$shell_under_test" -c \
+  'ln -s "$V" "$D/.branch-tally.new.$$"; exec "$0" "$@"' "$shell_under_test" "$installer" --to "$D"
+check "planted symlink at the old staging name: install exits 0" test "$rc" -eq 0
+check "planted symlink at the old staging name: target untouched" test "$(cat "$S/victim")" = victim-original
+check "planted symlink at the old staging name: binary installed" runs_as "$D/branch-tally" "branch-tally 2.0.0"
+check "planted symlink: install is a real file, not a link" test ! -L "$D/branch-tally"
+
+# 17k. A failed install leaves no staged file behind in the destination.
+fresh stagedclean
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+sh_run --to "$D"
+check "success leaves no staged file in the destination" test "$(ls -A "$D")" = branch-tally
+
+# 17l. A copy that fails after the staging file was created removes that file. A cat stub writes
+# part of the binary and fails; other cat calls go to the real one.
+fresh stagedfail
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mkdir -p "$D"
+cat > "$S/stubs/cat" <<CAT
+#!/bin/sh
+case "\$1" in
+  */branch-tally) printf 'partial'; exit 1 ;;
+esac
+exec "$TOOLBIN/cat" "\$@"
+CAT
+chmod +x "$S/stubs/cat"
+sh_run --to "$D"
+check "failed copy: install exits non-zero" test "$rc" -ne 0
+check "failed copy: no staged file left in the destination" empty_dir "$D"
 
 printf '\n%s cases run, %s failed\n' "$cases" "$failures"
 [ "$failures" -eq 0 ] && [ "$cases" -gt 0 ]
