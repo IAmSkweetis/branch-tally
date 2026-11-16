@@ -46,6 +46,13 @@ pub enum PrError {
         /// Every matching PR number, sorted.
         numbers: Vec<u64>,
     },
+    /// `repo` is not `OWNER/REPO` or `HOST/OWNER/REPO` with every segment non-empty. Nothing is
+    /// guessed at and no gh call is made.
+    #[error("repository {repo:?} is not OWNER/REPO or HOST/OWNER/REPO")]
+    InvalidRepo {
+        /// The string as given.
+        repo: String,
+    },
     /// A `gh` call failed.
     #[error(transparent)]
     Gh(#[from] GhError),
@@ -88,7 +95,8 @@ pub trait Gh {
 /// # Errors
 ///
 /// [`PrError`] when no single PR is found or a gh call fails.
-/// `repo` is `OWNER/REPO`, passed to every gh call as `--repo`.
+/// `repo` is `OWNER/REPO`, or `HOST/OWNER/REPO` for GitHub Enterprise, passed unchanged to every gh
+/// call as `--repo`; any other shape is [`PrError::InvalidRepo`].
 pub fn update_pr(
     gh: &dyn Gh,
     branch: &str,
@@ -97,6 +105,8 @@ pub fn update_pr(
     number: Option<u64>,
     dry_run: bool,
 ) -> Result<PrOutcome, PrError> {
+    // Validated up front so no gh call ever carries a repo string we could not interpret.
+    repo_owner(repo)?;
     let number = match number {
         Some(n) => n,
         None => find_open_pr(gh, branch, repo)?,
@@ -147,7 +157,7 @@ fn find_open_pr(gh: &dyn Gh, branch: &str, repo: &str) -> Result<u64, PrError> {
     ];
     let found = run_json(gh, &args, Some("[]"))?;
     let entries = found.as_array().ok_or_else(|| bad_output(&args))?;
-    let repo_owner = repo.split('/').next().unwrap_or_default();
+    let repo_owner = repo_owner(repo)?;
     let mut kept = Vec::new();
     let mut ignored = 0_usize;
     for entry in entries {
@@ -185,6 +195,18 @@ fn find_open_pr(gh: &dyn Gh, branch: &str, repo: &str) -> Result<u64, PrError> {
         _ => Err(PrError::AmbiguousPr {
             branch: branch.to_owned(),
             numbers: kept,
+        }),
+    }
+}
+
+/// The OWNER segment of `OWNER/REPO` or `HOST/OWNER/REPO`. Any other shape is an error, never a
+/// guess.
+fn repo_owner(repo: &str) -> Result<&str, PrError> {
+    let parts: Vec<&str> = repo.split('/').collect();
+    match parts.as_slice() {
+        [owner, _] | [_, owner, _] if parts.iter().all(|p| !p.is_empty()) => Ok(owner),
+        _ => Err(PrError::InvalidRepo {
+            repo: repo.to_owned(),
         }),
     }
 }
