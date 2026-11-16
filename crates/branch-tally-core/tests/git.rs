@@ -300,3 +300,38 @@ fn file_at_error_text_carries_no_file_contents() {
         .expect_err("unknown ref");
     assert!(!format!("{err} {err:?}").contains("TOPSECRET"));
 }
+
+#[test]
+fn origin_repo_is_not_guessed_without_origin() {
+    let f = fixture();
+    assert!(matches!(
+        SystemGit.origin_repo(&f.main),
+        Err(GitError::Failed { .. })
+    ));
+}
+
+#[test]
+fn origin_repo_reads_origin_and_drops_credentials() {
+    let f = fixture();
+    git(
+        &f.wt,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://u:tok@github.com/acme/widget.git",
+        ],
+    );
+    assert_eq!(SystemGit.origin_repo(&f.wt).expect("repo"), "acme/widget");
+    assert_eq!(SystemGit.origin_repo(&f.main).expect("repo"), "acme/widget");
+}
+
+#[test]
+fn origin_repo_with_a_local_path_origin_is_an_error_without_leaking_it() {
+    let f = fixture();
+    let origin = f.main.to_str().expect("utf8");
+    git(&f.main, &["remote", "add", "origin", origin]);
+    let err = SystemGit.origin_repo(&f.main).expect_err("local path");
+    assert!(matches!(err, GitError::UnexpectedOutput { .. }));
+    assert!(!err.to_string().contains(origin));
+}
