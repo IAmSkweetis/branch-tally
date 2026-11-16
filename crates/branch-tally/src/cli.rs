@@ -102,7 +102,8 @@ pub(crate) enum LedgerCommand {
     /// non-future `recorded_at`, not repeat a base request, and stay under 10,000,000 tokens per
     /// field. New lines recorded for a branch that is neither the head branch nor the base
     /// branch are noted on stderr, not failed. A difference in `.tally/prices.toml` is a
-    /// warning. Violations are listed on stderr (file, line, rule; never line text) and the
+    /// warning. A new base-branch line marked pending (written by `record` on the default
+    /// branch, see `ledger resolve`) is a note, not a failure. Violations are listed on stderr (file, line, rule; never line text) and the
     /// exit status is 1.
     Check(LedgerCheckArgs),
 
@@ -115,6 +116,18 @@ pub(crate) enum LedgerCommand {
     /// as they are. Runs even with `ledger-redact = false`, because you asked for it. The ledger
     /// is replaced only after the rewrite succeeds.
     Redact(LedgerRedactArgs),
+
+    /// Resolve pending ledger lines to the branch cut after them, by appending.
+    ///
+    /// `record` on the default branch writes each line as pending, because the branch the work was
+    /// for is not known yet. This reads the live transcripts and the captures and, for each
+    /// pending line that the evidence places on the target branch (the current one, or `--branch`),
+    /// appends a resolution line; the pending line itself is never edited. A line that cannot be
+    /// placed with certainty stays pending and is reported as uncertain on stderr; that is not an
+    /// error (exit 0). On the default branch there is nothing to resolve. With `--dry-run` it
+    /// counts and writes nothing. Only one branch at a time: there is no way to resolve every
+    /// branch at once.
+    Resolve(LedgerResolveArgs),
 }
 
 /// The `--ledger-redact` family, shared by `record` and `ledger redact`.
@@ -191,6 +204,26 @@ impl LedgerRedactArgs {
         }
         .names()
     }
+}
+
+/// `ledger resolve`.
+#[derive(Debug, Args)]
+pub(crate) struct LedgerResolveArgs {
+    /// Resolve pending lines for this branch (default: the current branch).
+    #[arg(long, value_name = "BRANCH")]
+    pub(crate) branch: Option<String>,
+
+    /// Repository path (default: cwd).
+    #[arg(long, default_value = ".", value_name = "PATH")]
+    pub(crate) repo: PathBuf,
+
+    /// Count what would be resolved and write nothing.
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+
+    /// The ledger file (default: .tally/ledger.jsonl at the root of the current checkout).
+    #[arg(long, value_name = "PATH")]
+    pub(crate) ledger: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
