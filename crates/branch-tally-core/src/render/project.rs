@@ -6,8 +6,8 @@
 
 use std::fmt::Write as _;
 
-use super::json::{double_count, float, string};
-use super::markdown::{code, double_count_text, millions, n};
+use super::json::{double_count, float, pending, string};
+use super::markdown::{code, double_count_text, millions, n, pending_text};
 use crate::model::{BranchRow, HeuristicBreakdown, HeuristicCount, ProjectReport, RowCost};
 
 /// The attribution heuristics in report order, with the Markdown name and the JSON key.
@@ -103,6 +103,7 @@ pub fn project_markdown(report: &ProjectReport) -> String {
     o.push_str("## Project cost\n\n");
     if report.rows.is_empty() {
         o.push_str("No branches recorded in the ledger.\n");
+        pending_note(report, &mut o);
         return o;
     }
     let floor = if report.is_floor() { "at least " } else { "" };
@@ -144,8 +145,18 @@ pub fn project_markdown(report: &ProjectReport) -> String {
     }
     o.push('\n');
     notes(report, &mut o);
+    pending_note(report, &mut o);
     chart(report, &mut o);
     o
+}
+
+/// The pending-usage note (ADR 0006): unresolved default-branch lines, in none of these figures.
+fn pending_note(report: &ProjectReport, o: &mut String) {
+    if let Some(note) = pending_text(&report.pending) {
+        o.push('\n');
+        o.push_str(&note);
+        o.push_str("\n\n");
+    }
 }
 
 /// The notes under the table: overlap, unpriced models, uncertain calls and undated branches.
@@ -314,7 +325,7 @@ pub fn project_json(report: &ProjectReport) -> String {
     let _ = writeln!(
         o,
         "  \"totalTokensIsFloor\": {},",
-        t.uncertain.any_ambiguous() || report.is_overflowed()
+        t.uncertain.any_ambiguous() || report.is_overflowed() || report.pending.any()
     );
     if report.is_overflowed() {
         o.push_str("  \"totalsOverflowed\": true,\n");
@@ -335,6 +346,7 @@ pub fn project_json(report: &ProjectReport) -> String {
         t.overlap.cost.is_floor()
     );
     double_count(report.double_count.as_ref(), &mut o);
+    pending(&report.pending, &mut o);
     let _ = writeln!(o, "  \"heuristics\": {},", heuristics_json(&t.uncertain));
     let _ = writeln!(o, "  \"undatedBranches\": {},", report.undated_branches);
     let _ = writeln!(o, "  \"undatedCalls\": {},", t.undated_calls);
@@ -635,7 +647,8 @@ fn series_svg(report: &ProjectReport, plot_w: f64, plot_h: f64, o: &mut String) 
 mod tests {
     use super::*;
     use crate::model::{
-        BranchRow, Bucket, HeuristicCount, ProjectTotals, RowCost, SeriesPoint, SharedOverlap,
+        BranchRow, Bucket, HeuristicCount, Pending, ProjectTotals, RowCost, SeriesPoint,
+        SharedOverlap,
     };
 
     fn cost(known: f64, unpriced: u64) -> RowCost {
@@ -691,6 +704,7 @@ mod tests {
             ],
             undated_branches: 0,
             double_count: None,
+            pending: Pending::default(),
         }
     }
 
@@ -1230,5 +1244,72 @@ mod tests {
         let (vb_h, attr_h, ys) = svg_geometry(&s);
         assert!((vb_h - attr_h).abs() < f64::EPSILON, "{s}");
         assert!(ys.iter().all(|y| *y < vb_h), "{s}");
+    }
+
+    fn pending(lines: u64, calls: u64, tokens: u64) -> Pending {
+        Pending {
+            lines,
+            calls,
+            tokens,
+        }
+    }
+
+    const PENDING_NOTE: &str = "<sub>2 pending ledger line(s), 5 call(s) / 1,234 tokens, were \
+         recorded on the default branch and could not yet be attributed to a branch with \
+         certainty; they are not in these totals.</sub>";
+
+    #[test]
+    fn markdown_prints_pending_usage_only_when_there_are_lines() {
+        let none = project_markdown(&exact());
+        assert!(!none.contains("pending"), "{none}");
+        let r = ProjectReport {
+            pending: pending(2, 5, 1_234),
+            ..exact()
+        };
+        let out = project_markdown(&r);
+        assert_eq!(out.matches(PENDING_NOTE).count(), 1, "{out}");
+        // Pending usage is outside the totals, so the total beside it is a floor.
+        assert!(out.contains("Project total: **at least $3.75**"), "{out}");
+    }
+
+    #[test]
+    fn json_flags_the_totals_as_a_floor_when_pending_usage_is_outside_them() {
+        let plain: serde_json::Value = serde_json::from_str(&project_json(&exact())).unwrap();
+        assert_eq!(plain["totalCostIsFloor"], false, "{plain}");
+        assert_eq!(plain["totalTokensIsFloor"], false, "{plain}");
+        let r = ProjectReport {
+            pending: pending(2, 5, 1_234),
+            ..exact()
+        };
+        let v: serde_json::Value = serde_json::from_str(&project_json(&r)).unwrap();
+        assert_eq!(v["totalCostIsFloor"], true, "{v}");
+        assert_eq!(v["totalTokensIsFloor"], true, "{v}");
+    }
+
+    #[test]
+    fn markdown_prints_pending_even_when_no_branch_is_recorded() {
+        let r = ProjectReport {
+            pending: pending(2, 5, 1_234),
+            ..ProjectReport::default()
+        };
+        let out = project_markdown(&r);
+        assert!(out.contains("No branches recorded"), "{out}");
+        assert_eq!(out.matches(PENDING_NOTE).count(), 1, "{out}");
+    }
+
+    #[test]
+    fn json_pending_is_omitted_when_zero_and_exact_when_present() {
+        let none: serde_json::Value = serde_json::from_str(&project_json(&exact())).unwrap();
+        assert!(none.get("pending").is_none(), "{none}");
+        let r = ProjectReport {
+            pending: pending(2, 5, 1_234),
+            ..exact()
+        };
+        let v: serde_json::Value = serde_json::from_str(&project_json(&r)).unwrap();
+        assert_eq!(
+            v["pending"],
+            serde_json::json!({ "lines": 2, "calls": 5, "tokens": 1234 })
+        );
+        assert_eq!(v["totalCalls"], 5);
     }
 }

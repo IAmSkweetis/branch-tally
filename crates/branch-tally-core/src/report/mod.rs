@@ -13,6 +13,10 @@ use crate::pricing::PriceTable;
 use crate::redact::RedactOptions;
 use crate::sources::{ReadStats, RepoIdentity, Source, SourceError};
 
+mod pending;
+
+pub use pending::{ResolveOutcome, resolve_at};
+
 /// A finished report: what the renderers take, plus what the read skipped.
 #[derive(Debug)]
 pub struct Report {
@@ -27,6 +31,12 @@ pub struct Report {
     /// Set by [`run`] when the worktree list could not be read. The reference treats that as
     /// "no worktrees"; the report proceeds the same way but says so here.
     pub worktrees_unavailable: Option<GitError>,
+    /// Set by [`run`] when the default ledger exists but could not be read (refused or
+    /// unreadable). Pending usage is then unknown, not zero: the report proceeds and says so here.
+    pub pending_unavailable: Option<crate::ledger::LedgerError>,
+    /// Set by [`run`] when it read the default ledger for pending usage: what that read counted and
+    /// skipped. A skipped line may have been a pending one, so the caller reports it.
+    pub pending_ledger_stats: Option<crate::ledger::ReadStats>,
     /// Set by [`run_from_ledger`]: where the numbers came from. `None` for a live report.
     pub ledger: Option<LedgerReport>,
     /// What reading `.tally/captures.jsonl` counted. All zeros when there is no captures file.
@@ -128,6 +138,14 @@ pub struct Recorded {
     pub worktrees_unavailable: Option<GitError>,
     /// What reading `.tally/captures.jsonl` counted, as on [`Report`].
     pub capture_stats: crate::ledger::CaptureReadStats,
+    /// Lines written pending (decision 0006): `outcome.appended` when `branch` is the repository's
+    /// default branch, else zero. Their usage is uncertain until a branch is cut and resolved.
+    pub pending_written: u64,
+    /// Set when `branch` is not the default branch: what resolving the pending lines that target
+    /// it did, counted by reason. `None` on the default branch, where nothing resolves.
+    pub resolution: Option<crate::ledger::PendingStats>,
+    /// Resolution lines appended to the ledger by that resolution.
+    pub resolutions_appended: u64,
 }
 
 /// Why no report was produced.
@@ -452,6 +470,8 @@ fn finish(
         costs,
         read_stats,
         worktrees_unavailable: None,
+        pending_unavailable: None,
+        pending_ledger_stats: None,
         ledger: None,
         capture_stats: crate::ledger::CaptureReadStats::default(),
     }
@@ -637,19 +657,35 @@ pub fn run(
     let live = read_live(git, source, projects_root, repo_dir)?;
     let mut storage = None;
     let options = resolve_options(git, &live.main_checkout, options, &mut storage);
-    let mut report = build_with_captures(
+    let sel = select_for(
         live.records,
         &live.dispatches,
         live.captures.events(),
-        live.stats,
         &live.main_checkout,
         &live.worktrees,
         &branch,
         options,
-        table,
-    )?;
+    );
+    // Pending lines outside what this report counts (decision 0006). An unreadable ledger leaves
+    // them unknown: the report proceeds with zero and says so, never reads it as "none".
+    let (pending, pending_ledger_stats, pending_unavailable) =
+        match pending::live_pending(git, repo_dir, &live.main_checkout, &sel.selected) {
+            Ok((p, stats)) => (p, stats, None),
+            Err(e) => (crate::model::Pending::default(), None, Some(e)),
+        };
+    // Nothing counted is an error, unless pending lines remain: those are reported, not hidden.
+    if sel.selected.is_empty() && pending.lines == 0 {
+        return Err(ReportError::NoRecords {
+            branch,
+            read_stats: live.stats,
+        });
+    }
+    let mut report = finish(&branch, options, sel, live.stats, table);
     report.worktrees_unavailable = live.unavailable;
+    report.pending_unavailable = pending_unavailable;
+    report.pending_ledger_stats = pending_ledger_stats;
     report.capture_stats = live.captures.stats().clone();
+    report.summary.pending = pending;
     Ok(report)
 }
 
@@ -695,7 +731,12 @@ impl BranchLedger {
         let mut at: std::collections::HashMap<crate::model::RequestId, usize> =
             std::collections::HashMap::new();
         let mut collapsed = 0;
-        for entry in halves.iter().flat_map(crate::ledger::Ledger::entries) {
+        // A pending line is in no branch's totals (decision 0006): it is reported only as pending.
+        for entry in halves
+            .iter()
+            .flat_map(crate::ledger::Ledger::entries)
+            .filter(|e| !e.pending)
+        {
             if let Some(&i) = at.get(&entry.request_id) {
                 collapsed += 1;
                 if newer_line(entry, &entries[i]) {
@@ -1032,6 +1073,11 @@ pub fn record_at(
     let live = read_live(git, source, projects_root, repo_dir)?;
     let mut storage = None;
     let options = resolve_options(git, &live.main_checkout, options, &mut storage);
+    let default_branch = resolve_default_branch(git, &live.main_checkout);
+    // Decision 0006: a line recorded on the default branch is pending until a branch is cut. On any
+    // other branch, the evidence for resolving is kept before `select_for` takes the records.
+    let pending = branch == default_branch.name;
+    let evidence_records = (!pending).then(|| live.records.clone());
     let sel = select_for(
         live.records,
         &live.dispatches,
@@ -1051,10 +1097,35 @@ pub fn record_at(
             branch: &branch,
             mode: options.mode,
             main: &live.main_checkout,
+            pending,
         },
         clock,
     )?;
+    let resolution = match evidence_records {
+        Some(records) => Some(
+            pending::Resolving {
+                git,
+                repo_dir,
+                target,
+                clock,
+                branch: &branch,
+                default_branch: &default_branch.name,
+                dry_run: false,
+            }
+            .run(
+                records,
+                &live.dispatches,
+                live.captures.events(),
+                &live.main_checkout,
+                &live.worktrees,
+            )?,
+        ),
+        None => None,
+    };
     Ok(Recorded {
+        pending_written: if pending { outcome.appended } else { 0 },
+        resolutions_appended: resolution.as_ref().map_or(0, |r| r.appended.appended),
+        resolution: resolution.map(|r| r.stats),
         branch,
         outcome,
         selected: sel.selected.len() as u64,
@@ -1070,6 +1141,8 @@ struct Append<'a> {
     branch: &'a str,
     mode: Mode,
     main: &'a Path,
+    /// The branch is the repository's default branch: write pending lines (decision 0006).
+    pending: bool,
 }
 
 /// Appends to the target. The ledger is per checkout: a linked worktree records on its own
@@ -1088,11 +1161,12 @@ fn append_selected(
     clock: &dyn crate::ledger::Clock,
 ) -> Result<crate::ledger::AppendOutcome, ReportError> {
     use crate::ledger::{
-        TallyDir, append, append_default, append_keyed_default, append_keyed_explicit,
+        TallyDir, append_default_pending, append_keyed_default_pending,
+        append_keyed_explicit_pending, append_pending,
     };
     let main = Some(a.main);
     Ok(match (target, redaction) {
-        (LedgerTarget::Default, RecordRedaction::Off) => append_default(
+        (LedgerTarget::Default, RecordRedaction::Off) => append_default_pending(
             &git.toplevel(repo_dir)?,
             a.records,
             a.branch,
@@ -1100,6 +1174,7 @@ fn append_selected(
             main,
             &crate::ledger::Identity,
             clock,
+            a.pending,
         )?,
         (LedgerTarget::Default, RecordRedaction::Keyed { names }) => {
             let root = git.toplevel(repo_dir)?;
@@ -1108,7 +1183,7 @@ fn append_selected(
                     (std::fs::canonicalize(&root), std::fs::canonicalize(a.main)),
                     (Ok(x), Ok(y)) if x == y
                 );
-            append_keyed_default(
+            append_keyed_default_pending(
                 &root,
                 (!same).then_some(a.main),
                 names,
@@ -1117,9 +1192,10 @@ fn append_selected(
                 a.mode,
                 main,
                 clock,
+                a.pending,
             )?
         }
-        (LedgerTarget::Explicit(path), RecordRedaction::Off) => append(
+        (LedgerTarget::Explicit(path), RecordRedaction::Off) => append_pending(
             path,
             a.records,
             a.branch,
@@ -1127,10 +1203,30 @@ fn append_selected(
             main,
             &crate::ledger::Identity,
             clock,
+            a.pending,
         )?,
         (LedgerTarget::Explicit(path), RecordRedaction::Keyed { names }) => {
             let home = TallyDir::open(a.main)?.ok_or(ReportError::NoSaltHome)?;
-            append_keyed_explicit(path, &home, names, a.records, a.branch, a.mode, main, clock)?
+            append_keyed_explicit_pending(
+                path, &home, names, a.records, a.branch, a.mode, main, clock, a.pending,
+            )?
+        }
+    })
+}
+
+/// The ledger a target names: the git top level (when default; a linked worktree reads its own)
+/// and the file path. An explicit path has no root.
+fn ledger_location(
+    git: &dyn Git,
+    repo_dir: &Path,
+    target: &LedgerTarget<'_>,
+) -> Result<(Option<PathBuf>, PathBuf), GitError> {
+    Ok(match target {
+        LedgerTarget::Explicit(path) => (None, path.to_path_buf()),
+        LedgerTarget::Default => {
+            let root = git.toplevel(repo_dir)?;
+            let path = root.join(crate::ledger::LEDGER_PATH);
+            (Some(root), path)
         }
     })
 }
@@ -1201,15 +1297,7 @@ pub fn run_from_ledger_at(
     let branch = branch_or_current(git, repo_dir, branch)?;
     let main_checkout = git.main_checkout(repo_dir);
     // Per-checkout ledger: the git top level for the default (see `record_at`).
-    let ledger_root = match target {
-        LedgerTarget::Default => Some(git.toplevel(repo_dir)?),
-        LedgerTarget::Explicit(_) => None,
-    };
-    let ledger_path = match (target, &ledger_root) {
-        (LedgerTarget::Explicit(path), _) => path.to_path_buf(),
-        (LedgerTarget::Default, Some(root)) => root.join(crate::ledger::LEDGER_PATH),
-        (LedgerTarget::Default, None) => PathBuf::new(),
-    };
+    let (ledger_root, ledger_path) = ledger_location(git, repo_dir, target)?;
     // The default is checked with `symlink_metadata`, so a planted link counts as present and the
     // guarded read below refuses it, rather than this check calling the ledger missing.
     let present = match target {
@@ -1248,6 +1336,9 @@ pub fn run_from_ledger_at(
     let mut unavailable = None;
     let mut capture_stats = crate::ledger::CaptureReadStats::default();
     let mut storage = None;
+    // The live calls' raw ids, kept before any is replaced by its hashed form: an unredacted
+    // pending line for the same call must still be excluded from the pending count.
+    let mut live_raw: Vec<crate::model::RequestId> = Vec::new();
     let (sel, read_stats) = if let Some(source) = source {
         let live = read_live(git, source, projects_root, repo_dir)?;
         let live_options = resolve_options(git, &live.main_checkout, options, &mut storage);
@@ -1262,6 +1353,7 @@ pub fn run_from_ledger_at(
         );
         unavailable = live.unavailable;
         capture_stats = live.captures.stats().clone();
+        live_raw = pending::request_ids(&live_sel.selected);
         // Against redacted lines, live calls are matched in hashed form (decision 0005).
         let live_selected = match_live_selected(
             redactor.as_ref(),
@@ -1297,13 +1389,16 @@ pub fn run_from_ledger_at(
     } else {
         (ledger_only_picked(ledger_records), ReadStats::default())
     };
-    if sel.selected.is_empty() {
+    let pending = pending::ledger_report_pending(&read, &homes, &sel.selected, &live_raw);
+    // Nothing counted is an error, unless pending lines remain: those are reported, not hidden.
+    if sel.selected.is_empty() && pending.lines == 0 {
         return Err(ReportError::NoRecords { branch, read_stats });
     }
     let mut report = finish(&branch, options, sel, read_stats, table);
     report.worktrees_unavailable = unavailable;
     report.capture_stats = capture_stats;
     report.summary.footnote.double_count = double_count_risk(read.stats(), info.live_redaction);
+    report.summary.pending = pending;
     report.ledger = Some(info);
     Ok(report)
 }

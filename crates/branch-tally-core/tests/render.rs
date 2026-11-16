@@ -94,6 +94,7 @@ fn sample() -> (Summary, Costs) {
         subagents: branch_tally_core::model::SubagentSummary::default(),
         work_branch: None,
         unstamped: Unstamped::default(),
+        pending: branch_tally_core::model::Pending::default(),
         redacted: false,
     };
     // 0.125 and 2.675 are ties for two decimals: 0.125 is exact (half-even gives 0.12), 2.675 is
@@ -1470,6 +1471,136 @@ fn json_has_a_top_level_unstamped_key_only_when_there_are_some() {
     let v: Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
     assert_eq!(v["unstamped"]["calls"], 2);
     assert_eq!(v["unstamped"]["tokens"], 2_221);
+}
+
+#[test]
+fn markdown_reports_pending_ledger_usage_only_when_there_is_some() {
+    use branch_tally_core::model::Pending;
+    let (mut s, c) = sample();
+    assert!(!markdown(&s, &c, false).contains("pending"));
+    s.pending = Pending {
+        lines: 3,
+        calls: 5,
+        tokens: 4_321,
+    };
+    let md = markdown(&s, &c, false);
+    let line = "3 pending ledger line(s), 5 call(s) / 4,321 tokens, were recorded on the default \
+                branch and could not yet be attributed to a branch with certainty; they are not \
+                in these totals.";
+    assert!(md.contains(line), "{md}");
+    assert!(md.find("<sub>Branch").unwrap() < md.find(line).unwrap());
+    assert!(md.find(line).unwrap() < md.find("<details>").unwrap());
+}
+
+#[test]
+fn pending_usage_labels_the_total_cost_a_floor_in_markdown_and_json() {
+    // Pending usage is outside the totals (decision 0006), so a total shown beside it is partial
+    // and must read "at least" (Governance II).
+    use branch_tally_core::model::Pending;
+    use serde_json::Value;
+    let (mut s, _) = sample();
+    // Every model priced, so nothing else makes the total a floor.
+    let c = Costs {
+        by_model: vec![
+            ("claude-a".to_owned(), Some(0.125)),
+            ("claude-b".to_owned(), Some(2.55)),
+        ],
+        total: 2.675,
+        ..Costs::default()
+    };
+    let total_row = |md: &str| {
+        md.lines()
+            .find(|l| l.starts_with("| **Total**"))
+            .unwrap()
+            .to_owned()
+    };
+    assert!(!total_row(&markdown(&s, &c, true)).contains("at least"));
+    let v: Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
+    assert_eq!(v["totalCostIsFloor"], false);
+    s.pending = Pending {
+        lines: 3,
+        calls: 5,
+        tokens: 4_321,
+    };
+    let md = markdown(&s, &c, true);
+    assert!(total_row(&md).contains("**at least $"), "{md}");
+    let v: Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
+    assert_eq!(v["totalCostIsFloor"], true);
+}
+
+#[test]
+fn pending_usage_labels_the_token_total_a_floor_without_cost() {
+    // With cost hidden, the token total is the only figure: pending usage outside it must still
+    // mark it "at least" (Governance II), and nothing changes when nothing is pending.
+    use branch_tally_core::model::Pending;
+    let (mut s, c) = sample();
+    assert!(!markdown(&s, &c, false).contains("Token total is at least"));
+    s.pending = Pending {
+        lines: 3,
+        calls: 5,
+        tokens: 4_321,
+    };
+    let md = markdown(&s, &c, false);
+    let total = s.total.tokens().to_string();
+    let grouped: String = total
+        .chars()
+        .rev()
+        .collect::<Vec<_>>()
+        .chunks(3)
+        .map(|c| c.iter().collect::<String>())
+        .collect::<Vec<_>>()
+        .join(",")
+        .chars()
+        .rev()
+        .collect();
+    let expected = format!(
+        "**Token total is at least {grouped}**: 4,321 token(s) in 5 pending call(s) recorded on \
+         the default branch may belong to this branch and are not in it."
+    );
+    assert!(md.contains(&expected), "{expected}\n---\n{md}");
+}
+
+#[test]
+fn ambiguous_and_pending_usage_share_one_token_floor_statement() {
+    use branch_tally_core::model::{HeuristicCount, Pending};
+    let (mut s, c) = sample();
+    s.footnote.heuristics.ambiguous = HeuristicCount {
+        calls: 2,
+        tokens: 7_000,
+    };
+    s.pending = Pending {
+        lines: 3,
+        calls: 5,
+        tokens: 4_321,
+    };
+    let md = markdown(&s, &c, false);
+    assert!(
+        md.contains(
+            "**Token total is at least 4,655**: 7,000 token(s) in 2 call(s) could not be \
+             attributed to a branch with certainty. 4,321 token(s) in 5 pending call(s) recorded \
+             on the default branch are not in it either."
+        ),
+        "{md}"
+    );
+    assert_eq!(md.matches("Token total is at least").count(), 1, "{md}");
+}
+
+#[test]
+fn json_has_a_top_level_pending_key_only_when_there_is_some() {
+    use branch_tally_core::model::Pending;
+    use serde_json::Value;
+    let (mut s, c) = sample();
+    let v: Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
+    assert!(v.get("pending").is_none());
+    s.pending = Pending {
+        lines: 3,
+        calls: 5,
+        tokens: 4_321,
+    };
+    let v: Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
+    assert_eq!(v["pending"]["lines"], 3);
+    assert_eq!(v["pending"]["calls"], 5);
+    assert_eq!(v["pending"]["tokens"], 4_321);
 }
 
 #[test]

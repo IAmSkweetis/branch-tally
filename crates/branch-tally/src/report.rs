@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use branch_tally_core::config::{self, Flags, Format};
 use branch_tally_core::git::{Git, SystemGit, normalize_path};
 use branch_tally_core::ledger::{
-    CAPTURES_PATH, CaptureReadStats, KeyedRedact, LedgerError, LedgerTarget, Salt, SystemClock,
-    TallyDir,
+    CAPTURES_PATH, CaptureReadStats, KeyedRedact, LedgerError, LedgerTarget, PendingStats, Salt,
+    SystemClock, TallyDir,
 };
 use branch_tally_core::model::Mode;
 use branch_tally_core::pr::{PrError, PrOutcome, SystemGh, update_pr};
@@ -26,7 +26,8 @@ use clap::CommandFactory;
 use clap::error::ErrorKind;
 
 use crate::cli::{
-    Cli, FormatArg, LedgerRedactArgs, RecordArgs, ReportArgs, WorkBranchPattern, parse_work_branch,
+    Cli, FormatArg, LedgerRedactArgs, LedgerResolveArgs, RecordArgs, ReportArgs, WorkBranchPattern,
+    parse_work_branch,
 };
 use crate::config::SystemEnv;
 use crate::prices;
@@ -195,6 +196,27 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), Failure> {
     if let Some(ledger) = &report.ledger {
         note_ledger(ledger);
     }
+    note_report(&report);
+
+    if args.pr.is_some() && settings.format.value == Format::Json {
+        stderr("note: config format = \"json\" was overridden by --pr; the PR body is Markdown");
+    } else if settings.format.value == Format::Json {
+        stdout(&format!(
+            "{}\n",
+            render::json(&report.summary, &report.costs, settings.cost.value)
+        ));
+        return Ok(());
+    }
+    let markdown = render::markdown(&report.summary, &report.costs, settings.cost.value);
+    match &args.pr {
+        None => stdout(&format!("{}\n", render::wrap(&markdown))),
+        Some(number) => update(&cwd, &report, &markdown, *number, args.dry_run)?,
+    }
+    Ok(())
+}
+
+/// The stderr notes for a finished report: what was skipped, unpriced or could not be read.
+fn note_report(report: &Report) {
     note_skipped(&report.read_stats);
     note_captures(&report.capture_stats);
     for (model, _) in report
@@ -213,22 +235,16 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), Failure> {
         // The reference treats this as "no worktrees"; say so rather than do it silently.
         stderr("note: git worktree list was unavailable, so worktree recovery was skipped");
     }
-
-    if args.pr.is_some() && settings.format.value == Format::Json {
-        stderr("note: config format = \"json\" was overridden by --pr; the PR body is Markdown");
-    } else if settings.format.value == Format::Json {
-        stdout(&format!(
-            "{}\n",
-            render::json(&report.summary, &report.costs, settings.cost.value)
-        ));
-        return Ok(());
+    if let Some(stats) = &report.pending_ledger_stats {
+        note_ledger_skipped(stats);
     }
-    let markdown = render::markdown(&report.summary, &report.costs, settings.cost.value);
-    match &args.pr {
-        None => stdout(&format!("{}\n", render::wrap(&markdown))),
-        Some(number) => update(&cwd, &report, &markdown, *number, args.dry_run)?,
+    if report.pending_unavailable.is_some() {
+        // Governance II: an unreadable ledger is not an empty one, so pending usage is unknown.
+        stderr(
+            "note: the ledger could not be read, so pending usage is unknown and not in this \
+             report",
+        );
     }
-    Ok(())
 }
 
 /// `record`: append the branch's new records to the ledger. Write only: no git add, no commit.
@@ -296,7 +312,95 @@ pub(crate) fn record(args: &RecordArgs) -> Result<(), String> {
         "appended {}, skipped {}, branch {}\n",
         recorded.outcome.appended, recorded.outcome.skipped, recorded.branch
     ));
+    if recorded.pending_written > 0 {
+        stderr(&format!(
+            "note: {} pending line(s) written: usage is uncertain until a branch is cut and \
+             resolved",
+            recorded.pending_written
+        ));
+    }
+    if let Some(stats) = &recorded.resolution {
+        note_resolution(stats);
+    }
     Ok(())
+}
+
+/// `ledger resolve`: resolve the pending lines for one branch by appending.
+pub(crate) fn ledger_resolve(args: &LedgerResolveArgs) -> Result<(), String> {
+    let projects = projects_root()?;
+    let cwd = normalize_path(&args.repo);
+    let outcome = branch_tally_core::report::resolve_at(
+        &SystemGit,
+        &ClaudeCode,
+        &projects,
+        &cwd,
+        args.branch.as_deref(),
+        &ledger_target(args.ledger.as_deref()),
+        &SystemClock,
+        args.dry_run,
+    )
+    .map_err(|e| describe(&e, false))?;
+    if outcome.on_default_branch {
+        stdout("on the default branch: nothing to resolve\n");
+        return Ok(());
+    }
+    note_skipped(&outcome.read_stats);
+    note_captures(&outcome.capture_stats);
+    note_ledger_skipped(&outcome.ledger_stats);
+    if outcome.worktrees_unavailable.is_some() {
+        stderr("note: git worktree list was unavailable, so worktree recovery was skipped");
+    }
+    let s = &outcome.stats;
+    let verb = if outcome.dry_run {
+        "would resolve"
+    } else {
+        "resolved"
+    };
+    stdout(&format!(
+        "{verb} {}, covered {}, left for another branch {}, branch {}\n",
+        s.resolved, s.covered, s.other_branch, outcome.branch
+    ));
+    note_unresolved(s);
+    Ok(())
+}
+
+/// The resolution counts `record` prints on stderr, when any pending line was involved.
+fn note_resolution(stats: &PendingStats) {
+    if stats.resolved + stats.covered + stats.other_branch > 0 {
+        let verb = "resolved";
+        stderr(&format!(
+            "note: {verb} {} pending line(s), {} already covered, {} left for another branch",
+            stats.resolved, stats.covered, stats.other_branch
+        ));
+    }
+    note_unresolved(stats);
+}
+
+/// Governance II: lines that stay pending are uncertain, said with a count per reason.
+fn note_unresolved(stats: &PendingStats) {
+    let total = stats.uncertain();
+    if total == 0 {
+        return;
+    }
+    let reasons = [
+        (stats.no_timestamp, "no timestamp"),
+        (stats.no_evidence, "no evidence"),
+        (stats.ambiguous, "ambiguous"),
+        (stats.no_work_branch, "no work branch cut"),
+        (stats.subagent_unlinked, "subagent not linked to a dispatch"),
+        (stats.carried_back, "returned to the default branch"),
+        (stats.disagreement, "transcripts and captures disagree"),
+        (stats.resolved_elsewhere, "resolved to another branch"),
+    ];
+    let detail: Vec<String> = reasons
+        .iter()
+        .filter(|(n, _)| *n > 0)
+        .map(|(n, why)| format!("{n} {why}"))
+        .collect();
+    stderr(&format!(
+        "note: {total} pending line(s) left unresolved, usage uncertain ({})",
+        detail.join(", ")
+    ));
 }
 
 /// Fixed text: ledger redaction needs a `.tally/` to hold the salt.
@@ -634,8 +738,10 @@ fn live_unmatched_reason(m: branch_tally_core::report::LiveRedactionMatch) -> Op
     }
 }
 
-/// Governance II: the ledger lines that could not be used, and conflicting requests. Counts only.
-pub(crate) fn note_ledger_stats(stats: &branch_tally_core::ledger::ReadStats) {
+/// Governance II: the ledger lines that were skipped (malformed, unsupported version) or kept
+/// undated. Counts only. Printed wherever a ledger is read, since a skipped line may have been a
+/// pending one.
+pub(crate) fn note_ledger_skipped(stats: &branch_tally_core::ledger::ReadStats) {
     note_undated(stats.malformed_timestamps);
     let skipped = [
         (stats.malformed, "malformed"),
@@ -653,6 +759,11 @@ pub(crate) fn note_ledger_stats(stats: &branch_tally_core::ledger::ReadStats) {
             detail.join(", ")
         ));
     }
+}
+
+/// Governance II: the ledger lines that could not be used, and conflicting requests. Counts only.
+pub(crate) fn note_ledger_stats(stats: &branch_tally_core::ledger::ReadStats) {
+    note_ledger_skipped(stats);
     if stats.is_mixed() {
         let mut note = format!(
             "note: ledger holds {} unredacted line(s) and {} redacted line(s) under {} salt(s); \

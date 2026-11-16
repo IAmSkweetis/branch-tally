@@ -10,8 +10,8 @@ use std::cmp::Reverse;
 use std::fmt::Write as _;
 
 use crate::model::{
-    Bucket, Costs, DoubleCountRisk, HeuristicBreakdown, LiveMatchFailure, PriceTableSource,
-    RowCost, SubagentSummary, Summary, Unstamped, WorkBranchRule,
+    Bucket, Costs, DoubleCountRisk, HeuristicBreakdown, LiveMatchFailure, Pending,
+    PriceTableSource, RowCost, SubagentSummary, Summary, Unstamped, WorkBranchRule,
 };
 
 /// Python `json.dumps` string escaping with `ensure_ascii=True`.
@@ -186,6 +186,19 @@ fn unstamped(u: &Unstamped, o: &mut String) {
         o,
         "  \"unstamped\": {{ \"calls\": {}, \"tokens\": {} }},",
         u.calls, u.tokens
+    );
+}
+
+/// The `pending` object (ADR 0006): unresolved default-branch ledger lines, repository-wide and
+/// outside the totals. Omitted when there are none, like `unstamped`.
+pub(super) fn pending(p: &Pending, o: &mut String) {
+    if p.lines == 0 {
+        return;
+    }
+    let _ = writeln!(
+        o,
+        "  \"pending\": {{ \"lines\": {}, \"calls\": {}, \"tokens\": {} }},",
+        p.lines, p.calls, p.tokens
     );
 }
 
@@ -380,7 +393,10 @@ pub fn json(summary: &Summary, costs: &Costs, cost: bool) -> String {
         let _ = writeln!(
             o,
             "  \"totalCostIsFloor\": {},",
-            costs.is_floor() || heur.any_ambiguous() || summary.footnote.totals_overflowed
+            costs.is_floor()
+                || heur.any_ambiguous()
+                || summary.footnote.totals_overflowed
+                || summary.pending.any()
         );
     }
     // Not in the reference (#96): present only when a total saturated, so plain reports keep its
@@ -409,6 +425,7 @@ pub fn json(summary: &Summary, costs: &Costs, cost: bool) -> String {
     heuristics(heur, &mut o);
     work_branch(summary.work_branch.as_ref(), &mut o);
     unstamped(&summary.unstamped, &mut o);
+    pending(&summary.pending, &mut o);
     double_count(summary.footnote.double_count.as_ref(), &mut o);
     subagents(&summary.subagents, costs, cost, &mut o);
 

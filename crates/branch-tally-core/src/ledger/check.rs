@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::captures::parse_event;
 use super::{EntryKey, LedgerEntry, parse_line};
-use crate::model::Timestamp;
+use crate::model::{RequestId, Timestamp};
 
 /// A single token field above this on one ledger line is a violation.
 pub const MAX_TOKENS_PER_FIELD: u64 = 10_000_000;
@@ -46,6 +46,21 @@ pub enum Rule {
         /// The usage field's name.
         field: &'static str,
     },
+    /// A new ledger line sets both `pending` and `resolved`: a line is one kind or the other.
+    InvalidLineKind,
+    /// A new resolution line has no pending line for `(request_id, resolved.from)` on base or
+    /// head.
+    OrphanResolution,
+    /// A new resolution line differs from the pending line it resolves in any field other than
+    /// the ones a resolution sets (`recorded_for`, `branch`, `basis`, `kept_by`, `recorded_at`,
+    /// `pending`, `resolved`).
+    ResolutionMismatch,
+    /// A new resolution line names a different branch than another resolution of the same
+    /// request, on base or head.
+    ConflictingResolution,
+    /// A new line with `pending` set is not recorded for the base branch: only `record` on the
+    /// default branch writes pending lines.
+    PendingNotOnBase,
 }
 
 /// One broken rule.
@@ -86,6 +101,9 @@ pub struct CheckReport {
     /// New ledger lines recorded for a branch that is neither the head nor the base, per
     /// branch, sorted by branch name. Allowed, but reported so a caller can warn.
     pub other_branches: Vec<(String, u64)>,
+    /// New pending lines recorded for the base branch (decision 0006). Allowed, but their usage
+    /// is uncertain until resolved, so a caller must say so.
+    pub pending: u64,
 }
 
 impl CheckReport {
@@ -113,18 +131,26 @@ pub fn check(input: &CheckInput<'_>) -> CheckReport {
         .filter_map(|l| parse_line(l).ok())
         .map(|(e, _)| e.key())
         .collect();
+    let resolution = ResolutionIndex::build(
+        ledger
+            .base_all
+            .iter()
+            .copied()
+            .chain(content_lines(input.head_ledger).into_iter().map(|(_, l)| l)),
+    );
     // The first new line seen for each key, to catch a later new line that conflicts with it.
     let mut new_entries: HashMap<EntryKey, LedgerEntry> = HashMap::new();
+    let mut pending_notes = 0;
     for (number, raw) in &ledger.new_lines {
-        check_ledger_line(
-            raw,
-            *number,
-            input,
-            &base_keys,
-            &mut new_entries,
-            &mut violations,
-            &mut others,
-        );
+        let mut state = LineState {
+            base_keys: &base_keys,
+            resolution: &resolution,
+            new_entries: &mut new_entries,
+            out: &mut violations,
+            others: &mut others,
+            pending_notes: &mut pending_notes,
+        };
+        check_ledger_line(raw, *number, input, &mut state);
     }
     removed(CheckedFile::Ledger, ledger.removed, &mut violations);
 
@@ -137,6 +163,7 @@ pub fn check(input: &CheckInput<'_>) -> CheckReport {
     CheckReport {
         violations,
         other_branches: others.into_iter().collect(),
+        pending: pending_notes,
     }
 }
 
@@ -199,15 +226,96 @@ fn timestamp_rule(text: &str, now: &Timestamp) -> Option<Rule> {
     }
 }
 
-fn check_ledger_line(
-    raw: &[u8],
-    line: u64,
-    input: &CheckInput<'_>,
-    base_keys: &HashSet<EntryKey>,
-    new_entries: &mut HashMap<EntryKey, LedgerEntry>,
-    out: &mut Vec<Violation>,
-    others: &mut BTreeMap<String, u64>,
-) {
+/// The pending lines and resolved branches anywhere in the base or the head, so a resolution can
+/// be matched to the line it copies (decision 0006).
+struct ResolutionIndex {
+    pending: HashMap<EntryKey, LedgerEntry>,
+    /// The branches each request is resolved to.
+    resolved_to: HashMap<RequestId, HashSet<String>>,
+}
+
+impl ResolutionIndex {
+    fn build<'a>(lines: impl Iterator<Item = &'a [u8]>) -> Self {
+        let mut index = Self {
+            pending: HashMap::new(),
+            resolved_to: HashMap::new(),
+        };
+        for raw in lines {
+            let Ok((entry, _)) = parse_line(raw) else {
+                continue;
+            };
+            if entry.pending {
+                // Conflicting pending lines for one key: keep the one the reader keeps, which is
+                // the one a resolution was built from.
+                match index.pending.entry(entry.key()) {
+                    std::collections::hash_map::Entry::Occupied(mut held) => {
+                        if entry.wins_over(held.get()) {
+                            held.insert(entry.clone());
+                        }
+                    }
+                    std::collections::hash_map::Entry::Vacant(slot) => {
+                        slot.insert(entry.clone());
+                    }
+                }
+            }
+            if entry.resolved.is_some() {
+                index
+                    .resolved_to
+                    .entry(entry.request_id.clone())
+                    .or_default()
+                    .insert(entry.recorded_for.clone());
+            }
+        }
+        index
+    }
+
+    /// The rule a resolution line breaks, if any.
+    fn rule_for(&self, entry: &LedgerEntry) -> Option<Rule> {
+        let resolved = entry.resolved.as_ref()?;
+        let key = (entry.request_id.clone(), resolved.from.clone());
+        let Some(pending) = self.pending.get(&key) else {
+            return Some(Rule::OrphanResolution);
+        };
+        // Compare the whole entry: only the fields a resolution legitimately sets may differ. It
+        // names one destination, so `branch` must equal `recorded_for` (decision 0006).
+        let mut expected = pending.clone();
+        expected.recorded_for.clone_from(&entry.recorded_for);
+        expected.branch.clone_from(&entry.recorded_for);
+        expected.basis = entry.basis;
+        expected.kept_by = entry.kept_by;
+        expected.recorded_at.clone_from(&entry.recorded_at);
+        expected.pending = entry.pending;
+        expected.resolved.clone_from(&entry.resolved);
+        let same = expected == *entry;
+        if !same {
+            return Some(Rule::ResolutionMismatch);
+        }
+        self.resolved_to
+            .get(&entry.request_id)
+            .is_some_and(|branches| branches.len() > 1)
+            .then_some(Rule::ConflictingResolution)
+    }
+}
+
+/// What checking one new ledger line reads and writes.
+struct LineState<'a> {
+    base_keys: &'a HashSet<EntryKey>,
+    resolution: &'a ResolutionIndex,
+    new_entries: &'a mut HashMap<EntryKey, LedgerEntry>,
+    out: &'a mut Vec<Violation>,
+    others: &'a mut BTreeMap<String, u64>,
+    pending_notes: &'a mut u64,
+}
+
+fn check_ledger_line(raw: &[u8], line: u64, input: &CheckInput<'_>, state: &mut LineState<'_>) {
+    let LineState {
+        base_keys,
+        resolution,
+        new_entries,
+        out,
+        others,
+        pending_notes,
+    } = state;
     let mut flag = |rule| {
         out.push(Violation {
             file: CheckedFile::Ledger,
@@ -220,8 +328,20 @@ fn check_ledger_line(
         flag(Rule::Unparseable);
         return;
     };
+    if entry.pending && entry.resolved.is_some() {
+        flag(Rule::InvalidLineKind);
+    } else if entry.pending && entry.recorded_for != input.base_branch {
+        flag(Rule::PendingNotOnBase);
+    } else if let Some(rule) = resolution.rule_for(&entry) {
+        flag(rule);
+    }
     if entry.recorded_for == input.base_branch {
-        flag(Rule::RecordedForBaseBranch);
+        if entry.pending {
+            // A note, not a failure: its usage is uncertain until resolved.
+            **pending_notes += 1;
+        } else {
+            flag(Rule::RecordedForBaseBranch);
+        }
     } else if entry.recorded_for != input.head_branch {
         *others.entry(entry.recorded_for.clone()).or_default() += 1;
     }
@@ -274,3 +394,6 @@ fn check_capture_line(raw: &[u8], line: u64, now: &Timestamp, out: &mut Vec<Viol
         });
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -145,6 +145,43 @@ fn report_and_project_refuse_a_symlinked_default_ledger() {
 
 #[cfg(unix)]
 #[test]
+fn a_live_report_says_pending_usage_is_unknown_when_the_default_ledger_is_refused() {
+    // A live report does not need the ledger, so it still prints, but it must not read a refused
+    // ledger as "no pending usage" (#131, Governance II).
+    let world = World::scenario("main-then-branch");
+    let victim = victim(&world);
+    fs::create_dir(world.repo.join(".tally")).unwrap();
+    link(&victim, &world.repo.join(".tally").join("ledger.jsonl"));
+    let out = world.run(&["report", BRANCH]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("note: the ledger could not be read, so pending usage is unknown"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(fs::read_to_string(&victim).unwrap(), VICTIM_TEXT);
+}
+
+#[test]
+fn a_live_report_notes_skipped_default_ledger_lines() {
+    // The live report reads the default ledger for pending usage; a skipped line may have been a
+    // pending one, so it says so (#131, Governance II).
+    let world = World::scenario("main-then-branch");
+    fs::create_dir(world.repo.join(".tally")).unwrap();
+    fs::write(world.repo.join(".tally").join("ledger.jsonl"), "not json\n").unwrap();
+    let out = world.run(&["report", BRANCH]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stderr(&out)
+            .lines()
+            .any(|l| l == "note: skipped 1 ledger line(s): 1 malformed"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn a_symlinked_prices_toml_is_refused() {
     let world = World::scenario("main-then-branch");
     let target = world.home.join("prices-elsewhere.toml");

@@ -64,7 +64,7 @@ for hours or days, not weeks.
 git status --short -- . ':!.tally'   # must print nothing. If not, stop and ask.
 git fetch origin
 git checkout -b <type>/issue-<N>-<description>   # from the current HEAD; carries any dirty .tally/
-git add .tally && git commit -m "chore: record token usage"   # only if .tally/ changed
+git add .tally && git commit -m "chore: record token usage"   # only if .tally/ changed. Never delete lines
 git merge origin/main        # .gitattributes merge=union keeps both sides' .tally/ lines
 git fetch origin main:main   # fast-forward the local main ref without checking it out
 ```
@@ -76,6 +76,22 @@ files and local lines are uncommitted, which every merged PR now causes. Cutting
 and merging `origin/main` into it avoids that. If the main checkout is on a branch other than
 `main`, the new branch is cut from that branch's tip: check `git log origin/main..HEAD` is empty
 before the merge, and stop and ask if it isn't.
+
+The carried `.tally/ledger.jsonl` lines were recorded while `main` was checked out, so a `record`
+that knows the default branch ([0006](../../../docs/decisions/0006-pending-ledger-lines.md)) wrote
+them with `"pending": true`. Expect them, commit them with the rest of `.tally/`, and **never delete
+or edit them by hand**: a pending line is appended to, not rewritten, and `ledger check` fails a PR
+that drops or changes a line already on base. They are resolved by appending: the next `record` run
+from the feature branch (including `just token-record` in `/create-gh-pr`) appends a resolution for
+each pending line that belongs to it, or run `branch-tally ledger resolve [--dry-run]` on the branch
+before the PR. A pending line that cannot be tied to the branch with certainty stays pending and is
+reported as uncertain usage.
+
+Until a release containing that behaviour is installed, `record` on `main` still writes plain
+base-branch lines and `ledger check` (built from the base branch, and the hooks use the installed
+release) fails them as `recorded for the base branch`. Do not assume this repository's checkers
+already benefit. With an older binary, ask before removing such lines from the branch, and say in
+the PR body that they were removed.
 
 Name it per Conventional Branch (`docs/references/dev_workflow.md#branch-names`), for the change. If
 anything outside `.tally/` is dirty, stop and ask. **Never stash.** The stash is shared across every

@@ -359,6 +359,27 @@ pub struct Unstamped {
     pub tokens: u64,
 }
 
+/// Unresolved pending ledger lines (ADR 0006): usage recorded on the default branch and not yet
+/// resolved to a branch. Deduplicated by request id and kept outside the totals, so any nonzero
+/// count makes the totals beside it a floor. Absent in older serialized data.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Pending {
+    /// Unresolved pending ledger lines.
+    pub lines: u64,
+    /// Calls on those lines.
+    pub calls: u64,
+    /// Tokens of those calls (same definition as [`Bucket::tokens`]).
+    pub tokens: u64,
+}
+
+impl Pending {
+    /// Whether there is pending usage outside the totals, which makes them a floor.
+    #[must_use]
+    pub fn any(&self) -> bool {
+        self.lines > 0
+    }
+}
+
 /// The three tables `summarize` returns, each in first-seen order, plus what render derives.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Summary {
@@ -389,6 +410,10 @@ pub struct Summary {
     /// serialized data.
     #[serde(default)]
     pub unstamped: Unstamped,
+    /// Unresolved pending ledger lines (ADR 0006), outside the totals. Absent in older
+    /// serialized data.
+    #[serde(default)]
+    pub pending: Pending,
     /// `true` when `redact` replaced identifying detail. Absent in older serialized data.
     #[serde(default)]
     pub redacted: bool,
@@ -397,6 +422,32 @@ pub struct Summary {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn summary_without_pending_deserializes_to_zero_and_round_trips_nonzero() {
+        let mut v = serde_json::to_value(Summary::default()).unwrap();
+        v.as_object_mut().unwrap().remove("pending");
+        let old: Summary = serde_json::from_value(v).unwrap();
+        assert_eq!(old.pending, Pending::default());
+
+        let s = Summary {
+            pending: Pending {
+                lines: 2,
+                calls: 5,
+                tokens: 700,
+            },
+            ..Summary::default()
+        };
+        let back: Summary = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(
+            back.pending,
+            Pending {
+                lines: 2,
+                calls: 5,
+                tokens: 700
+            }
+        );
+    }
 
     #[test]
     fn bucket_tokens_exclude_thinking_and_calls() {

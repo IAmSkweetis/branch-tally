@@ -658,3 +658,59 @@ fn help_describes_the_base_branch_rule_not_a_head_branch_requirement() {
     assert!(flat.contains("recorded for the base branch"), "{help}");
     assert!(flat.contains("--head"), "{help}");
 }
+
+/// A line `record` wrote on the default branch (decision 0006): pending, still `main`.
+fn pending_line(request: &str) -> String {
+    let mut v: Value = serde_json::from_str(&ledger_line(
+        request,
+        "main",
+        Some("2026-01-02T00:00:00Z"),
+        5,
+    ))
+    .unwrap();
+    v["pending"] = Value::Bool(true);
+    v["kept_by"] = Value::String("exact".to_owned());
+    format!("{v}\n")
+}
+
+#[test]
+fn pending_lines_pass_with_a_note_that_ci_turns_into_a_notice() {
+    let r = repo();
+    r.append("ledger.jsonl", &pending_line("req_p_1"));
+    r.append("ledger.jsonl", &pending_line("req_p_2"));
+    let o = r.check();
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert!(
+        err(&o)
+            .lines()
+            .any(|l| l == "note: 2 pending line(s), usage uncertain"),
+        "{}",
+        err(&o)
+    );
+    assert!(err(&o).contains("ledger check: clean"), "{}", err(&o));
+}
+
+#[test]
+fn no_pending_note_when_there_are_no_pending_lines() {
+    let r = repo();
+    r.append("ledger.jsonl", &good("req_new_1"));
+    let o = r.check();
+    assert!(!err(&o).contains("pending"), "{}", err(&o));
+}
+
+#[test]
+fn a_plain_base_branch_line_still_fails_next_to_pending_ones() {
+    let r = repo();
+    r.append("ledger.jsonl", &pending_line("req_p_1"));
+    r.append(
+        "ledger.jsonl",
+        &ledger_line("req_plain_1", "main", Some("2026-01-02T00:00:00Z"), 5),
+    );
+    let o = r.check();
+    assert_eq!(o.status.code(), Some(1), "{}", err(&o));
+    assert!(
+        err(&o).contains("ledger: line 3: recorded for the base branch"),
+        "{}",
+        err(&o)
+    );
+}

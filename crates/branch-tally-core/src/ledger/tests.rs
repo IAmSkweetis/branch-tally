@@ -661,4 +661,153 @@ fn an_entry_with_an_agent_id_reads_back_as_a_sidechain_and_one_without_does_not(
     assert!(!back.attributed.record.is_sidechain);
 }
 
+#[test]
+fn append_pending_marks_each_line_and_a_plain_append_omits_the_field() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = path(&dir);
+    let recs = [selected("r1", "main", 1)];
+    append_pending(
+        &p,
+        &recs,
+        "main",
+        Mode::Claim,
+        None,
+        &Identity,
+        &CLOCK,
+        true,
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(&p).unwrap();
+    assert!(text.contains("\"pending\":true"), "{text}");
+    let l = read(&p).unwrap();
+    assert!(l.entries()[0].pending);
+    // `recorded_for` and `branch` stay as attribution produced them.
+    assert_eq!(l.entries()[0].recorded_for, "main");
+    assert_eq!(l.entries()[0].branch, "main");
+
+    let plain = tempfile::tempdir().unwrap();
+    append(
+        &path(&plain),
+        &recs,
+        "main",
+        Mode::Claim,
+        None,
+        &Identity,
+        &CLOCK,
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(path(&plain)).unwrap();
+    assert!(
+        !text.contains("pending") && !text.contains("resolved"),
+        "{text}"
+    );
+}
+
+#[test]
+fn append_default_pending_marks_lines_in_the_default_ledger() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(".tally")).unwrap();
+    let recs = [selected("r1", "main", 1)];
+    let out = append_default_pending(
+        dir.path(),
+        &recs,
+        "main",
+        Mode::Claim,
+        None,
+        &Identity,
+        &CLOCK,
+        true,
+    )
+    .unwrap();
+    assert_eq!(out.appended, 1);
+    assert!(read_default(dir.path()).unwrap().entries()[0].pending);
+}
+
+#[test]
+fn append_keyed_pending_marks_lines_and_still_hashes_them() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(".tally")).unwrap();
+    let recs = [selected("r1", "main", 1)];
+    append_keyed_default_pending(
+        dir.path(),
+        None,
+        false,
+        &recs,
+        "main",
+        Mode::Claim,
+        None,
+        &CLOCK,
+        true,
+    )
+    .unwrap();
+    let e = &read_default(dir.path()).unwrap().entries()[0].clone();
+    assert!(e.pending);
+    assert!(e.redaction.is_some());
+    assert_ne!(e.request_id.as_str(), "r1");
+}
+
+#[test]
+fn pending_and_resolved_round_trip_and_older_lines_read_as_neither() {
+    let old = line("r1", 1, Some("2026-01-01T00:00:00Z"));
+    let (e, _) = parse_line(old.as_bytes()).unwrap();
+    assert!(!e.pending);
+    assert_eq!(e.resolved, None);
+    assert_eq!(
+        line_text(&e),
+        old,
+        "an old line re-serializes byte for byte"
+    );
+
+    let mut r = e.clone();
+    r.resolved = Some(Resolved {
+        from: "main".to_owned(),
+    });
+    r.pending = false;
+    let text = line_text(&r);
+    assert!(text.contains("\"resolved\":{\"from\":\"main\"}"), "{text}");
+    assert!(!text.contains("pending"));
+    assert_eq!(parse_line(text.as_bytes()).unwrap().0, r);
+}
+
+#[test]
+fn redacting_a_ledger_keeps_pending_and_resolved() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = path(&dir);
+    let mut pending =
+        LedgerEntry::from_selected(&selected("r1", "main", 1), "main", Mode::Claim, None);
+    pending.pending = true;
+    let mut resolution =
+        LedgerEntry::from_selected(&selected("r1", "feat/x", 1), "feat/x", Mode::Claim, None);
+    resolution.resolved = Some(Resolved {
+        from: "main".to_owned(),
+    });
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(
+        &p,
+        format!("{}\n{}\n", line_text(&pending), line_text(&resolution)),
+    )
+    .unwrap();
+    let salt = Salt::generate().unwrap();
+    let out = redact_ledger(&p, &KeyedRedact::new(salt, false)).unwrap();
+    assert_eq!(out.rewritten, 2);
+    let l = read(&p).unwrap();
+    let flags: Vec<_> = l
+        .entries()
+        .iter()
+        .map(|e| (e.pending, e.resolved.clone()))
+        .collect();
+    assert_eq!(
+        flags,
+        vec![
+            (true, None),
+            (
+                false,
+                Some(Resolved {
+                    from: "main".to_owned()
+                })
+            )
+        ]
+    );
+}
+
 mod keyed;

@@ -114,7 +114,8 @@ pull request:
 - When the PR changes nothing under `.tally/`, the job passes with a notice. Otherwise it runs
   [`branch-tally ledger check`](../cli.md#branch-tally-ledger-check). The PR may only append to the
   ledger and captures files, and no new ledger line may be recorded for the PR's base branch,
-  normally `main`.
+  normally `main`, unless it is [pending](../ledger.md#usage-recorded-on-the-default-branch).
+  Pending lines pass, counted in a notice, and so do resolution lines that copy them faithfully.
   Lines for any other branch pass, and each such branch is named in a notice. A change to
   `.tally/prices.toml` passes with a warning. The checker's output is printed inside a
   `::stop-commands::` block, so text from the ledger can't run workflow commands, and its
@@ -126,11 +127,26 @@ pull request:
   workflow yet. Every later PR does.
 - `.github/CODEOWNERS` names a reviewer for `.tally/**`.
 
-Leftover lines recorded for `main` are the case to watch. When a session ends while the main
-checkout has `main` checked out, the record hook can append lines recorded for `main`, and they are
-committed on the next feature branch with the rest of the uncommitted `.tally/` lines.
-`tally-check` fails that PR, and merging it anyway needs an administrator to bypass the check.
-Leftover or backfilled lines for any other branch pass, each branch with a notice.
+Lines recorded for `main` are the case to watch. The orchestrator's session usually starts on
+`main`, and the feature branch is cut partway through. When a session ends while the main checkout
+has `main` checked out, the record hook can append lines recorded for `main`, and they are committed
+on the next feature branch with the rest of the uncommitted `.tally/` lines. The skills carry them
+rather than delete them, and once a line is on `main`, `tally-check` fails any PR that removes or
+changes it.
+
+With a branch-tally that writes [pending lines](../ledger.md#usage-recorded-on-the-default-branch),
+those lines are pending. The next `record` on the feature branch, including the one
+`/create-gh-pr` runs, appends a resolution for each one that belongs to the branch, or
+`branch-tally ledger resolve` does it on its own. `tally-check` then passes the PR with a notice
+counting the pending lines. Any that stay pending are uncertain usage: they are in no branch's
+total, the report's footnote counts them, and the PR body says so rather than hiding them.
+
+`record` and the hooks run the **installed release**, while `tally-check` builds its checker from
+the base branch. An older installed release writes plain lines for `main`, which `tally-check`
+fails as `recorded for the base branch`. Such lines are new on the feature branch, not on `main`,
+so they can be removed from the branch, with the PR body saying so; otherwise merging the PR needs
+an administrator to bypass the check. Leftover or backfilled lines for any other branch
+pass, each branch with a notice.
 
 ## Why the numbers come out right
 
@@ -173,7 +189,11 @@ so the pull request opens with its table already in the body. That skill:
    binary**, not a build of the branch under review, so the number comes from a published release.
    When `record` appends nothing, the skill skips the commit. No pull request is needed yet:
    `record` attributes by branch, and `report --from-ledger` prints the table to stdout between
-   the `token-report` markers;
+   the `token-report` markers. `record` on the branch also resolves the branch's
+   [pending lines](../ledger.md#resolving-pending-lines); when in doubt, the skill runs
+   `branch-tally ledger resolve --dry-run` and then `branch-tally ledger resolve`, and commits the
+   appended lines with the rest of the ledger. Any line that stays pending is reported in the PR
+   body as usage that could not be attributed, never deleted;
 3. writes the PR body from the PR template, whose last section is:
 
    ```markdown
@@ -191,7 +211,8 @@ so the pull request opens with its table already in the body. That skill:
    ```
 
    The script exits non-zero and leaves the body untouched when either file lacks the markers, as
-   it does when the ledger has no lines for the branch. The skill then leaves the placeholder in
+   it does when the ledger has no lines for the branch and no unresolved pending lines. The skill
+   then leaves the placeholder in
    place and reports why. Under the markers it adds one line, which a later `report --pr` leaves
    alone:
 

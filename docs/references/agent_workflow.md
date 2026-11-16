@@ -160,7 +160,8 @@ Order matters, and the reason is this project's own subject:
 2. **`create-gh-pr`** records the token usage (`branch-tally record`, committed to the branch as
    `.tally/ledger.jsonl`) **while every agent worktree still exists**, puts the table in the PR
    body, and only then pushes the branch and opens the PR. A later round commits its usage in the
-   same push as its work, never as a push of its own. See
+   same push as its work, never as a push of its own. Pending ledger lines for the branch (recorded
+   while `main` was checked out) are resolved by appending first, never deleted by hand. See
    [dev_workflow.md](dev_workflow.md#token-usage).
 3. The PR merges.
 4. **`worktree-cleanup`** removes the worktrees and branches, and returns the main checkout to a

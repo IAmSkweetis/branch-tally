@@ -64,8 +64,9 @@ pub(super) fn millions(tokens: u64) -> String {
 }
 
 /// The total cost cell. A partial total is a floor (Governance II), so the cell says so itself.
-fn total_cost_cell(costs: &Costs, ambiguous: bool, overflowed: bool) -> String {
-    let floor = if costs.is_floor() || ambiguous || overflowed {
+/// `uncertain` is set when some calls are ambiguous or pending usage sits outside the totals.
+fn total_cost_cell(costs: &Costs, uncertain: bool, overflowed: bool) -> String {
+    let floor = if costs.is_floor() || uncertain || overflowed {
         "at least "
     } else {
         ""
@@ -155,19 +156,45 @@ fn work_branch_note(rule: Option<&WorkBranchRule>) -> String {
     }
 }
 
-/// When some calls could not be attributed with certainty, the token total is only a floor
-/// (Governance II): say so, and how much was ambiguous. Pushes nothing otherwise.
-fn floor_statement(h: &HeuristicBreakdown, total_tokens: u64, o: &mut Vec<String>) {
-    if !h.any_ambiguous() {
-        return;
-    }
-    o.push(format!(
-        "**Token total is at least {}**: {} token(s) in {} call(s) could not be attributed to a \
-         branch with certainty.",
-        n(total_tokens),
-        n(h.ambiguous.tokens),
-        n(h.ambiguous.calls),
-    ));
+/// When some calls could not be attributed with certainty, or pending usage sits outside the
+/// totals (decision 0006), the token total is only a floor (Governance II): say so, and how much.
+/// Pushes nothing otherwise, and the ambiguous-only wording is unchanged.
+fn floor_statement(
+    h: &HeuristicBreakdown,
+    pending: &crate::model::Pending,
+    total_tokens: u64,
+    o: &mut Vec<String>,
+) {
+    let pending_text = |lead: &str| {
+        format!(
+            "{} token(s) in {} pending call(s) recorded on the default branch {lead}",
+            n(pending.tokens),
+            n(pending.calls),
+        )
+    };
+    let text = match (h.any_ambiguous(), pending.any()) {
+        (false, false) => return,
+        (true, with_pending) => {
+            let mut t = format!(
+                "**Token total is at least {}**: {} token(s) in {} call(s) could not be attributed \
+                 to a branch with certainty.",
+                n(total_tokens),
+                n(h.ambiguous.tokens),
+                n(h.ambiguous.calls),
+            );
+            if with_pending {
+                t.push(' ');
+                t.push_str(&pending_text("are not in it either."));
+            }
+            t
+        }
+        (false, true) => format!(
+            "**Token total is at least {}**: {}",
+            n(total_tokens),
+            pending_text("may belong to this branch and are not in it."),
+        ),
+    };
+    o.push(text);
     o.push(String::new());
 }
 
@@ -261,9 +288,10 @@ fn double_count_statement(risk: Option<&DoubleCountRisk>, floor: bool, o: &mut V
 /// whether a shown cost is labelled "at least" for an unpriced model.
 fn statements(summary: &Summary, cost_floor: bool, o: &mut Vec<String>) {
     let f = &summary.footnote;
-    floor_statement(&f.heuristics, summary.total.tokens(), o);
+    floor_statement(&f.heuristics, &summary.pending, summary.total.tokens(), o);
     overflow_statement(f.totals_overflowed, o);
-    let floor = cost_floor || f.heuristics.any_ambiguous() || f.totals_overflowed;
+    let floor =
+        cost_floor || f.heuristics.any_ambiguous() || f.totals_overflowed || summary.pending.any();
     double_count_statement(f.double_count.as_ref(), floor, o);
 }
 
@@ -538,7 +566,7 @@ pub fn markdown(summary: &Summary, costs: &Costs, show_cost: bool) -> String {
     let total_cell = if show_cost {
         total_cost_cell(
             costs,
-            summary.footnote.heuristics.any_ambiguous(),
+            summary.footnote.heuristics.any_ambiguous() || summary.pending.any(),
             summary.footnote.totals_overflowed,
         )
     } else {
@@ -590,6 +618,16 @@ pub fn markdown(summary: &Summary, costs: &Costs, show_cost: bool) -> String {
     o.push(note);
     o.push(String::new());
 
+    uncertain_usage_notes(summary, &mut o);
+
+    subagent_section(summary, costs, show_cost, &mut o);
+
+    attribution_details(summary, &mut o);
+    o.join("\n")
+}
+
+/// Footnotes for repository-wide usage outside this branch's total.
+fn uncertain_usage_notes(summary: &Summary, o: &mut Vec<String>) {
     // #60: usage no branch could claim. Repository-wide, so it is not part of this branch's total.
     if summary.unstamped.calls > 0 {
         o.push(format!(
@@ -601,10 +639,26 @@ pub fn markdown(summary: &Summary, costs: &Costs, show_cost: bool) -> String {
         o.push(String::new());
     }
 
-    subagent_section(summary, costs, show_cost, &mut o);
+    // ADR 0006: default-branch usage still waiting for its branch. Uncertain, so outside the totals.
+    if let Some(note) = pending_text(&summary.pending) {
+        o.push(note);
+        o.push(String::new());
+    }
+}
 
-    attribution_details(summary, &mut o);
-    o.join("\n")
+/// The ADR 0006 pending-usage note, or `None` when there are no unresolved pending lines. Shared
+/// by the summary and the project report so both word it identically.
+pub(super) fn pending_text(p: &crate::model::Pending) -> Option<String> {
+    (p.lines > 0).then(|| {
+        format!(
+            "<sub>{} pending ledger line(s), {} call(s) / {} tokens, were recorded on the default \
+             branch and could not yet be attributed to a branch with certainty; they are not in \
+             these totals.</sub>",
+            n(p.lines),
+            n(p.calls),
+            n(p.tokens),
+        )
+    })
 }
 
 /// The collapsed attribution table, sorted by descending tokens (stably).

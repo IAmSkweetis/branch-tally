@@ -99,6 +99,7 @@ fn a_salt_that_appears_between_planning_and_resolving_is_the_one_used() {
         Mode::Claim,
         None,
         &CLOCK,
+        false,
         &hook,
     )
     .unwrap();
