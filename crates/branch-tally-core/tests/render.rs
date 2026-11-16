@@ -1474,6 +1474,43 @@ fn json_has_a_top_level_unstamped_key_only_when_there_are_some() {
 }
 
 #[test]
+fn markdown_reports_pending_ledger_usage_only_when_there_is_some() {
+    use branch_tally_core::model::Pending;
+    let (mut s, c) = sample();
+    assert!(!markdown(&s, &c, false).contains("pending"));
+    s.pending = Pending {
+        lines: 3,
+        calls: 5,
+        tokens: 4_321,
+    };
+    let md = markdown(&s, &c, false);
+    let line = "3 pending ledger line(s), 5 call(s) / 4,321 tokens recorded on the default branch \
+                before a branch was cut, are not yet attributed to any branch and are not in \
+                these totals.";
+    assert!(md.contains(line), "{md}");
+    assert!(md.find("<sub>Branch").unwrap() < md.find(line).unwrap());
+    assert!(md.find(line).unwrap() < md.find("<details>").unwrap());
+}
+
+#[test]
+fn json_has_a_top_level_pending_key_only_when_there_is_some() {
+    use branch_tally_core::model::Pending;
+    use serde_json::Value;
+    let (mut s, c) = sample();
+    let v: Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
+    assert!(v.get("pending").is_none());
+    s.pending = Pending {
+        lines: 3,
+        calls: 5,
+        tokens: 4_321,
+    };
+    let v: Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
+    assert_eq!(v["pending"]["lines"], 3);
+    assert_eq!(v["pending"]["calls"], 5);
+    assert_eq!(v["pending"]["tokens"], 4_321);
+}
+
+#[test]
 fn splice_only_honours_markers_on_their_own_line() {
     // Marker text inside a line (a name in the old report) neither ends the region early nor
     // extends it.
