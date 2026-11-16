@@ -22,12 +22,19 @@
 mod captures;
 mod check;
 mod keyed_append;
+mod pending;
 mod redaction;
 mod tally_dir;
 
 use std::path::{Path, PathBuf};
 
-pub use keyed_append::{append_keyed_default, append_keyed_explicit};
+pub use keyed_append::{
+    append_keyed_default, append_keyed_default_pending, append_keyed_explicit,
+    append_keyed_explicit_pending,
+};
+pub use pending::{
+    EvidenceMap, PendingEvidence, PendingStats, Resolution, TimelineEvidence, resolve_pending,
+};
 pub(crate) use redaction::is_agent_branch;
 pub use redaction::{
     KeyedRedact, RedactOutcome, SALT_FILE, Salt, redact_ledger, redact_ledger_default,
@@ -113,6 +120,22 @@ pub struct LedgerEntry {
     /// unredacted line. Its presence is what stops a line being hashed twice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redaction: Option<String>,
+    /// Set on a line `record` wrote while on the repository's default branch (decision 0006):
+    /// recorded on the default branch and not yet resolved to a branch. Omitted when false, so every older line reads as not
+    /// pending. `recorded_for`, `branch`, `basis` and `kept_by` stay as attribution produced them.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pending: bool,
+    /// Set on a resolution line, appended later for a pending line (decision 0006). Copies the
+    /// pending line and names the default branch it was recorded for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved: Option<Resolved>,
+}
+
+/// Where a resolution line's usage was first recorded (decision 0006).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Resolved {
+    /// The default branch the pending line was recorded for.
+    pub from: String,
 }
 
 /// A session origin as the ledger stores it: `"main"`, `{"worktree": "<relative name>"}` or
@@ -268,6 +291,8 @@ impl LedgerEntry {
             usage: r.usage,
             recorded_at: None,
             redaction: None,
+            pending: false,
+            resolved: None,
         }
     }
 
@@ -623,7 +648,12 @@ struct Plan {
     out: AppendOutcome,
 }
 
-/// Works out what to append to a ledger whose current bytes are `existing`.
+/// Works out what to append to a ledger whose current bytes are `existing`. `pending` marks each
+/// new line as pending (decision 0006).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the append inputs plus the pending mark"
+)]
 fn plan_append(
     existing: &[u8],
     records: &[SelectedRecord],
@@ -632,6 +662,7 @@ fn plan_append(
     main: Option<&Path>,
     redact: &dyn Redact,
     clock: &dyn Clock,
+    pending: bool,
 ) -> Plan {
     let held = parse_ledger(existing);
     let mut seen: std::collections::HashSet<EntryKey> =
@@ -640,7 +671,9 @@ fn plan_append(
     let mut out = AppendOutcome::default();
     let mut buf = String::new();
     for rec in records {
-        let mut entry = redact.redact(LedgerEntry::from_selected(rec, recorded_for, mode, main));
+        let mut marked = LedgerEntry::from_selected(rec, recorded_for, mode, main);
+        marked.pending = pending;
+        let mut entry = redact.redact(marked);
         entry.recorded_at = Some(recorded_at.clone());
         if !seen.insert(entry.key()) {
             out.skipped += 1;
@@ -675,6 +708,38 @@ pub fn append(
     redact: &dyn Redact,
     clock: &dyn Clock,
 ) -> Result<AppendOutcome, LedgerError> {
+    append_pending(
+        path,
+        records,
+        recorded_for,
+        mode,
+        main,
+        redact,
+        clock,
+        false,
+    )
+}
+
+/// [`append`] that marks every line it writes `pending` when `pending` is set: the branch being
+/// recorded is the repository's default branch (decision 0006). Resolution later appends a line
+/// for the branch that was cut; a pending line is never edited.
+///
+/// # Errors
+/// As [`append`].
+#[expect(
+    clippy::too_many_arguments,
+    reason = "mirrors `append` plus the pending mark"
+)]
+pub fn append_pending(
+    path: &Path,
+    records: &[SelectedRecord],
+    recorded_for: &str,
+    mode: Mode,
+    main: Option<&Path>,
+    redact: &dyn Redact,
+    clock: &dyn Clock,
+    pending: bool,
+) -> Result<AppendOutcome, LedgerError> {
     use std::io::Write;
 
     let write_err = |source| LedgerError::Write {
@@ -692,8 +757,16 @@ pub fn append(
             });
         }
     };
-    let Plan { buf, out } =
-        plan_append(&existing, records, recorded_for, mode, main, redact, clock);
+    let Plan { buf, out } = plan_append(
+        &existing,
+        records,
+        recorded_for,
+        mode,
+        main,
+        redact,
+        clock,
+        pending,
+    );
     if out.appended == 0 {
         return Ok(out);
     }
@@ -729,6 +802,36 @@ pub fn append_default(
     redact: &dyn Redact,
     clock: &dyn Clock,
 ) -> Result<AppendOutcome, LedgerError> {
+    append_default_pending(
+        root,
+        records,
+        recorded_for,
+        mode,
+        main,
+        redact,
+        clock,
+        false,
+    )
+}
+
+/// [`append_default`] with the pending mark of [`append_pending`].
+///
+/// # Errors
+/// As [`append_default`].
+#[expect(
+    clippy::too_many_arguments,
+    reason = "mirrors `append_default` plus the pending mark"
+)]
+pub fn append_default_pending(
+    root: &Path,
+    records: &[SelectedRecord],
+    recorded_for: &str,
+    mode: Mode,
+    main: Option<&Path>,
+    redact: &dyn Redact,
+    clock: &dyn Clock,
+    pending: bool,
+) -> Result<AppendOutcome, LedgerError> {
     let Some(tally) = TallyDir::open(root)? else {
         return Ok(AppendOutcome {
             tally_absent: true,
@@ -736,12 +839,117 @@ pub fn append_default(
         });
     };
     let existing = tally.read(LEDGER_FILE)?.unwrap_or_default();
-    let Plan { buf, out } =
-        plan_append(&existing, records, recorded_for, mode, main, redact, clock);
+    let Plan { buf, out } = plan_append(
+        &existing,
+        records,
+        recorded_for,
+        mode,
+        main,
+        redact,
+        clock,
+        pending,
+    );
     if out.appended > 0 {
         tally.append(LEDGER_FILE, buf.as_bytes())?;
     }
     Ok(out)
+}
+
+/// Appends prebuilt `entries` verbatim (a resolution line from [`resolve_pending`] already holds
+/// its pending line's hashed ids and `redaction` stamp, so nothing is redacted again). Only keys
+/// `(request_id, recorded_for)` the ledger does not hold are written, each stamped with
+/// `recorded_at` from `clock`. Idempotent. The path form, for an explicit `--ledger <path>`.
+///
+/// # Errors
+/// [`LedgerError`] when the ledger cannot be read or written.
+pub fn append_entries(
+    path: &Path,
+    entries: &[LedgerEntry],
+    clock: &dyn Clock,
+) -> Result<AppendOutcome, LedgerError> {
+    use std::io::Write;
+
+    let write_err = |source| LedgerError::Write {
+        path: path.to_owned(),
+        source,
+    };
+    let existing = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(source) => {
+            return Err(LedgerError::Read {
+                path: path.to_owned(),
+                source,
+            });
+        }
+    };
+    let Plan { buf, out } = plan_entries(&existing, entries, clock);
+    if out.appended == 0 {
+        return Ok(out);
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(write_err)?;
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(write_err)?;
+    file.write_all(buf.as_bytes()).map_err(write_err)?;
+    Ok(out)
+}
+
+/// [`append_entries`] to the default ledger, through the guarded [`TallyDir`] like
+/// [`append_default`]: nothing is written or created when `.tally/` is absent
+/// ([`AppendOutcome::tally_absent`]).
+///
+/// # Errors
+/// As [`append_default`].
+pub fn append_entries_default(
+    root: &Path,
+    entries: &[LedgerEntry],
+    clock: &dyn Clock,
+) -> Result<AppendOutcome, LedgerError> {
+    let Some(tally) = TallyDir::open(root)? else {
+        return Ok(AppendOutcome {
+            tally_absent: true,
+            ..AppendOutcome::default()
+        });
+    };
+    let existing = tally.read(LEDGER_FILE)?.unwrap_or_default();
+    let Plan { buf, out } = plan_entries(&existing, entries, clock);
+    if out.appended > 0 {
+        tally.append(LEDGER_FILE, buf.as_bytes())?;
+    }
+    Ok(out)
+}
+
+/// Works out what to append for prebuilt entries.
+fn plan_entries(existing: &[u8], entries: &[LedgerEntry], clock: &dyn Clock) -> Plan {
+    let mut seen: std::collections::HashSet<EntryKey> = parse_ledger(existing)
+        .entries()
+        .iter()
+        .map(LedgerEntry::key)
+        .collect();
+    let recorded_at = clock.now();
+    let mut out = AppendOutcome::default();
+    let mut buf = String::new();
+    for entry in entries {
+        let mut entry = entry.clone();
+        entry.recorded_at = Some(recorded_at.clone());
+        if !seen.insert(entry.key()) {
+            out.skipped += 1;
+            continue;
+        }
+        buf.push_str(&line_text(&entry));
+        buf.push('\n');
+        out.appended += 1;
+        out.unnamed_origins += u64::from(entry.origin == Some(StoredOrigin::Worktree(None)));
+    }
+    if out.appended > 0 && !existing.is_empty() && !existing.ends_with(b"\n") {
+        buf.insert(0, '\n');
+    }
+    Plan { buf, out }
 }
 
 /// Ledger entries unioned with live records.
