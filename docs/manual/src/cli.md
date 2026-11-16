@@ -348,10 +348,12 @@ optional, a word straight after a bare `--pr` is read as `N`: write `report my-b
 #### Which repository and which PR
 
 Every `gh` call that `--pr` makes names the repository with `--repo`, taken from the `origin`
-remote of the repository being reported on: `OWNER/REPO` for github.com, and `HOST/OWNER/REPO` for
-any other host, such as GitHub Enterprise. Nothing is guessed. If there is no `origin`, or its URL
-is not a GitHub repository URL that branch-tally can read, the run stops before `gh` is called
-(exit 1). The message never prints the URL, because a remote URL can hold credentials:
+remote of the repository being reported on. It is always `HOST/OWNER/REPO`, such as
+`github.com/acme/widget` or `ghe.example.com/acme/widget` for GitHub Enterprise, so `gh` never
+takes the host from its `GH_HOST` environment variable. Nothing is guessed. If there is no
+`origin`, or its URL is not a GitHub repository URL that branch-tally can read, the run stops
+before `gh` is called (exit 1). The message never prints the URL, because a remote URL can hold
+credentials:
 
 ```text
 cannot tell which GitHub repository --pr should use: this repository needs an `origin` remote that points at GitHub (run `git remote get-url origin` to check it)
@@ -363,13 +365,19 @@ With a number, branch-tally writes to that PR in the `origin` repository, whatev
 branch. Without a number, it lists the open PRs whose head is the branch and keeps only the
 same-repository ones: the head is in the `origin` repository itself. A PR whose head is in a fork
 is never picked, even when its branch has the same name. It is counted in the message instead. To
-update a fork's PR, name it: `--pr N`. Without a number the outcome is one of these:
+update a fork's PR, name it: `--pr N`.
 
-| Open same-repository PRs for the branch | What happens |
-| --------------------------------------- | ------------ |
-| exactly one | The table is written to it. |
-| none | Exit 1: `No open PR found for branch '…' (<count> fork PR(s) ignored; pass --pr N for one). Open the PR first, then re-run with --pr.` `<count>` is how many fork PRs for the branch were skipped, and is `0` when there were none. |
-| more than one | Exit 1: `More than one open PR for branch '…': 3, 12. Pass --pr N to choose one.` The numbers are every match, in order. branch-tally never picks one. |
+`gh` is asked for at most 100 open PRs. If it returns 100 or more, counting fork PRs, the list may
+have been cut short, so branch-tally doesn't choose from it. Otherwise the outcome depends on how
+many same-repository PRs are left. On every exit 1 below, no PR is edited:
+
+| What `gh` lists for the branch | What happens |
+| ------------------------------ | ------------ |
+| 100 or more open PRs | Exit 1: `100 or more open PRs were listed for branch '…', so the list may be truncated and no PR was chosen. Pass --pr N to name the one to update.` |
+| exactly one same-repository PR | The table is written to it. |
+| no same-repository PR, no fork PR | Exit 1: `No open PR found for branch '…'. Open the PR first, then re-run with --pr.` |
+| no same-repository PR, some fork PRs | Exit 1: `No open PR found for branch '…' (<count> fork PR(s) ignored; pass --pr N for one). Open the PR first, then re-run with --pr.` `<count>` is how many fork PRs for the branch were skipped. |
+| more than one same-repository PR | Exit 1: `More than one open PR for branch '…': 3, 12. Pass --pr N to choose one.` The numbers are every match, in order. branch-tally never picks one. |
 
 #### What is written
 
@@ -426,6 +434,10 @@ Redaction applies to the report only, and is off by default. The ledger has its 
 | `note: git worktree list was unavailable, so worktree recovery was skipped` | `git worktree list` failed, so subagent calls in worktrees could not be recovered. |
 | `note: using the repository price override (.tally/prices.toml); prices are not the bundled or cached table` | Costs come from the repository's own price table, not from branch-tally's. Printed in every output format; stdout is unchanged. See [Which price table is used](#which-price-table-is-used). |
 | `note: config format = "json" was overridden by --pr; the PR body is Markdown` | The config file sets `format = "json"` and `--pr` was given, so the Markdown table was written (or, with `--dry-run`, printed) instead of JSON. See [Updating a pull request](#updating-a-pull-request). |
+| `cannot tell which GitHub repository --pr should use: …` | Exit 1, `--pr` only. There is no `origin` remote, or it isn't a GitHub URL branch-tally can read. `gh` was not run. See [Which repository and which PR](#which-repository-and-which-pr). |
+| `No open PR found for branch '…'. …` | Exit 1, bare `--pr` only. The branch has no open same-repository PR. When fork PRs were skipped, the message counts them. Nothing was edited. |
+| `More than one open PR for branch '…': …. Pass --pr N to choose one.` | Exit 1, bare `--pr` only. Several same-repository PRs match, and branch-tally won't pick one. Nothing was edited. |
+| `100 or more open PRs were listed for branch '…', so the list may be truncated and no PR was chosen. Pass --pr N to name the one to update.` | Exit 1, bare `--pr` only. `gh` returned a full page of open PRs for the branch, so the right PR may be missing from it. Nothing was edited. |
 | The ledger notes | See [Report from the ledger](ledger.md#report-from-the-ledger). |
 
 Recorded text in these messages, such as a model id or a branch, has its control characters
