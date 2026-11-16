@@ -226,7 +226,7 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), Failure> {
     let markdown = render::markdown(&report.summary, &report.costs, settings.cost.value);
     match &args.pr {
         None => stdout(&format!("{}\n", render::wrap(&markdown))),
-        Some(number) => update(&cwd, &report, &markdown, number, args.dry_run)?,
+        Some(number) => update(&cwd, &report, &markdown, *number, args.dry_run)?,
     }
     Ok(())
 }
@@ -462,30 +462,23 @@ fn update(
     cwd: &Path,
     report: &Report,
     markdown: &str,
-    number: &str,
+    number: Option<u64>,
     dry_run: bool,
 ) -> Result<(), String> {
     // gh runs in the main checkout, as the reference does after resolving it.
     let repo: PathBuf = SystemGit.main_checkout(cwd);
-    let number = if number.is_empty() {
-        None
-    } else {
-        Some(
-            number
-                .parse::<u64>()
-                .map_err(|_| format!("--pr must be a pull request number, got {}", repr(number)))?,
-        )
-    };
-    // TODO(CLI Builder, #99): resolve `OWNER/REPO` from `origin` through the Git trait. Until
-    // then `--pr` fails closed rather than guessing a repository.
-    let Some(gh_repo) = None::<&str> else {
-        return Err("cannot resolve the GitHub repository for --repo yet".to_owned());
-    };
+    // `--repo` comes from `origin` and nothing else: no guessing. The error carries a fixed
+    // message because the remote URL may hold credentials.
+    let gh_repo = SystemGit.origin_repo(&repo).map_err(|_| {
+        "cannot tell which GitHub repository --pr should use: this repository needs an `origin` \
+         remote that points at GitHub (run `git remote get-url origin` to check it)"
+            .to_owned()
+    })?;
     let outcome = update_pr(
         &SystemGh::new(repo),
         &report.branch,
         markdown,
-        gh_repo,
+        &gh_repo,
         number,
         dry_run,
     )
@@ -496,8 +489,13 @@ fn update(
             repr(&branch)
         ),
         PrError::AmbiguousPr { branch, numbers } => format!(
-            "More than one open PR for branch {}: {numbers:?}. Pass --pr N.",
-            repr(&branch)
+            "More than one open PR for branch {}: {}. Pass --pr N to choose one.",
+            repr(&branch),
+            numbers
+                .iter()
+                .map(u64::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
         PrError::Gh(e) => e.to_string(),
     })?;
