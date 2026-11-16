@@ -483,9 +483,20 @@ fn update(
         dry_run,
     )
     .map_err(|e| match e {
-        PrError::NoOpenPr { branch, ignored } => format!(
-            "No open PR found for branch {} ({ignored} fork PR(s) ignored; pass --pr N for one). \
-             Open the PR first, then re-run with --pr.",
+        PrError::NoOpenPr { branch, ignored } => {
+            let note = if ignored == 0 {
+                String::new()
+            } else {
+                format!(" ({ignored} fork PR(s) ignored; pass --pr N for one)")
+            };
+            format!(
+                "No open PR found for branch {}{note}. Open the PR first, then re-run with --pr.",
+                repr(&branch)
+            )
+        }
+        PrError::TooManyPrs { branch, limit } => format!(
+            "{limit} or more open PRs were listed for branch {}, so the list may be truncated and \
+             no PR was chosen. Pass --pr N to name the one to update.",
             repr(&branch)
         ),
         PrError::AmbiguousPr { branch, numbers } => format!(

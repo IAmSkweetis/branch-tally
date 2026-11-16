@@ -91,7 +91,7 @@ mod unix {
         let calls = gh.calls();
         assert!(calls.len() >= 2, "{calls:?}");
         for call in &calls {
-            assert!(call.contains("--repo acme/widget"), "{call}");
+            assert!(call.contains("--repo github.com/acme/widget"), "{call}");
         }
         assert!(calls.iter().any(|c| c.starts_with("pr list")), "{calls:?}");
         assert!(
@@ -110,7 +110,7 @@ mod unix {
         let calls = gh.calls();
         assert_ne!(calls, Vec::<String>::new());
         for call in &calls {
-            assert!(call.contains("--repo acme/widget"), "{call}");
+            assert!(call.contains("--repo github.com/acme/widget"), "{call}");
             assert!(!call.contains("pr list"), "{call}");
         }
         assert!(

@@ -113,9 +113,9 @@ pub trait Git {
     /// ([`GitError::UnexpectedOutput`]).
     fn default_branch(&self, repo: &Path) -> Result<String, GitError>;
 
-    /// The GitHub repository `origin` points at, as gh's `--repo` argument: `OWNER/REPO` for
-    /// github.com, `HOST/OWNER/REPO` for any other host (GitHub Enterprise), so the host is
-    /// never assumed. Read from `git remote get-url origin`. Userinfo (credentials) in the URL
+    /// The GitHub repository `origin` points at, as gh's `--repo` argument, always
+    /// `HOST/OWNER/REPO` (e.g. `github.com/acme/widget`), github.com included, so the host
+    /// never comes from gh's `GH_HOST` environment variable. Read from `git remote get-url origin`. Userinfo (credentials) in the URL
     /// is dropped and the raw URL never appears in the value or in an error.
     ///
     /// There is deliberately no guess: no `origin` remote, or a URL that is not unambiguously
@@ -166,7 +166,8 @@ pub fn parse_origin_head(output: &str) -> Option<String> {
     }
 }
 
-/// Parse a remote URL into gh's `--repo` form. Pure. See [`Git::origin_repo`].
+/// Parse a remote URL into gh's `--repo` form, always `HOST/OWNER/REPO` with the host
+/// lowercased (github.com included). Pure. See [`Git::origin_repo`].
 ///
 /// Accepts `https://`, `http://`, `ssh://` and `git://` URLs and scp-style `[user@]host:owner/repo`.
 /// Userinfo is dropped; an ssh port is dropped; an http(s)/git port is refused. A trailing `.git`
@@ -217,11 +218,7 @@ pub fn parse_origin_url(url: &str) -> Option<String> {
         return None;
     }
     let host = host.to_ascii_lowercase();
-    if host == "github.com" {
-        Some(format!("{owner}/{repo}"))
-    } else {
-        Some(format!("{host}/{owner}/{repo}"))
-    }
+    Some(format!("{host}/{owner}/{repo}"))
 }
 
 /// Parse `git worktree list --porcelain` output. Pure.
@@ -661,14 +658,14 @@ mod origin_url_tests {
         ] {
             assert_eq!(
                 parse_origin_url(url).as_deref(),
-                Some("acme/widget"),
+                Some("github.com/acme/widget"),
                 "{url}"
             );
         }
     }
 
     #[test]
-    fn other_hosts_keep_the_host() {
+    fn every_host_is_named_never_left_to_the_environment() {
         assert_eq!(
             parse_origin_url("git@ghe.example.com:acme/widget.git").as_deref(),
             Some("ghe.example.com/acme/widget")
@@ -683,7 +680,7 @@ mod origin_url_tests {
     fn names_keep_dots_and_dashes() {
         assert_eq!(
             parse_origin_url("https://github.com/my-org/a.b-c.git").as_deref(),
-            Some("my-org/a.b-c")
+            Some("github.com/my-org/a.b-c")
         );
     }
 
@@ -720,13 +717,16 @@ mod origin_url_tests {
         let got =
             parse_origin_url("https://user:s3cret@github.com/acme/widget").unwrap_or_default();
         assert!(!got.contains("s3cret") && !got.contains("user"));
-        assert_eq!(got, "acme/widget");
+        assert_eq!(got, "github.com/acme/widget");
     }
 
     #[test]
     fn fake_origin_repo_scripted_and_unscripted() {
-        let f = FakeGit::new().with_origin_repo("/r", "acme/widget");
-        assert_eq!(f.origin_repo(Path::new("/r")).unwrap(), "acme/widget");
+        let f = FakeGit::new().with_origin_repo("/r", "github.com/acme/widget");
+        assert_eq!(
+            f.origin_repo(Path::new("/r")).unwrap(),
+            "github.com/acme/widget"
+        );
         assert!(f.origin_repo(Path::new("/other")).is_err());
     }
 }
