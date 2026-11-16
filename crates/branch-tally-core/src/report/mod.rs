@@ -649,32 +649,28 @@ pub fn run(
     let live = read_live(git, source, projects_root, repo_dir)?;
     let mut storage = None;
     let options = resolve_options(git, &live.main_checkout, options, &mut storage);
-    let mut report = build_with_captures(
+    let sel = select_for(
         live.records,
         &live.dispatches,
         live.captures.events(),
-        live.stats,
         &live.main_checkout,
         &live.worktrees,
         &branch,
         options,
-        table,
-    )?;
+    );
+    if sel.selected.is_empty() {
+        return Err(ReportError::NoRecords {
+            branch,
+            read_stats: live.stats,
+        });
+    }
+    // Pending lines outside what this report counts (decision 0006).
+    let pending = pending::live_pending(git, repo_dir, &live.main_checkout, &sel.selected);
+    let mut report = finish(&branch, options, sel, live.stats, table);
     report.worktrees_unavailable = live.unavailable;
     report.capture_stats = live.captures.stats().clone();
-    report.summary.pending = default_ledger_pending(git, repo_dir);
+    report.summary.pending = pending;
     Ok(report)
-}
-
-/// The unresolved pending lines in the default ledger (decision 0006), for a report that did not
-/// read the ledger. Zero when there is no `.tally/` or ledger; also zero when the ledger cannot be
-/// read, which the summary documents as "none, or unknown": a live report never fails over it.
-fn default_ledger_pending(git: &dyn Git, repo_dir: &Path) -> crate::model::Pending {
-    git.toplevel(repo_dir)
-        .ok()
-        .and_then(|root| crate::ledger::read_default(&root).ok())
-        .map(|ledger| ledger.unresolved_pending())
-        .unwrap_or_default()
 }
 
 /// The ledger's entries for one requested branch. An agent branch (`worktree-agent-<id>`) is
@@ -719,7 +715,12 @@ impl BranchLedger {
         let mut at: std::collections::HashMap<crate::model::RequestId, usize> =
             std::collections::HashMap::new();
         let mut collapsed = 0;
-        for entry in halves.iter().flat_map(crate::ledger::Ledger::entries) {
+        // A pending line is in no branch's totals (decision 0006): it is reported only as pending.
+        for entry in halves
+            .iter()
+            .flat_map(crate::ledger::Ledger::entries)
+            .filter(|e| !e.pending)
+        {
             if let Some(&i) = at.get(&entry.request_id) {
                 collapsed += 1;
                 if newer_line(entry, &entries[i]) {
@@ -1371,12 +1372,19 @@ pub fn run_from_ledger_at(
     if sel.selected.is_empty() {
         return Err(ReportError::NoRecords { branch, read_stats });
     }
+    // Repository-wide, not this branch's: pending lines wait for a branch that is not this one
+    // yet. A request the totals already count is not also pending.
+    let salts = pending::matching_salts(&homes, &read);
+    let counted = pending::stored_forms(
+        sel.selected.iter().map(|s| &s.attributed.record.request_id),
+        &salts,
+    );
+    let pending = pending::pending_outside(&read, &counted);
     let mut report = finish(&branch, options, sel, read_stats, table);
     report.worktrees_unavailable = unavailable;
     report.capture_stats = capture_stats;
     report.summary.footnote.double_count = double_count_risk(read.stats(), info.live_redaction);
-    // Repository-wide, not this branch's: pending lines wait for a branch that is not this one yet.
-    report.summary.pending = read.unresolved_pending();
+    report.summary.pending = pending;
     report.ledger = Some(info);
     Ok(report)
 }

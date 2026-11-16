@@ -215,9 +215,16 @@ in two steps in `report/`:
 - **Redacted ledgers.** Live request ids are hashed under each salt whose fingerprint is on a
   ledger line to find a line's evidence. The resolution copies the line's own hashed ids, so it
   needs no salt to write.
-- The live report (`run`) fills `Summary.pending` from the default ledger when one exists, and
-  reports zero without a `.tally/`. An unreadable ledger also reads as zero there, which the field
-  documents as "none or unknown".
+- **Counted once.** A pending line is in no branch's totals, the default branch's included: a
+  ledger report (`BranchLedger`) skips pending lines, and they appear only in `Summary.pending`.
+  A request the report already counts in its totals (a pre-cut call that timeline or claim mode
+  attributes forward before `record` has resolved it) is left out of `pending`. The comparison is
+  on the stored id: for a redacted ledger the report's selected ids are also hashed under each
+  salt whose fingerprint is on a ledger line. A default-branch report from a ledger holding only
+  pending lines has no records, so it is `NoRecords`, not an empty total.
+- The live report (`run`) fills `Summary.pending` from the default ledger when one exists, minus
+  the requests its own selection counts, and reports zero without a `.tally/`. An unreadable
+  ledger also reads as zero there, which the field documents as "none or unknown".
 
 ## The dispatch link
 
