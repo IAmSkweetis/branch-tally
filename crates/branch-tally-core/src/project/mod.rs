@@ -5,6 +5,11 @@
 //! ambiguity count `report::run_from_ledger` uses on a ledger-only read), so a row matches what
 //! `report <branch> --from-ledger` shows for that branch.
 //!
+//! Pending lines (decision 0006) are in no row, total, overlap or series point: a resolved
+//! request counts under its resolution's branch only, and an unresolved one is in no figure here.
+//! `ProjectReport` has no field to surface the unresolved ones; the caller reads them from
+//! `Ledger::unresolved_pending`.
+//!
 //! Rows are keyed by `recorded_for`. A request claimed by two branches is stored once per branch:
 //! rows keep their own totals, the project total counts each request id once (the first stored
 //! copy) and the overlap says what was counted twice. The series adds each request at the
@@ -100,7 +105,7 @@ pub fn build(
 ) -> ProjectReport {
     let mut groups: Vec<(&str, Vec<&LedgerEntry>)> = Vec::new();
     let mut index: HashMap<&str, usize> = HashMap::new();
-    for entry in ledger.entries() {
+    for entry in ledger.entries().iter().filter(|e| !e.pending) {
         let i = *index.entry(entry.recorded_for.as_str()).or_insert_with(|| {
             groups.push((entry.recorded_for.as_str(), Vec::new()));
             groups.len() - 1
@@ -143,7 +148,7 @@ pub fn build(
     let mut seen: HashSet<&str> = HashSet::new();
     let mut deduped: Vec<&LedgerEntry> = Vec::new();
     let mut claims: HashMap<&str, u64> = HashMap::new();
-    for entry in ledger.entries() {
+    for entry in ledger.entries().iter().filter(|e| !e.pending) {
         let c = claims.entry(entry.request_id.as_str()).or_insert(0_u64);
         *c = c.saturating_add(1);
         if seen.insert(entry.request_id.as_str()) {

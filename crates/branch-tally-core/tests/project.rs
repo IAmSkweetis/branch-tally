@@ -82,6 +82,21 @@ impl Fixture {
         .unwrap();
     }
 
+    /// Records on the default branch as `record` does: every line marked pending (decision 0006).
+    fn record_pending(&self, branch: &str, records: &[SelectedRecord]) {
+        ledger::append_pending(
+            &self.path,
+            records,
+            branch,
+            Mode::Claim,
+            Some(Path::new("/repo")),
+            &Identity,
+            &FixedClock,
+            true,
+        )
+        .unwrap();
+    }
+
     fn read(&self) -> Ledger {
         ledger::read(&self.path).unwrap()
     }
@@ -609,4 +624,54 @@ fn a_single_salt_redacted_ledger_has_no_double_count() {
     record_with(&f, "r1", &keyed(1));
     record_with(&f, "r2", &keyed(1));
     assert!(build(&f).double_count.is_none());
+}
+
+#[test]
+fn resolved_pending_request_shows_only_under_the_resolution_branch() {
+    let f = Fixture::new();
+    let call = plain("p1", "priced", Some("2026-01-02T00:00:00Z"));
+    f.record_pending("main", std::slice::from_ref(&call));
+    f.record("feat/x", &[call]);
+    let report = build(&f);
+    let branches: Vec<&str> = report.rows.iter().map(|r| r.branch.as_str()).collect();
+    assert_eq!(branches, vec!["feat/x"]);
+    assert_eq!(report.rows[0].usage.calls, 1);
+    assert_eq!(report.totals.usage.calls, 1);
+    assert_eq!(report.totals.overlap.calls, 0);
+    assert!((report.totals.cost.known - 3.0).abs() < 1e-9);
+    assert_eq!(report.series.len(), 1);
+    assert!((report.series[0].cumulative_cost - 3.0).abs() < 1e-9);
+}
+
+#[test]
+fn unresolved_pending_line_is_in_no_row_total_or_series_point() {
+    let f = Fixture::new();
+    f.record_pending(
+        "main",
+        &[plain("p1", "priced", Some("2026-01-02T00:00:00Z"))],
+    );
+    f.record(
+        "feat/a",
+        &[plain("a1", "priced", Some("2026-01-03T00:00:00Z"))],
+    );
+    let report = build(&f);
+    assert!(report.rows.iter().all(|r| r.branch != "main"));
+    assert_eq!(report.totals.usage.calls, 1);
+    assert_eq!(report.undated_branches, 0);
+    assert_eq!(report.series.len(), 1);
+}
+
+#[test]
+fn overlap_and_dedupe_stay_correct_beside_a_resolved_pending_request() {
+    let f = Fixture::new();
+    let shared = plain("shared", "priced", Some("2026-01-02T00:00:00Z"));
+    let moved = plain("moved", "priced", Some("2026-01-02T00:00:00Z"));
+    f.record_pending("main", std::slice::from_ref(&moved));
+    f.record("feat/a", &[shared.clone(), moved]);
+    f.record("feat/b", &[shared]);
+    let report = build(&f);
+    let row_calls: u64 = report.rows.iter().map(|r| r.usage.calls).sum();
+    assert_eq!(row_calls, 3);
+    assert_eq!(report.totals.usage.calls, 2);
+    assert_eq!(report.totals.overlap.calls, 1);
 }
