@@ -286,15 +286,18 @@ then counted as pending in every report, never added to a branch.
 
 ### Pending usage in reports
 
-A pending line is in no branch's totals, the default branch's included: a report for `main`, live
-or from the ledger, and the per-branch rows of [`project`](project.md) leave it out. A resolution
-line is an ordinary line for its branch, so once resolved, the call counts toward that branch.
+A pending line is in no branch's totals, the default branch's included: `report main --from-ledger`
+and the [`project`](project.md#pending-usage) report leave it out. A resolution line is an ordinary
+line for its branch, so once resolved, the call counts toward that branch. A live report counts
+calls from the transcripts, not from ledger lines, so what it counts for a branch is what
+attribution assigns now.
 
 Unresolved pending lines are reported beside the totals instead. They are counted across the whole
-ledger, once per call, in every report, so the count is the same in each branch's report. A call
-the report already counts in its totals, such as an early call that claim or timeline mode
-attributes to the branch before it is resolved, is left out of the pending count, so nothing is
-counted twice. The Markdown report adds a line after the footnote, for example:
+ledger, once per call, whichever branch the report is for. A call the report already counts in its
+totals is left out of the pending count, so nothing is counted twice: for example an early call
+that claim or timeline mode attributes to the branch before it is resolved, or a call a live report
+for `main` counts from its transcript. So the pending count can differ from one report to the
+next. The Markdown report adds a line after the footnote, for example:
 
 ```text
 <sub>1 pending ledger line(s), 1 call(s) / 600 tokens, were recorded on the default branch and could not yet be attributed to a branch with certainty; they are not in these totals.</sub>
@@ -308,6 +311,18 @@ The JSON report has a top-level `pending` object:
 
 Both are left out when there are no unresolved pending lines. A live `report` reads them from the
 checkout's default ledger, `.tally/ledger.jsonl`, and shows none when there isn't one.
+
+A report that counts no calls but finds unresolved pending lines is still printed, live or from
+the ledger, with or without `--with-live`. Its totals are zero and the pending line says how much
+usage is waiting. That is the usual result of `report main --from-ledger` when every line for
+`main` is pending:
+
+```text
+| **Total** | **0** | **0** | **0** | **0** | **0** | **0** |
+```
+
+Only when there are no calls and no unresolved pending lines does `report` fail with "no records"
+(see [Common errors](cli.md#common-errors)).
 
 ### Upgrade the checker with the binary
 
@@ -385,10 +400,12 @@ line.
 Exit 3 is separate from the general failure status, 1. A script that runs `report --from-ledger`
 or `project` and tests only for exit 1 should test for any non-zero status instead.
 
-If the ledger has no lines for the branch, `report --from-ledger` fails with
-`No ledger records found for branch '…'` (exit 1). If the ledger file, or the `.tally/` directory,
-does not exist, it fails with `no ledger at <path>` (exit 1). A linked default ledger is refused
-(see [Symbolic links are refused](#symbolic-links-are-refused)).
+If the ledger has no lines for the branch, and no unresolved pending lines either,
+`report --from-ledger` fails with `No ledger records found for branch '…'` (exit 1). With
+unresolved pending lines it prints a report with zero totals and the pending line instead (see
+[Pending usage in reports](#pending-usage-in-reports)). If the ledger file, or the `.tally/`
+directory, does not exist, it fails with `no ledger at <path>` (exit 1). A linked default ledger
+is refused (see [Symbolic links are refused](#symbolic-links-are-refused)).
 
 ## The whole project
 

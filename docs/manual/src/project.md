@@ -55,7 +55,7 @@ There is one row for each branch that `record` was run for: the ledger's `record
 row's numbers are what `branch-tally report <branch> --from-ledger` shows for that branch.
 [Pending lines](ledger.md#usage-recorded-on-the-default-branch) are in no row, the default
 branch's included. Their usage counts toward a branch only through a resolution line, or another
-line recorded for that branch.
+line recorded for that branch. See [Pending usage](#pending-usage).
 
 | Column | Holds |
 | ------ | ----- |
@@ -208,6 +208,24 @@ When the report is also a floor, for example because a model is unpriced, the Ma
 ends by saying its "at least" figures are not a guaranteed lower bound, instead of "This is an
 overcount, not a floor".
 
+### Pending usage
+
+[Pending lines](ledger.md#usage-recorded-on-the-default-branch) are in no figure: no row, not the
+project total, no chart point. A resolved call counts under its resolution's branch only. The
+unresolved ones are reported beside the totals instead, counted once per call:
+
+- The Markdown report adds a line after the notes under the table, before the chart. It is there
+  also when the report says `No branches recorded in the ledger.`:
+
+  ```text
+  <sub>1 pending ledger line(s), 1 call(s) / 600 tokens, were recorded on the default branch and could not yet be attributed to a branch with certainty; they are not in these totals.</sub>
+  ```
+
+- The JSON has a top-level `pending` object, `"pending": { "lines": 1, "calls": 1, "tokens": 600 }`.
+
+Both are left out when there are no unresolved pending lines. The SVG chart doesn't show pending
+usage.
+
 ## The cost-over-time chart
 
 The chart has one point per dated branch, in the same order as the table. Each point's height is
@@ -312,7 +330,8 @@ Markdown (`--format md`) is the default. It is the `## Project cost` section sho
 total line, the table, the notes and the Mermaid `xychart-beta` block. The total line always
 shows the full project total, each call counted once, undated branches included. With no branches
 in the ledger, it says `No branches recorded in the ledger.` With no dated branches, it prints the
-table and says `No dated branches, so there is no cost chart.`
+table and says `No dated branches, so there is no cost chart.` Unresolved pending usage gets its
+own line after the notes; see [Pending usage](#pending-usage).
 
 The output holds branch names, dates, model ids and numbers only. `project` has no redaction
 option: branch names appear in the table as they are in the ledger.
@@ -328,6 +347,7 @@ option: branch names appear in the table as they are in the ledger.
 | `totalTokensIsFloor` | `true` when some calls could not be placed with certainty, or a total overflowed, so token totals are a lower bound. |
 | `totalsOverflowed` | `true` when a token or call total overflowed, in the project total or any branch, so every total is an unreliable floor (see [Overflowed totals](#overflowed-totals)). Absent otherwise. |
 | `doubleCount` | Present when the total may count some calls twice because the ledger mixes unredacted and redacted lines, or several salts: `mixedLedger` with `unredactedLines`, `redactedLines` and `distinctSalts`. See [A total that may count calls twice](#a-total-that-may-count-calls-twice). Absent otherwise. |
+| `pending` | `lines`, `calls` and `tokens` of the ledger's unresolved pending lines, which are in no total. See [Pending usage](#pending-usage). Absent when there are none. |
 | `totalCostUSD` | The estimated project cost in US dollars, each call counted once. |
 | `totalCostIsFloor` | `true` when any figure in the report is a floor: the total, a branch or a series point. |
 | `unpricedModels` | Model ids that had no price, across all branches. |

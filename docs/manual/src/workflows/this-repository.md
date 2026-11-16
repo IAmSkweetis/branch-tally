@@ -211,7 +211,8 @@ so the pull request opens with its table already in the body. That skill:
    ```
 
    The script exits non-zero and leaves the body untouched when either file lacks the markers, as
-   it does when the ledger has no lines for the branch. The skill then leaves the placeholder in
+   it does when the ledger has no lines for the branch and no unresolved pending lines. The skill
+   then leaves the placeholder in
    place and reports why. Under the markers it adds one line, which a later `report --pr` leaves
    alone:
 
