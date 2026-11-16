@@ -467,17 +467,36 @@ fn update(
 ) -> Result<(), String> {
     // gh runs in the main checkout, as the reference does after resolving it.
     let repo: PathBuf = SystemGit.main_checkout(cwd);
-    let number = (!number.is_empty()).then_some(number);
+    let number = if number.is_empty() {
+        None
+    } else {
+        Some(
+            number
+                .parse::<u64>()
+                .map_err(|_| format!("--pr must be a pull request number, got {}", repr(number)))?,
+        )
+    };
+    // TODO(CLI Builder, #99): resolve `OWNER/REPO` from `origin` through the Git trait. Until
+    // then `--pr` fails closed rather than guessing a repository.
+    let Some(gh_repo) = None::<&str> else {
+        return Err("cannot resolve the GitHub repository for --repo yet".to_owned());
+    };
     let outcome = update_pr(
         &SystemGh::new(repo),
         &report.branch,
         markdown,
+        gh_repo,
         number,
         dry_run,
     )
     .map_err(|e| match e {
-        PrError::NoOpenPr { branch } => format!(
-            "No open PR found for branch {}. Open the PR first, then re-run with --pr.",
+        PrError::NoOpenPr { branch, ignored } => format!(
+            "No open PR found for branch {} ({ignored} fork PR(s) ignored; pass --pr N for one). \
+             Open the PR first, then re-run with --pr.",
+            repr(&branch)
+        ),
+        PrError::AmbiguousPr { branch, numbers } => format!(
+            "More than one open PR for branch {}: {numbers:?}. Pass --pr N.",
             repr(&branch)
         ),
         PrError::Gh(e) => e.to_string(),
