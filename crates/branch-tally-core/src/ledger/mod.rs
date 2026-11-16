@@ -121,8 +121,9 @@ pub struct LedgerEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redaction: Option<String>,
     /// Set on a line `record` wrote while on the repository's default branch (decision 0006):
-    /// recorded on the default branch and not yet resolved to a branch. Omitted when false, so every older line reads as not
-    /// pending. `recorded_for`, `branch`, `basis` and `kept_by` stay as attribution produced them.
+    /// recorded on the default branch and not yet resolved to a branch. Omitted when false, so
+    /// every older line reads as not pending. `recorded_for`, `branch`, `basis` and `kept_by`
+    /// stay as attribution produced them.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pending: bool,
     /// Set on a resolution line, appended later for a pending line (decision 0006). Copies the
