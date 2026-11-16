@@ -55,10 +55,18 @@ records forward to the branch cut next (#7). The ledger had no equivalent.
   `note: N pending line(s), usage uncertain`. A new base-branch line without `pending` still fails
   `RecordedForBaseBranch`. New rules: `InvalidLineKind` (both `pending` and `resolved`),
   `OrphanResolution` (no matching `(rid, from)` pending line on base or head),
-  `ResolutionMismatch` (usage, model, `ts`, session or redaction differ from the pending line), and
-  `ConflictingResolution` (the same `rid` resolved to a different branch on base or head).
+  `ResolutionMismatch` (the resolution differs from its pending line in any field other than
+  `recorded_for`, `branch`, `basis`, `kept_by`, `recorded_at`, `pending` and `resolved`, so
+  `origin`, `subagent`, `agent_id`, `skill`, `agent`, `harness` and `mode` must match too),
+  `ConflictingResolution` (the same `rid` resolved to a different branch on base or head), and
+  `PendingNotOnBase` (a new line with `pending` set whose `recorded_for` is not the base branch).
 - **Reporting.** `Summary` gains `pending` (lines, calls, tokens), `#[serde(default)]`: unresolved,
   uncovered pending lines across the ledger, deduplicated by request id, kept outside the totals.
+  A pending line is in **no** branch's totals, the default branch's included: a report for the
+  default branch, from the ledger or live, and the `project` report's per-branch rows all leave
+  pending lines out, and they appear only in `pending`. A request the report already counts in its
+  totals (for example a pre-cut call that timeline or claim mode attributes forward before
+  `record` has resolved it) is left out of `pending`, so no call is counted twice.
   Markdown prints it as a footnote beside the unstamped one, and JSON as a `"pending"` object
   beside `"unstamped"`.
 
@@ -69,6 +77,10 @@ records forward to the branch cut next (#7). The ledger had no equivalent.
 - `tally-check` builds the checker from the base branch and the hooks run the installed release,
   so the PR that introduces this still needs its own pre-branch lines removed by hand once. The
   behaviour is shown on a real PR after a release, on the next `/feature` PR.
+- `ledger check` sees only the ledger, never the transcripts. It proves a resolution is a faithful
+  copy of a pending line and that no request is resolved twice, not that the evidence was real: a
+  PR that adds both a pending line and its own resolution passes. A passing check means the ledger
+  is consistent, not that its attribution is true.
 - A repository whose `tally-check` pins an older release fails on pending lines, because they are
   still recorded for `main`. `recorded_for` stays truthful rather than holding a sentinel. The
   release notes call this out as a breaking change: upgrade `tally-check` with the binary.
