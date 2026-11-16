@@ -12,6 +12,7 @@ branch-tally <COMMAND>
 | [`capture`](#branch-tally-capture) | Record this session's branch from a Claude Code hook payload on stdin. Run by the [capture plugin](integration/claude-code.md), not by hand. |
 | [`ledger check`](#branch-tally-ledger-check) | Fail unless a branch's `.tally/` files, in the working tree or at a given commit, are a well-formed append to a base ref's. |
 | [`ledger redact`](#branch-tally-ledger-redact) | Rewrite the ledger's unredacted lines with the keyed hash. The one command that changes existing ledger lines. |
+| [`ledger resolve`](#branch-tally-ledger-resolve) | Resolve pending ledger lines to the branch cut after them, by appending. |
 | [`prices update`](#branch-tally-prices-update) | Refresh the per-user price cache from the LiteLLM model price list. |
 | [`prices show`](#branch-tally-prices-show) | Show which price table reports would use, with its source, date and path. |
 | [`config show`](#branch-tally-config-show) | Show the config file path, whether it was found, and each effective value and its source. |
@@ -209,9 +210,13 @@ and `<!-- token-report:end -->` markers. It has, in order:
    that costs are estimates at list API rates;
 7. a line such as "1 call(s) / 1,115 tokens in this repository carry no branch stamp and are not
    attributed to any branch", when there are any (see [Unstamped calls](#unstamped-calls));
-8. a **Subagent usage** section, when subagents did part of the work: one row per subagent and
+8. a line such as "1 pending ledger line(s), 1 call(s) / 600 tokens, were recorded on the default
+   branch and could not yet be attributed to a branch with certainty; they are not in these
+   totals.", when the ledger holds unresolved pending lines (see
+   [Pending usage in reports](ledger.md#pending-usage-in-reports));
+9. a **Subagent usage** section, when subagents did part of the work: one row per subagent and
    model with its workspace, plus how many subagent calls had no dispatch link;
-9. a collapsed **Breakdown by skill / agent** table.
+10. a collapsed **Breakdown by skill / agent** table.
 
 With `--no-cost`, or `cost = false` in the config file, the cost columns are left out.
 
@@ -271,6 +276,7 @@ contributors control. The Markdown report shows them as text, never as formattin
 | `heuristics` | Calls and tokens per attribution heuristic (`sessionClaim`, `worktreeRecovery`, `originRecovery`, `dispatcherRollUp`, `timelineForward`, `timelineCarried`) and `ambiguous`, plus `isFloor`. `captured` is added only when [hook captures](captures.md) placed at least one call. Absent when no heuristic applied. |
 | `doubleCount` | Present when the total may count some calls twice, an overcount rather than a floor: `mixedLedger` (`unredactedLines`, `redactedLines`, `distinctSalts`) when the ledger is mixed, and `liveMatch` (`"no-salt"`, `"salt-unreadable"`, `"fingerprint-mismatch"` or `"partially-matched"`) when live calls could not be matched to redacted lines. Either or both. It does not change `totalCostIsFloor`. See [Mixed ledgers](ledger-redaction.md#mixed-ledgers). Absent otherwise. |
 | `unstamped` | `calls` and `tokens`: the calls in the repository that carry no branch stamp and were not attributed to any branch (see [Unstamped calls](#unstamped-calls)). Absent when there are none, and in a report from the ledger alone. |
+| `pending` | `lines`, `calls` and `tokens`: the ledger's unresolved pending lines, counted across the whole ledger and kept out of every total (see [Pending usage in reports](ledger.md#pending-usage-in-reports)). Absent when there are none. |
 | `subagents` | Subagent totals (calls, tokens, dispatched subagents, workspaces, worktrees, unattributed and unlinked counts, cost) and `rows`, one per subagent and model with token counts and cost. Present when subagents did part of the work. |
 | `sessions` | One object per session: `id`, `origin` (`"main"` or the worktree), `first` and `last` timestamps, `calls`, `tokens` and `agents`. |
 | `models` | One object per model id: `calls`, `input`, `cacheWrite5m`, `cacheWrite1h`, `cacheRead`, `output`, `thinking` and `costUSD` (`null` when unpriced). |
@@ -476,6 +482,18 @@ An explicit `--ledger <PATH>` is written whether or not the checkout has `.tally
 link there is followed. With redaction on, though, its salt is the one in the main checkout's
 `.tally/`, so `--ledger` without it is an error unless you pass `--no-ledger-redact`.
 
+When `BRANCH` is the repository's default branch, every line `record` writes is marked pending.
+On any other branch, after appending, `record` resolves the pending lines that belong to `BRANCH`,
+as [`ledger resolve`](#branch-tally-ledger-resolve) does. How that works is in
+[Usage recorded on the default branch](ledger.md#usage-recorded-on-the-default-branch). It prints
+these notes on stderr, each only when its count is not zero. None changes the exit status:
+
+| Note (stderr) | Meaning |
+| ------------- | ------- |
+| `note: N pending line(s) written: usage is uncertain until a branch is cut and resolved` | On the default branch: the lines just written are pending. |
+| `note: resolved R pending line(s), C already covered, O left for another branch` | On another branch: `R` pending lines were resolved to this branch, `C` were already covered by other lines, and `O` belong to a different branch. |
+| `note: N pending line(s) left unresolved, usage uncertain (<count> <reason>, …)` | Pending lines that could not be placed with certainty, with a count per reason. See [What stays pending](ledger.md#what-stays-pending). |
+
 | Message (stderr, exit 1) | Cause |
 | ------------------------ | ----- |
 | `refusing to use <path>: it is …` | `.tally`, `.tally/ledger.jsonl`, `.tally/captures.jsonl` or `.tally/salt` is a symbolic link or the wrong kind of file. Nothing is written. See [Symbolic links are refused](ledger.md#symbolic-links-are-refused). |
@@ -600,8 +618,21 @@ ignored.
   changed. A removed or edited base line is a violation.
 - Every new line must parse.
 - A new **ledger** line must also:
-  - not be recorded for the base branch (`recorded_for` is not `--base-branch`). If the head
-    branch and the base branch are the same, every new ledger line fails this rule;
+  - not be recorded for the base branch (`recorded_for` is not `--base-branch`), unless it is
+    [pending](ledger.md#usage-recorded-on-the-default-branch). A pending line for the base branch
+    is counted in a note instead. If the head branch and the base branch are the same, every new
+    ledger line that is not pending fails this rule;
+  - if it is pending, be recorded for the base branch
+    (`pending line recorded for a branch other than the base`);
+  - not be both pending and resolved (`line is both pending and resolved`);
+  - if it is a resolution line, match a pending line with the same `request_id`, recorded for the
+    branch its `resolved.from` names, on the base or the head
+    (`resolution has no matching pending line`);
+  - if it is a resolution line, be identical to that pending line in every field except
+    `recorded_for`, `branch`, `basis`, `kept_by`, `recorded_at`, `pending` and `resolved`
+    (`resolution differs from the pending line it resolves`);
+  - if it is a resolution line, not resolve a request that another line, on the base or the head,
+    resolves to a different branch (`request resolved to a different branch elsewhere`);
   - have a `recorded_at` that is present, strict RFC 3339 (see [Timestamps](#timestamps)) and
     not later than the time of the check;
   - not reuse a `request_id` and `recorded_for` pair that a base line already has;
@@ -628,8 +659,13 @@ Neither the notes nor the warning changes the exit status.
 
 ```text
 note: N new ledger line(s) recorded for branch <name>
+note: N pending line(s), usage uncertain
 warning: .tally/prices.toml differs from base
 ```
+
+The pending note counts new pending lines recorded for the base branch. Their usage is in no
+branch's total until they are resolved; see
+[Usage recorded on the default branch](ledger.md#usage-recorded-on-the-default-branch).
 
 A branch name in a note is printed safely: control characters are replaced with `�` (U+FFFD), and
 a name that starts with `::` gets a backslash in front, so it can't be read as a GitHub Actions
@@ -665,6 +701,28 @@ Here the captures file's only base line was replaced by a new one, so the check 
 new line and the removed one. One line can break several rules, and each is listed: a line
 recorded for the base branch that also repeats a base request gets both
 `recorded for the base branch` and `duplicate of a base request`.
+
+A second synthetic example shows the pending and resolution rules. The base holds one line. On the
+head, lines 2 and 3 are pending lines for `main`, line 4 resolves line 2 to `feat/x`, and line 5 is
+an ordinary `feat/x` line. Lines 6 to 10 are wrong: a plain line for `main`, a resolution with no
+pending line behind it, a resolution whose token counts differ from line 3's, a second resolution
+of line 2's request to `docs/old`, and a line marked both pending and resolved:
+
+```text
+note: 1 new ledger line(s) recorded for branch docs/old
+note: 3 pending line(s), usage uncertain
+ledger: line 4: request resolved to a different branch elsewhere
+ledger: line 6: recorded for the base branch
+ledger: line 7: resolution has no matching pending line
+ledger: line 8: resolution differs from the pending line it resolves
+ledger: line 9: request resolved to a different branch elsewhere
+ledger: line 10: line is both pending and resolved
+ledger check: 6 violation(s) against main
+```
+
+Line 4 was valid on its own, but line 9 resolves the same request to another branch, so both are
+listed. Line 10 is pending and recorded for `main`, so it is counted in the pending note as well.
+With only lines 1 to 5, the check prints the pending note (for 2 lines) and passes.
 
 | Message (stderr, exit 1) | Cause |
 | ------------------------ | ----- |
@@ -724,6 +782,55 @@ Without a `.tally/` directory beside the default ledger it changes and creates n
 | `<path> is empty or damaged: it is not a salt (64 lowercase hex characters). It is never replaced automatically. It can be deleted to have a new one created; lines already hashed with the old salt will then read as a different salt` | `.tally/salt` exists but is empty or damaged. It is never replaced automatically. |
 | `the ledger changed while it was being rewritten; nothing was replaced, run it again` | Something, such as a `record`, wrote to the ledger during the rewrite. The ledger is as it was; run `ledger redact` again. |
 | `refusing to use <path>: it is …` | `.tally`, `.tally/ledger.jsonl` or `.tally/salt` is a symbolic link or the wrong kind of file. See [Symbolic links are refused](ledger.md#symbolic-links-are-refused). |
+
+## `branch-tally ledger resolve`
+
+```text
+branch-tally ledger resolve [--branch <BRANCH>] [--dry-run] [--ledger <PATH>] [--repo <PATH>]
+```
+
+Resolves the ledger's pending lines that belong to one branch, by appending a resolution line for
+each. A pending line is never edited. It reads this machine's live transcripts and
+[hook captures](captures.md) for the evidence. `record` on a branch other than the default does
+the same at the end of its run, so this command is for resolving without recording. What pending
+lines are, the evidence used and the reasons a line stays pending are in
+[Usage recorded on the default branch](ledger.md#usage-recorded-on-the-default-branch).
+
+| Option | Default | Does |
+| ------ | ------- | ---- |
+| `--branch <BRANCH>` | current branch | Resolve the pending lines that belong to this branch. |
+| `--dry-run` | | Count what would be resolved, and write nothing. |
+| `--ledger <PATH>` | `.tally/ledger.jsonl` | The ledger file. The default is at the root of the current checkout. |
+| `--repo <PATH>` | `.` | The repository. |
+
+There is no option to resolve every branch at once. Run it once per branch, on that branch or with
+`--branch`.
+
+It prints one line on stdout:
+
+```text
+resolved 2, covered 0, left for another branch 1, branch feat/x
+```
+
+With `--dry-run` the line starts `would resolve` instead, and the ledger is unchanged. `covered`
+counts pending lines that the ledger already holds another line for, so nothing was appended, and
+`left for another branch` counts those whose evidence names a different branch. A ledger with no
+pending lines prints all zeros. On the default branch there is nothing to resolve to, so it writes
+nothing and prints:
+
+```text
+on the default branch: nothing to resolve
+```
+
+Lines that stay pending are reported on stderr with a count per reason, as for `record`:
+
+```text
+note: 3 pending line(s) left unresolved, usage uncertain (1 no timestamp, 2 no work branch cut)
+```
+
+That is not an error: the exit status is still 0. It also prints the transcript and capture notes
+`report` prints (see [What the report says on stderr](#what-the-report-says-on-stderr)), and it
+fails with the transcript errors listed under [Common errors](#common-errors).
 
 ## `branch-tally prices update`
 

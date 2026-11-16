@@ -123,6 +123,9 @@ appended 3, skipped 0, branch feat/x
   `work-branch`. Each line stores the mode it was selected under.
 - In claim mode, one API call can count toward two branches. It is then recorded once for each
   branch you record.
+- **On the default branch, its lines are pending.** Usage recorded for the repository's default
+  branch is written with `"pending": true`, and `record` on any other branch then tries to resolve
+  it. See [Usage recorded on the default branch](#usage-recorded-on-the-default-branch).
 
 Run `record` on every machine that did work on the branch, **before** its transcripts are purged,
 and while any worktrees the work used still exist. Then commit and push the ledger.
@@ -160,6 +163,162 @@ A branch worked on from several sessions, or with sessions that ended on another
 still need a `record` by hand for the branches the hook did not see. Installing the plugin, and
 the companion `branch-tally-capture` plugin, is covered on the
 [Claude Code integration](integration/claude-code.md) page.
+
+## Usage recorded on the default branch
+
+Work often starts on the default branch and moves to a branch cut partway through. A session that
+plans on `main` and then runs `git checkout -b feat/x` has made calls stamped `main` that were
+really for `feat/x`. If the record hook runs while `main` is checked out, those calls are recorded
+for `main`, and branch-tally can't yet tell which branch, if any, they were for.
+
+So `record` doesn't treat them as `main`'s usage. When the branch it records is the repository's
+default branch, every line it writes carries `"pending": true`, and it says so on stderr:
+
+```text
+appended 2, skipped 0, branch main
+note: 2 pending line(s) written: usage is uncertain until a branch is cut and resolved
+```
+
+The default branch is the one `origin/HEAD` points to, then git's `init.defaultBranch`, and
+otherwise `main`. What decides it is the branch being recorded, not the one checked out:
+`record main` from another branch writes pending lines too.
+
+A pending line otherwise says exactly what `record` saw: its `recorded_for` and `branch` are still
+the default branch. It is never edited afterwards. Instead, once the evidence shows which branch
+the call was for, a **resolution line** is appended: a copy of the pending line, recorded for that
+branch, with `"resolved": {"from": "main"}`.
+
+```mermaid
+flowchart LR
+    M["record on main"] --> P["pending line<br/>recorded_for: main"]
+    F["record on feat/x,<br/>or ledger resolve"] --> R["resolution line<br/>recorded_for: feat/x"]
+    P -. "copied into" .-> R
+```
+
+### Resolving pending lines
+
+Resolution happens in two places, and in both it only resolves lines to **one branch**: the
+current branch, or the one named.
+
+- **Automatically, at the end of `record`** on any branch other than the default. After appending
+  the branch's own lines, `record` resolves the pending lines that belong to that branch. The
+  [record plugin](integration/claude-code.md) runs `record` at every session end, so pending lines
+  are resolved the next time a session on that machine ends with their branch checked out.
+- **By hand, with [`branch-tally ledger resolve`](cli.md#branch-tally-ledger-resolve)**, which does
+  only the resolving. Add `--dry-run` to see the counts first:
+
+  ```sh
+  branch-tally ledger resolve --dry-run   # count, write nothing
+  branch-tally ledger resolve             # append the resolutions for the current branch
+  branch-tally ledger resolve --branch feat/x
+  ```
+
+  ```text
+  resolved 2, covered 0, left for another branch 1, branch feat/x
+  ```
+
+There is no way to resolve every branch at once. A pull request carries resolutions for its own
+branch only. `ledger resolve` on the default branch prints
+`on the default branch: nothing to resolve` and writes nothing.
+
+The evidence is read from this machine's live transcripts and [hook captures](captures.md). A
+capture is used only for a call whose transcript is still there, so resolve before the transcripts
+are purged:
+
+- **The session's timeline.** branch-tally follows the session's branch over time, as
+  [timeline mode](cli.md#attribution-modes) does. A call made on the default branch before the
+  session's first work branch goes to the work branch the session moved to next. A subagent's call
+  goes to the branch its dispatcher was on when it dispatched it. Here a work branch is any branch
+  except the default branch and `worktree-agent-*`. `--mode`, `--work-branch` and the config file
+  don't change this.
+- **The hook captures.** The session's first capture at or after the call that names a work
+  branch. Captures at that same instant must all name the same branch.
+
+The resolution line's `basis` names the evidence used: `timeline-forward` (the session's
+timeline), `dispatcher-rolled-up` (a subagent) or `captured` (a hook capture). Its `kept_by` is
+`exact`. When both kinds of evidence exist and they name different branches, the line is not
+resolved.
+
+Each pending line ends up in one of these outcomes, which `record` and `ledger resolve` count:
+
+| Outcome | What happens |
+| ------- | ------------ |
+| resolved | The evidence places the call on this branch. A resolution line is appended. |
+| covered | The ledger already holds an ordinary line for the same call on another branch, or a resolution to this one. Nothing is appended. |
+| left for another branch | The evidence places the call on a different branch. Nothing is appended; it can be resolved from that branch. |
+| left unresolved | The call can't be placed with certainty. It stays pending. See below. |
+
+*Covered* is common in claim mode. A [session claim](cli.md#attribution-modes) counts a session
+that started on `main` and moved to `feat/x` entirely toward `feat/x`, so `record` on `feat/x`
+writes its own lines for those early calls. The pending lines for them are then already covered,
+and no resolution line is needed.
+
+`record` prints the counts on stderr, only when there was a pending line to consider:
+
+```text
+note: resolved 2 pending line(s), 0 already covered, 1 left for another branch
+```
+
+### What stays pending
+
+branch-tally does not guess. A pending line that can't be placed with certainty stays pending, is
+counted, and is reported as uncertain. `record` and `ledger resolve` print the count with a reason
+for each:
+
+```text
+note: 3 pending line(s) left unresolved, usage uncertain (1 no timestamp, 2 no work branch cut)
+```
+
+| Reason | Why the line stays pending |
+| ------ | -------------------------- |
+| `no timestamp` | The line has no `ts`, so it can't be placed in the session's timeline. |
+| `no evidence` | No transcript for the call was found on this machine, because it was purged or the work was done on another machine, or no salt here matches the line's [redaction](ledger-redaction.md#pending-and-resolution-lines). |
+| `ambiguous` | Records at the same instant were on conflicting work branches. |
+| `no work branch cut` | The session never moved to a work branch, and no capture names one. |
+| `subagent not linked to a dispatch` | A subagent's call that can't be tied to the session that dispatched it. |
+| `returned to the default branch` | The session went back to the default branch after a work branch. The call is never assigned back to that earlier branch. |
+| `transcripts and captures disagree` | The timeline and the captures name different branches. |
+| `resolved to another branch` | The call is already resolved to a different branch. |
+
+Leaving a line unresolved is not an error: `record` and `ledger resolve` still exit 0. A line can
+stay pending for good, for example a call made on `main` for work that never got a branch. It is
+then counted as pending in every report, never added to a branch.
+
+### Pending usage in reports
+
+A pending line is in no branch's totals, the default branch's included: a report for `main`, live
+or from the ledger, and the per-branch rows of [`project`](project.md) leave it out. A resolution
+line is an ordinary line for its branch, so once resolved, the call counts toward that branch.
+
+Unresolved pending lines are reported beside the totals instead. They are counted across the whole
+ledger, once per call, in every report, so the count is the same in each branch's report. A call
+the report already counts in its totals, such as an early call that claim or timeline mode
+attributes to the branch before it is resolved, is left out of the pending count, so nothing is
+counted twice. The Markdown report adds a line after the footnote, for example:
+
+```text
+<sub>1 pending ledger line(s), 1 call(s) / 600 tokens, were recorded on the default branch and could not yet be attributed to a branch with certainty; they are not in these totals.</sub>
+```
+
+The JSON report has a top-level `pending` object:
+
+```json
+"pending": { "lines": 1, "calls": 1, "tokens": 600 },
+```
+
+Both are left out when there are no unresolved pending lines. A live `report` reads them from the
+checkout's default ledger, `.tally/ledger.jsonl`, and shows none when there isn't one.
+
+### Upgrade the checker with the binary
+
+Pending lines are still recorded for the default branch. A
+[`ledger check`](#checking-ledger-changes) from a release without pending lines doesn't know the
+`pending` field, so it fails them as
+`recorded for the base branch`. When you upgrade the branch-tally that records, upgrade the binary
+your CI runs `ledger check` with at the same time.
+
+The reverse also holds: an older `record` writes plain lines for `main`, not pending ones, and the
+current check still fails those.
 
 ## Report from the ledger
 
@@ -294,10 +453,12 @@ same goes for `.tally/captures.jsonl`, which can move calls between branches, an
 `branch-tally ledger check` makes the mechanical part of that review automatic. Run it in CI on
 each pull request. It passes only when the pull request appends to `.tally/ledger.jsonl` and
 `.tally/captures.jsonl` and changes nothing already there, and when each new ledger line is not
-recorded for the base branch, has a `recorded_at` that is not in the future, does not repeat a key
-the base already holds or conflict with another new line for the same key, and has no token
-count above 10,000,000. The full rules and messages are in
-the [CLI reference](cli.md#branch-tally-ledger-check).
+recorded for the base branch (unless it is [pending](#usage-recorded-on-the-default-branch)), has
+a `recorded_at` that is not in the future, does not repeat a key the base already holds or
+conflict with another new line for the same key, and has no token count above 10,000,000. A new
+resolution line must also be a faithful copy of a pending line on the base or the head, and no
+call may be resolved to two branches. The full rules and messages are in the
+[CLI reference](cli.md#branch-tally-ledger-check).
 
 A pull request may add lines for its own branch, and also for other branches, such as usage
 backfilled for a branch that merged earlier. Each other branch gets a note on stderr:
@@ -307,9 +468,16 @@ note: 2 new ledger line(s) recorded for branch docs/old
 ```
 
 A note doesn't fail the check, but it is where to look first: those lines add to another branch's
-cost. Lines recorded for the base branch always fail, because nothing should be merged as usage of
-`main` itself. A pull request that changes `.tally/prices.toml` passes with a warning, which also
-calls for a look by hand:
+cost. A line recorded for the base branch fails, because nothing should be merged as usage of
+`main` itself, unless it is pending. Pending lines for the base branch are counted in a note
+instead, because their usage is uncertain until resolved:
+
+```text
+note: 2 pending line(s), usage uncertain
+```
+
+A pending line recorded for any other branch fails. A pull request that changes
+`.tally/prices.toml` passes with a warning, which also calls for a look by hand:
 
 ```text
 warning: .tally/prices.toml differs from base
@@ -375,6 +543,12 @@ merged, add usage to the base branch, or claim an impossible token count for one
 plausible lines still add up, there is no limit on a pull request's total, and lines for other
 branches are only noted. The reviewer still decides whether the new lines are plausible.
 
+The same goes for resolutions. The check reads only the ledger, never the transcripts. It proves
+that a resolution copies a pending line faithfully and that no call is resolved to two branches,
+not that the evidence behind it was real: a pull request that adds a pending line and its own
+resolution passes. A passing check means the ledger is consistent, not that its attribution is
+true.
+
 The price override is not checked, only flagged. Reports announce it on stderr too; see
 [Which price table is used](cli.md#which-price-table-is-used).
 
@@ -407,6 +581,12 @@ One JSON object per line, append-only. A line holds:
 | `usage` | Token counts: input, 5-minute and 1-hour cache writes, cache reads, output and thinking. |
 | `recorded_at` | When the line was written, in UTC. |
 | `redaction` | On a redacted line, the fingerprint of the salt it was hashed with. Absent on an unredacted line. |
+| `pending` | `true` on a line `record` wrote for the default branch, whose usage is uncertain until it is resolved. Absent otherwise. See [Usage recorded on the default branch](#usage-recorded-on-the-default-branch). |
+| `resolved` | On a resolution line only: `{"from": "<default branch>"}`, the branch its pending line was recorded for. Absent otherwise. |
+
+branch-tally never writes a line with both `pending` and `resolved`, and `ledger check` fails a
+new line that has both. Lines written before these fields existed have
+neither and read exactly as they did. The schema version is still `1`.
 
 What is **never** stored: message content (prompts, responses, tool input or output, code), the
 working directory, or any path. A worktree's transcript directory name encodes its full path,
@@ -422,6 +602,10 @@ token counts and full timestamps are written as they are. The salt is not a secr
 keeps any line committed before redaction was on. [Ledger Redaction](ledger-redaction.md) lists
 exactly which fields a committed ledger makes public, with and without redaction, and what hashing
 does not protect against.
+
+A resolution line copies its pending line's ids, which are already hashed, so resolving never
+hashes anything new. Matching a hashed pending line to its transcript does need the salt it was
+hashed with; see [Pending and resolution lines](ledger-redaction.md#pending-and-resolution-lines).
 
 `--redact` applies to report output, including a report from the ledger:
 `branch-tally report --from-ledger --redact` hides the identifiers in what it prints, while the

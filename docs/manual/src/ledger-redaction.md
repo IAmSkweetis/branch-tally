@@ -30,6 +30,7 @@ written as it is.
 | `ts` (the call's time, full precision) | readable | readable | readable |
 | `recorded_at` (when the line was written) | readable | readable | readable |
 | `v`, `harness` | readable | readable | readable |
+| `pending`, `resolved` (its `from` branch) | readable | readable | readable |
 | `redaction` | absent | the salt's fingerprint | the salt's fingerprint |
 
 "Readable" means the value is in the file as it is. The `subagent` label is the subagent's agent
@@ -211,6 +212,23 @@ ledger redaction needs a .tally/ directory in the main checkout to hold its salt
 ```
 
 Create `.tally/` in the main checkout, or pass `--no-ledger-redact` to write raw ids to that file.
+
+### Pending and resolution lines
+
+A [pending line](ledger.md#usage-recorded-on-the-default-branch) is hashed like any other line
+`record` writes. Its resolution line is a copy of it: the hashed ids, `usage`, `model`, `ts`,
+`origin`, `subagent`, names and `redaction` field are copied as they are. Only `recorded_for`,
+`branch`, `basis`, `kept_by` and `recorded_at` change, `pending` is dropped and `resolved` is
+added. Resolving therefore hashes
+nothing and doesn't need the salt to write a line, and a resolution of a redacted line carries the
+same fingerprint as the line it resolves. Resolution lines don't make the ledger
+[mixed](#mixed-ledgers).
+
+Finding the evidence does need the salt. To match a pending line to this machine's transcripts,
+branch-tally hashes each live request id with every local salt whose fingerprint appears on a
+ledger line: the one in the ledger's own `.tally/` and the main checkout's. A redacted pending line
+whose salt isn't here can't be matched. It stays pending and is counted under `no evidence`. An
+unredacted pending line is matched by its raw id.
 
 ### Worktrees
 
