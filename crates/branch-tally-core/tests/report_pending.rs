@@ -730,6 +730,31 @@ fn a_redacted_ledger_report_with_live_does_not_count_a_forward_attributed_call_a
 }
 
 #[test]
+fn a_mixed_ledger_report_with_live_does_not_count_a_hashed_live_call_as_pending() {
+    // An unredacted pending `req-a` on main, a redacted `req-a` line on feat/x, and a live
+    // `req-a`: the live call is matched in hashed form, but its raw id must still exclude the
+    // unredacted pending line, or the call is counted in the totals and in pending.
+    let repo = Repo::new();
+    repo.record(
+        "main",
+        vec![rec("s1", "req-a", "main", Some(1))],
+        RecordRedaction::Off,
+    );
+    let on_branch = vec![rec("s1", "req-a", "feat/x", Some(1))];
+    repo.record(
+        "feat/x",
+        on_branch.clone(),
+        RecordRedaction::Keyed { names: false },
+    );
+    let report = ledger_with_live(&repo, "feat/x", Mode::Strict, on_branch);
+    assert_eq!(report.summary.total.calls, 1);
+    assert_eq!(
+        report.summary.pending.lines, 0,
+        "the call is in the totals, so it is not also pending"
+    );
+}
+
+#[test]
 fn a_default_branch_ledger_of_only_pending_lines_reports_zero_totals_and_the_pending() {
     let repo = Repo::new();
     repo.record("main", main_records(), RecordRedaction::Off);

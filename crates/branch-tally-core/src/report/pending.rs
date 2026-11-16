@@ -304,6 +304,36 @@ pub(super) fn pending_outside(
     ledger.unresolved_pending_except(counted)
 }
 
+/// The request ids of `selected`, as the records carry them.
+pub(super) fn request_ids(selected: &[crate::model::SelectedRecord]) -> Vec<RequestId> {
+    selected
+        .iter()
+        .map(|s| s.attributed.record.request_id.clone())
+        .collect()
+}
+
+/// A ledger report's pending usage: repository-wide, not this branch's, since pending lines wait
+/// for a branch that is not this one yet. A request the totals already count is not also pending,
+/// matched by its stored id (`selected`, hashed where a redacted line held it) and by the live
+/// call's raw id (`live_raw`), so an unredacted pending line for a call matched in hashed form is
+/// still excluded.
+pub(super) fn ledger_report_pending(
+    read: &crate::ledger::Ledger,
+    homes: &[PathBuf],
+    selected: &[crate::model::SelectedRecord],
+    live_raw: &[RequestId],
+) -> Pending {
+    let salts = matching_salts(homes, read);
+    let counted = stored_forms(
+        selected
+            .iter()
+            .map(|s| &s.attributed.record.request_id)
+            .chain(live_raw.iter()),
+        &salts,
+    );
+    pending_outside(read, &counted)
+}
+
 /// The default ledger's unresolved pending lines that a live report's selection does not already
 /// count, with what reading the ledger counted and skipped. Zero, and no stats, when there is no
 /// checkout; zero when there is no ledger.

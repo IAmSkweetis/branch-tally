@@ -1336,6 +1336,9 @@ pub fn run_from_ledger_at(
     let mut unavailable = None;
     let mut capture_stats = crate::ledger::CaptureReadStats::default();
     let mut storage = None;
+    // The live calls' raw ids, kept before any is replaced by its hashed form: an unredacted
+    // pending line for the same call must still be excluded from the pending count.
+    let mut live_raw: Vec<crate::model::RequestId> = Vec::new();
     let (sel, read_stats) = if let Some(source) = source {
         let live = read_live(git, source, projects_root, repo_dir)?;
         let live_options = resolve_options(git, &live.main_checkout, options, &mut storage);
@@ -1350,6 +1353,7 @@ pub fn run_from_ledger_at(
         );
         unavailable = live.unavailable;
         capture_stats = live.captures.stats().clone();
+        live_raw = pending::request_ids(&live_sel.selected);
         // Against redacted lines, live calls are matched in hashed form (decision 0005).
         let live_selected = match_live_selected(
             redactor.as_ref(),
@@ -1385,14 +1389,7 @@ pub fn run_from_ledger_at(
     } else {
         (ledger_only_picked(ledger_records), ReadStats::default())
     };
-    // Repository-wide, not this branch's: pending lines wait for a branch that is not this one
-    // yet. A request the totals already count is not also pending.
-    let salts = pending::matching_salts(&homes, &read);
-    let counted = pending::stored_forms(
-        sel.selected.iter().map(|s| &s.attributed.record.request_id),
-        &salts,
-    );
-    let pending = pending::pending_outside(&read, &counted);
+    let pending = pending::ledger_report_pending(&read, &homes, &sel.selected, &live_raw);
     // Nothing counted is an error, unless pending lines remain: those are reported, not hidden.
     if sel.selected.is_empty() && pending.lines == 0 {
         return Err(ReportError::NoRecords { branch, read_stats });
