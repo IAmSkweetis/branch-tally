@@ -658,14 +658,15 @@ pub fn run(
         &branch,
         options,
     );
-    if sel.selected.is_empty() {
+    // Pending lines outside what this report counts (decision 0006).
+    let pending = pending::live_pending(git, repo_dir, &live.main_checkout, &sel.selected);
+    // Nothing counted is an error, unless pending lines remain: those are reported, not hidden.
+    if sel.selected.is_empty() && pending.lines == 0 {
         return Err(ReportError::NoRecords {
             branch,
             read_stats: live.stats,
         });
     }
-    // Pending lines outside what this report counts (decision 0006).
-    let pending = pending::live_pending(git, repo_dir, &live.main_checkout, &sel.selected);
     let mut report = finish(&branch, options, sel, live.stats, table);
     report.worktrees_unavailable = live.unavailable;
     report.capture_stats = live.captures.stats().clone();
@@ -1369,9 +1370,6 @@ pub fn run_from_ledger_at(
     } else {
         (ledger_only_picked(ledger_records), ReadStats::default())
     };
-    if sel.selected.is_empty() {
-        return Err(ReportError::NoRecords { branch, read_stats });
-    }
     // Repository-wide, not this branch's: pending lines wait for a branch that is not this one
     // yet. A request the totals already count is not also pending.
     let salts = pending::matching_salts(&homes, &read);
@@ -1380,6 +1378,10 @@ pub fn run_from_ledger_at(
         &salts,
     );
     let pending = pending::pending_outside(&read, &counted);
+    // Nothing counted is an error, unless pending lines remain: those are reported, not hidden.
+    if sel.selected.is_empty() && pending.lines == 0 {
+        return Err(ReportError::NoRecords { branch, read_stats });
+    }
     let mut report = finish(&branch, options, sel, read_stats, table);
     report.worktrees_unavailable = unavailable;
     report.capture_stats = capture_stats;
