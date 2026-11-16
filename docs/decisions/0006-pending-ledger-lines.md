@@ -66,7 +66,11 @@ records forward to the branch cut next (#7). The ledger had no equivalent.
   default branch, from the ledger or live, and the `project` report's per-branch rows all leave
   pending lines out, and they appear only in `pending`. A request the report already counts in its
   totals (for example a pre-cut call that timeline or claim mode attributes forward before
-  `record` has resolved it) is left out of `pending`, so no call is counted twice.
+  `record` has resolved it) is left out of `pending`, so no call is counted twice. A report that
+  counts no records but has unresolved pending lines (for example the default branch, when all its
+  lines are pending) is still built, with zero totals and the pending usage, so the uncertain usage
+  is never hidden behind a "no records" error. The `project` report shows the same pending usage
+  beside its totals, never in them.
   Markdown prints it as a footnote beside the unstamped one, and JSON as a `"pending"` object
   beside `"unstamped"`.
 
