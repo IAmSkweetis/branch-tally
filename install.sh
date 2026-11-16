@@ -482,8 +482,16 @@ main() {
 
   mkdir -p "$dest" || die "cannot create $dest"
   # Stage beside the destination and rename over it, so an existing binary is replaced atomically.
-  staged=$dest/.branch-tally.new.$$
-  cp "$bin" "$staged" || die "cannot write to $dest"
+  # The name is random and the file is created exclusively (noclobber: O_EXCL), so a path another
+  # user planted in $dest, including a symlink, is never followed or overwritten. A taken name retries.
+  staged=
+  tries=0
+  while [ -z "$staged" ]; do
+    tries=$((tries + 1))
+    [ "$tries" -le 10 ] || die "cannot create a staging file in $dest"
+    cand=$(mktemp -u "$dest/.branch-tally.new.XXXXXXXX") || die "cannot write to $dest"
+    if (set -C; cat "$bin" > "$cand") 2>/dev/null; then staged=$cand; fi
+  done
   chmod 755 "$staged" || { rm -f "$staged"; die "cannot chmod $staged"; }
   mv -f "$staged" "$dest/branch-tally" || { rm -f "$staged"; die "cannot install to $dest/branch-tally"; }
 
