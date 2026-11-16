@@ -359,9 +359,9 @@ pub struct Unstamped {
     pub tokens: u64,
 }
 
-/// Unresolved pending ledger lines (ADR 0006): default-branch usage recorded before its branch was
-/// cut, still not resolved to a branch. Deduplicated by request id and kept outside the totals.
-/// Zero when there are none, and also when the count is unknown. Absent in older serialized data.
+/// Unresolved pending ledger lines (ADR 0006): usage recorded on the default branch and not yet
+/// resolved to a branch. Deduplicated by request id and kept outside the totals, so any nonzero
+/// count makes the totals beside it a floor. Absent in older serialized data.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Pending {
     /// Unresolved pending ledger lines.
@@ -370,6 +370,14 @@ pub struct Pending {
     pub calls: u64,
     /// Tokens of those calls (same definition as [`Bucket::tokens`]).
     pub tokens: u64,
+}
+
+impl Pending {
+    /// Whether there is pending usage outside the totals, which makes them a floor.
+    #[must_use]
+    pub fn any(&self) -> bool {
+        self.lines > 0
+    }
 }
 
 /// The three tables `summarize` returns, each in first-seen order, plus what render derives.

@@ -325,7 +325,7 @@ pub fn project_json(report: &ProjectReport) -> String {
     let _ = writeln!(
         o,
         "  \"totalTokensIsFloor\": {},",
-        t.uncertain.any_ambiguous() || report.is_overflowed()
+        t.uncertain.any_ambiguous() || report.is_overflowed() || report.pending.any()
     );
     if report.is_overflowed() {
         o.push_str("  \"totalsOverflowed\": true,\n");
@@ -1268,7 +1268,22 @@ mod tests {
         };
         let out = project_markdown(&r);
         assert_eq!(out.matches(PENDING_NOTE).count(), 1, "{out}");
-        assert!(out.contains("Project total: **$3.75**"), "{out}");
+        // Pending usage is outside the totals, so the total beside it is a floor.
+        assert!(out.contains("Project total: **at least $3.75**"), "{out}");
+    }
+
+    #[test]
+    fn json_flags_the_totals_as_a_floor_when_pending_usage_is_outside_them() {
+        let plain: serde_json::Value = serde_json::from_str(&project_json(&exact())).unwrap();
+        assert_eq!(plain["totalCostIsFloor"], false, "{plain}");
+        assert_eq!(plain["totalTokensIsFloor"], false, "{plain}");
+        let r = ProjectReport {
+            pending: pending(2, 5, 1_234),
+            ..exact()
+        };
+        let v: serde_json::Value = serde_json::from_str(&project_json(&r)).unwrap();
+        assert_eq!(v["totalCostIsFloor"], true, "{v}");
+        assert_eq!(v["totalTokensIsFloor"], true, "{v}");
     }
 
     #[test]

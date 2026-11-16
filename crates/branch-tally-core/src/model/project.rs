@@ -137,11 +137,13 @@ impl ProjectReport {
         self.totals.totals_overflowed || self.rows.iter().any(|r| r.totals_overflowed)
     }
 
-    /// Whether any figure in the report is only a floor: the totals, any row or any series point.
-    /// A renderer labels the project total "at least" when this is true.
+    /// Whether any figure in the report is only a floor: the totals, any row or any series point,
+    /// or pending usage that sits outside them (decision 0006). A renderer labels the project total
+    /// "at least" when this is true.
     #[must_use]
     pub fn is_floor(&self) -> bool {
-        self.totals.is_floor()
+        self.pending.any()
+            || self.totals.is_floor()
             || self.rows.iter().any(BranchRow::is_floor)
             || self.series.iter().any(|p| p.is_floor)
     }

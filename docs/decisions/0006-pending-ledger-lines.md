@@ -70,7 +70,10 @@ records forward to the branch cut next (#7). The ledger had no equivalent.
   counts no records but has unresolved pending lines (for example the default branch, when all its
   lines are pending) is still built, with zero totals and the pending usage, so the uncertain usage
   is never hidden behind a "no records" error. The `project` report shows the same pending usage
-  beside its totals, never in them.
+  beside its totals, never in them. Any unresolved pending usage makes the totals beside it a
+  floor ("at least", `totalCostIsFloor`), since some of it may belong to the branch reported. A
+  live report whose default ledger exists but can't be read says pending usage is unknown rather
+  than reading it as none.
   Markdown prints it as a footnote beside the unstamped one, and JSON as a `"pending"` object
   beside `"unstamped"`.
 

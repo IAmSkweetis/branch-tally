@@ -31,6 +31,9 @@ pub struct Report {
     /// Set by [`run`] when the worktree list could not be read. The reference treats that as
     /// "no worktrees"; the report proceeds the same way but says so here.
     pub worktrees_unavailable: Option<GitError>,
+    /// Set by [`run`] when the default ledger exists but could not be read (refused or
+    /// unreadable). Pending usage is then unknown, not zero: the report proceeds and says so here.
+    pub pending_unavailable: Option<crate::ledger::LedgerError>,
     /// Set by [`run_from_ledger`]: where the numbers came from. `None` for a live report.
     pub ledger: Option<LedgerReport>,
     /// What reading `.tally/captures.jsonl` counted. All zeros when there is no captures file.
@@ -464,6 +467,7 @@ fn finish(
         costs,
         read_stats,
         worktrees_unavailable: None,
+        pending_unavailable: None,
         ledger: None,
         capture_stats: crate::ledger::CaptureReadStats::default(),
     }
@@ -658,8 +662,13 @@ pub fn run(
         &branch,
         options,
     );
-    // Pending lines outside what this report counts (decision 0006).
-    let pending = pending::live_pending(git, repo_dir, &live.main_checkout, &sel.selected);
+    // Pending lines outside what this report counts (decision 0006). An unreadable ledger leaves
+    // them unknown: the report proceeds with zero and says so, never reads it as "none".
+    let (pending, pending_unavailable) =
+        match pending::live_pending(git, repo_dir, &live.main_checkout, &sel.selected) {
+            Ok(p) => (p, None),
+            Err(e) => (crate::model::Pending::default(), Some(e)),
+        };
     // Nothing counted is an error, unless pending lines remain: those are reported, not hidden.
     if sel.selected.is_empty() && pending.lines == 0 {
         return Err(ReportError::NoRecords {
@@ -669,6 +678,7 @@ pub fn run(
     }
     let mut report = finish(&branch, options, sel, live.stats, table);
     report.worktrees_unavailable = live.unavailable;
+    report.pending_unavailable = pending_unavailable;
     report.capture_stats = live.captures.stats().clone();
     report.summary.pending = pending;
     Ok(report)

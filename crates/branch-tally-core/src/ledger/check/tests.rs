@@ -239,6 +239,21 @@ fn a_resolution_that_changes_the_origin_is_a_mismatch() {
 }
 
 #[test]
+fn a_resolution_whose_branch_differs_from_its_recorded_for_is_a_mismatch() {
+    // A resolution names one destination (decision 0006): `branch` must equal `recorded_for`.
+    let r = run(
+        &[],
+        &[
+            entry("r1", "main").pending(),
+            entry("r1", "feat/x")
+                .resolves("main")
+                .with("branch", serde_json::json!("feat/y")),
+        ],
+    );
+    assert_eq!(rules(&r), vec![Rule::ResolutionMismatch]);
+}
+
+#[test]
 fn a_resolution_that_changes_the_subagent_or_agent_id_is_a_mismatch() {
     let tags =
         |name: &str| serde_json::json!({"workspace": "main", "subagent": name, "agent_id": "a1"});

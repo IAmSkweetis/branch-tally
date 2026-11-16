@@ -196,6 +196,27 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), Failure> {
     if let Some(ledger) = &report.ledger {
         note_ledger(ledger);
     }
+    note_report(&report);
+
+    if args.pr.is_some() && settings.format.value == Format::Json {
+        stderr("note: config format = \"json\" was overridden by --pr; the PR body is Markdown");
+    } else if settings.format.value == Format::Json {
+        stdout(&format!(
+            "{}\n",
+            render::json(&report.summary, &report.costs, settings.cost.value)
+        ));
+        return Ok(());
+    }
+    let markdown = render::markdown(&report.summary, &report.costs, settings.cost.value);
+    match &args.pr {
+        None => stdout(&format!("{}\n", render::wrap(&markdown))),
+        Some(number) => update(&cwd, &report, &markdown, *number, args.dry_run)?,
+    }
+    Ok(())
+}
+
+/// The stderr notes for a finished report: what was skipped, unpriced or could not be read.
+fn note_report(report: &Report) {
     note_skipped(&report.read_stats);
     note_captures(&report.capture_stats);
     for (model, _) in report
@@ -214,22 +235,13 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), Failure> {
         // The reference treats this as "no worktrees"; say so rather than do it silently.
         stderr("note: git worktree list was unavailable, so worktree recovery was skipped");
     }
-
-    if args.pr.is_some() && settings.format.value == Format::Json {
-        stderr("note: config format = \"json\" was overridden by --pr; the PR body is Markdown");
-    } else if settings.format.value == Format::Json {
-        stdout(&format!(
-            "{}\n",
-            render::json(&report.summary, &report.costs, settings.cost.value)
-        ));
-        return Ok(());
+    if report.pending_unavailable.is_some() {
+        // Governance II: an unreadable ledger is not an empty one, so pending usage is unknown.
+        stderr(
+            "note: the ledger could not be read, so pending usage is unknown and not in this \
+             report",
+        );
     }
-    let markdown = render::markdown(&report.summary, &report.costs, settings.cost.value);
-    match &args.pr {
-        None => stdout(&format!("{}\n", render::wrap(&markdown))),
-        Some(number) => update(&cwd, &report, &markdown, *number, args.dry_run)?,
-    }
-    Ok(())
 }
 
 /// `record`: append the branch's new records to the ledger. Write only: no git add, no commit.

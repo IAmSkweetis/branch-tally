@@ -64,8 +64,9 @@ pub(super) fn millions(tokens: u64) -> String {
 }
 
 /// The total cost cell. A partial total is a floor (Governance II), so the cell says so itself.
-fn total_cost_cell(costs: &Costs, ambiguous: bool, overflowed: bool) -> String {
-    let floor = if costs.is_floor() || ambiguous || overflowed {
+/// `uncertain` is set when some calls are ambiguous or pending usage sits outside the totals.
+fn total_cost_cell(costs: &Costs, uncertain: bool, overflowed: bool) -> String {
+    let floor = if costs.is_floor() || uncertain || overflowed {
         "at least "
     } else {
         ""
@@ -263,7 +264,8 @@ fn statements(summary: &Summary, cost_floor: bool, o: &mut Vec<String>) {
     let f = &summary.footnote;
     floor_statement(&f.heuristics, summary.total.tokens(), o);
     overflow_statement(f.totals_overflowed, o);
-    let floor = cost_floor || f.heuristics.any_ambiguous() || f.totals_overflowed;
+    let floor =
+        cost_floor || f.heuristics.any_ambiguous() || f.totals_overflowed || summary.pending.any();
     double_count_statement(f.double_count.as_ref(), floor, o);
 }
 
@@ -538,7 +540,7 @@ pub fn markdown(summary: &Summary, costs: &Costs, show_cost: bool) -> String {
     let total_cell = if show_cost {
         total_cost_cell(
             costs,
-            summary.footnote.heuristics.any_ambiguous(),
+            summary.footnote.heuristics.any_ambiguous() || summary.pending.any(),
             summary.footnote.totals_overflowed,
         )
     } else {

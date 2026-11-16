@@ -286,6 +286,53 @@ fn a_redacted_ledger_resolves_under_the_matching_salt() {
     );
 }
 
+/// A source whose transcripts for the repository are gone (no roots discovered).
+struct NoTranscripts;
+
+impl Source for NoTranscripts {
+    fn harness(&self) -> Harness {
+        Harness::ClaudeCode
+    }
+    fn discover(
+        &self,
+        _projects_root: &Path,
+        _repo: &RepoIdentity,
+    ) -> Result<Vec<TranscriptRoot>, SourceError> {
+        Ok(Vec::new())
+    }
+    fn read(
+        &self,
+        _roots: &[TranscriptRoot],
+        _sink: &mut dyn FnMut(Record),
+    ) -> Result<ReadStats, SourceError> {
+        Ok(ReadStats::default())
+    }
+    fn dispatches(&self, _roots: &[TranscriptRoot]) -> Result<Vec<Dispatch>, SourceError> {
+        Ok(Vec::new())
+    }
+}
+
+#[test]
+fn resolve_at_on_the_default_branch_is_a_no_op_without_reading_transcripts() {
+    // Nothing is resolved on the default branch, so it needs only git: a repository with no
+    // transcript directory still gets the no-op outcome, not a missing-transcripts error.
+    let repo = Repo::new();
+    let out = resolve_at(
+        &repo.git(),
+        &NoTranscripts,
+        Path::new("/projects"),
+        &repo.root(),
+        Some("main"),
+        &LedgerTarget::Default,
+        &FixedClock,
+        false,
+    )
+    .expect("the default branch needs no transcripts");
+    assert!(out.on_default_branch);
+    assert_eq!(out.stats.resolved, 0);
+    assert_eq!(out.appended.appended, 0);
+}
+
 #[test]
 fn resolve_at_dry_run_counts_and_writes_nothing() {
     let repo = Repo::new();
@@ -382,6 +429,42 @@ fn the_live_report_has_no_pending_without_a_tally_dir() {
     )
     .unwrap();
     assert_eq!(live.summary.pending.lines, 0);
+    assert!(live.pending_unavailable.is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unreadable_default_ledger_is_reported_not_read_as_zero_pending() {
+    // A refused ledger (a symlink) is not an empty one: the live report still builds, but says
+    // its pending usage is unknown rather than claiming there is none (Governance II).
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_owned();
+    std::fs::create_dir(root.join(".tally")).unwrap();
+    let victim = root.join("victim");
+    std::fs::write(&victim, b"").unwrap();
+    std::os::unix::fs::symlink(&victim, root.join(".tally").join("ledger.jsonl")).unwrap();
+    let git = FakeGit::new().with_toplevel(&root, &root).with_worktrees(
+        &root,
+        vec![Worktree {
+            path: root.clone(),
+            branch: "main".to_owned(),
+        }],
+    );
+    let live = run(
+        &git,
+        &FakeSource(cut_session()),
+        Path::new("/projects"),
+        &root,
+        Some("feat/x"),
+        &Options::default(),
+        PriceTable::bundled(),
+    )
+    .unwrap();
+    assert_eq!(live.summary.pending.lines, 0);
+    assert!(
+        live.pending_unavailable.is_some(),
+        "a refused ledger must be reported, not read as zero pending"
+    );
 }
 
 fn capture(session: &str, branch: &str, second: u32) -> CaptureEvent {

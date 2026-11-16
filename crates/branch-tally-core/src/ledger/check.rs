@@ -265,10 +265,11 @@ impl ResolutionIndex {
         let Some(pending) = self.pending.get(&key) else {
             return Some(Rule::OrphanResolution);
         };
-        // Compare the whole entry: only the fields a resolution legitimately sets may differ.
+        // Compare the whole entry: only the fields a resolution legitimately sets may differ. It
+        // names one destination, so `branch` must equal `recorded_for` (decision 0006).
         let mut expected = pending.clone();
         expected.recorded_for.clone_from(&entry.recorded_for);
-        expected.branch.clone_from(&entry.branch);
+        expected.branch.clone_from(&entry.recorded_for);
         expected.basis = entry.basis;
         expected.kept_by = entry.kept_by;
         expected.recorded_at.clone_from(&entry.recorded_at);

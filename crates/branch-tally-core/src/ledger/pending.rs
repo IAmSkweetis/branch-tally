@@ -116,13 +116,14 @@ pub fn resolve_pending(
     recorded_at: &str,
 ) -> Resolution {
     let mut out = Resolution::default();
+    let claims = claims_by_request(ledger);
     let mut seen: HashSet<&RequestId> = HashSet::new();
     for pending in ledger.entries().iter().filter(|e| e.pending) {
         if !seen.insert(&pending.request_id) {
             continue;
         }
         let stats = &mut out.stats;
-        match settle(ledger, pending, target, evidence.get(&pending.request_id)) {
+        match settle(&claims, pending, target, evidence.get(&pending.request_id)) {
             Settled::Covered => stats.covered += 1,
             Settled::OtherBranch => stats.other_branch += 1,
             Settled::Stays(reason) => reason.count(stats),
@@ -173,18 +174,33 @@ enum Settled {
     Resolve { basis: BranchBasis },
 }
 
+/// The non-pending lines, indexed by request id. Built once per operation, so settling each
+/// pending line is a lookup rather than a scan of the whole ledger.
+type Claims<'a> = HashMap<&'a RequestId, Vec<&'a LedgerEntry>>;
+
+fn claims_by_request(ledger: &Ledger) -> Claims<'_> {
+    let mut index: Claims<'_> = HashMap::new();
+    for e in ledger.entries().iter().filter(|e| !e.pending) {
+        index.entry(&e.request_id).or_default().push(e);
+    }
+    index
+}
+
 /// The non-pending lines for the same request on another branch than the pending line's own.
 fn other_lines<'a>(
-    ledger: &'a Ledger,
+    claims: &'a Claims<'a>,
     pending: &'a LedgerEntry,
 ) -> impl Iterator<Item = &'a LedgerEntry> {
-    ledger.entries().iter().filter(move |e| {
-        !e.pending && e.request_id == pending.request_id && e.recorded_for != pending.recorded_for
-    })
+    claims
+        .get(&pending.request_id)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(move |e| e.recorded_for != pending.recorded_for)
 }
 
 fn settle(
-    ledger: &Ledger,
+    claims: &Claims<'_>,
     pending: &LedgerEntry,
     target: &str,
     evidence: Option<&PendingEvidence>,
@@ -192,7 +208,7 @@ fn settle(
     // An ordinary line for the request on another branch (or a resolution to the target) already
     // claims it. A resolution to a different branch settles it elsewhere.
     let mut elsewhere = false;
-    for other in other_lines(ledger, pending) {
+    for other in other_lines(claims, pending) {
         match &other.resolved {
             Some(_) if other.recorded_for != target => elsewhere = true,
             _ => return Settled::Covered,
@@ -261,10 +277,21 @@ impl Ledger {
     /// request (a resolution or an ordinary claim). Deduplicated by request id.
     #[must_use]
     pub fn unresolved_pending(&self) -> Pending {
+        self.unresolved_pending_except(&HashSet::new())
+    }
+
+    /// [`Self::unresolved_pending`] minus the requests in `counted`: those a report already counts
+    /// in its totals, as a ledger line stores their ids (decision 0006). Deduplicated by request id.
+    #[must_use]
+    pub fn unresolved_pending_except(&self, counted: &HashSet<RequestId>) -> Pending {
+        let claims = claims_by_request(self);
         let mut seen: HashSet<&RequestId> = HashSet::new();
         let mut out = Pending::default();
         for p in self.entries().iter().filter(|e| e.pending) {
-            if other_lines(self, p).next().is_some() || !seen.insert(&p.request_id) {
+            if other_lines(&claims, p).next().is_some()
+                || counted.contains(&p.request_id)
+                || !seen.insert(&p.request_id)
+            {
                 continue;
             }
             let u = &p.usage;

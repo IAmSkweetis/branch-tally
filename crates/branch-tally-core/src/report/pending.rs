@@ -17,7 +17,7 @@ use crate::ledger::{
     TimelineEvidence,
 };
 use crate::model::{
-    AttributedRecord, Bucket, CaptureEvent, Dispatch, Pending, Record, RequestId, Timestamp,
+    AttributedRecord, CaptureEvent, Dispatch, Pending, Record, RequestId, Timestamp,
 };
 use crate::sources::{ReadStats, Source};
 
@@ -68,8 +68,9 @@ pub fn resolve_at(
     dry_run: bool,
 ) -> Result<ResolveOutcome, ReportError> {
     let branch = super::branch_or_current(git, repo_dir, branch)?;
-    let live = super::read_live(git, source, projects_root, repo_dir)?;
-    let default_branch = super::resolve_default_branch(git, &live.main_checkout);
+    // Decided with git alone: on the default branch nothing is resolved, so no transcript or
+    // capture is read, and a repository without transcripts still gets the no-op outcome.
+    let default_branch = super::resolve_default_branch(git, &git.main_checkout(repo_dir));
     let on_default_branch = branch == default_branch.name;
     let mut outcome = ResolveOutcome {
         branch,
@@ -78,11 +79,15 @@ pub fn resolve_at(
         stats: PendingStats::default(),
         appended: AppendOutcome::default(),
         dry_run,
-        read_stats: live.stats,
-        worktrees_unavailable: live.unavailable,
-        capture_stats: live.captures.stats().clone(),
+        read_stats: ReadStats::default(),
+        worktrees_unavailable: None,
+        capture_stats: crate::ledger::CaptureReadStats::default(),
     };
     if !on_default_branch {
+        let live = super::read_live(git, source, projects_root, repo_dir)?;
+        outcome.read_stats = live.stats;
+        outcome.worktrees_unavailable = live.unavailable;
+        outcome.capture_stats = live.captures.stats().clone();
         let (stats, appended) = Resolving {
             git,
             repo_dir,
@@ -270,50 +275,30 @@ pub(super) fn pending_outside(
     ledger: &crate::ledger::Ledger,
     counted: &HashSet<RequestId>,
 ) -> Pending {
-    let mut seen: HashSet<&RequestId> = HashSet::new();
-    let mut out = Pending::default();
-    for p in ledger.entries().iter().filter(|e| e.pending) {
-        let settled = ledger.entries().iter().any(|e| {
-            !e.pending && e.request_id == p.request_id && e.recorded_for != p.recorded_for
-        });
-        if settled || counted.contains(&p.request_id) || !seen.insert(&p.request_id) {
-            continue;
-        }
-        let u = &p.usage;
-        let bucket = Bucket {
-            input: u.input,
-            cache_write_5m: u.cache_write_5m,
-            cache_write_1h: u.cache_write_1h,
-            cache_read: u.cache_read,
-            output: u.output,
-            ..Bucket::default()
-        };
-        out.lines += 1;
-        out.calls += 1;
-        out.tokens = out.tokens.saturating_add(bucket.tokens());
-    }
-    out
+    ledger.unresolved_pending_except(counted)
 }
 
 /// The default ledger's unresolved pending lines that a live report's selection does not already
-/// count. Zero when there is no ledger, or it cannot be read ("none, or unknown").
+/// count. Zero when there is no checkout or no ledger.
+///
+/// # Errors
+/// The ledger exists but was refused or could not be read: pending usage is then unknown, which
+/// the caller reports rather than reading it as zero (Governance II).
 pub(super) fn live_pending(
     git: &dyn Git,
     repo_dir: &Path,
     main: &Path,
     selected: &[crate::model::SelectedRecord],
-) -> Pending {
+) -> Result<Pending, crate::ledger::LedgerError> {
     let Ok(root) = git.toplevel(repo_dir) else {
-        return Pending::default();
+        return Ok(Pending::default());
     };
-    let Ok(ledger) = crate::ledger::read_default(&root) else {
-        return Pending::default();
-    };
+    let ledger = crate::ledger::read_default(&root)?;
     let path = root.join(crate::ledger::LEDGER_PATH);
     let salts = matching_salts(&super::salt_homes(Some(&root), &path, main), &ledger);
     let counted = stored_forms(
         selected.iter().map(|s| &s.attributed.record.request_id),
         &salts,
     );
-    pending_outside(&ledger, &counted)
+    Ok(pending_outside(&ledger, &counted))
 }

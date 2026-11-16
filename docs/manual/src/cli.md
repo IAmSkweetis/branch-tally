@@ -271,7 +271,7 @@ contributors control. The Markdown report shows them as text, never as formattin
 | `redacted` | `true` when `--redact` was on. Absent otherwise. |
 | `totalCalls` | API calls in the report. |
 | `totalCostUSD` | The estimated total cost in US dollars. |
-| `totalCostIsFloor` | `true` when the cost is a lower bound: a model is unpriced, some calls were ambiguous, or a total overflowed. |
+| `totalCostIsFloor` | `true` when the cost is a lower bound: a model is unpriced, some calls were ambiguous, a total overflowed, or unresolved pending usage sits outside the totals. |
 | `totalsOverflowed` | `true` when a token or call total reached the largest value the tool can hold, so every total is an unreliable floor (see [Overflowed totals](#overflowed-totals)). Absent otherwise. |
 | `unpricedModels` | Model ids that had no price. |
 | `priceTable` | `asOf` (the table's date) and `source`: `"bundled"`, `"cache"` or `"override"`. |
@@ -438,6 +438,7 @@ Redaction applies to the report only, and is off by default. The ledger has its 
 | `note: N record(s) had an unreadable timestamp; they were kept but are undated` | Transcript records whose timestamp is not strict RFC 3339 (see [Timestamps](#timestamps)). Each is still counted in calls, tokens and cost, but has no time. The timestamp text itself is never printed. Printed by `report` and `record`. |
 | `note: skipped N capture line(s) in .tally/captures.jsonl: …` | Hook capture lines that were malformed, written by an unsupported version, or of an unknown kind. Counted, not hidden. Printed by `report` and `record`. |
 | `note: git worktree list was unavailable, so worktree recovery was skipped` | `git worktree list` failed, so subagent calls in worktrees could not be recovered. |
+| `note: the ledger could not be read, so pending usage is unknown and not in this report` | A live `report` found `.tally/ledger.jsonl` but it was refused or unreadable, so its [pending usage](ledger.md#pending-usage-in-reports) is unknown rather than zero. The report is still printed. |
 | `note: using the repository price override (.tally/prices.toml); prices are not the bundled or cached table` | Costs come from the repository's own price table, not from branch-tally's. Printed in every output format; stdout is unchanged. See [Which price table is used](#which-price-table-is-used). |
 | `note: config format = "json" was overridden by --pr; the PR body is Markdown` | The config file sets `format = "json"` and `--pr` was given, so the Markdown table was written (or, with `--dry-run`, printed) instead of JSON. See [Updating a pull request](#updating-a-pull-request). |
 | `cannot tell which GitHub repository --pr should use: …` | Exit 1, `--pr` only. There is no `origin` remote, or it isn't a GitHub URL branch-tally can read. `gh` was not run. See [Which repository and which PR](#which-repository-and-which-pr). |

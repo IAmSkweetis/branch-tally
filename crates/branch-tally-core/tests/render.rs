@@ -1493,6 +1493,42 @@ fn markdown_reports_pending_ledger_usage_only_when_there_is_some() {
 }
 
 #[test]
+fn pending_usage_labels_the_total_cost_a_floor_in_markdown_and_json() {
+    // Pending usage is outside the totals (decision 0006), so a total shown beside it is partial
+    // and must read "at least" (Governance II).
+    use branch_tally_core::model::Pending;
+    use serde_json::Value;
+    let (mut s, _) = sample();
+    // Every model priced, so nothing else makes the total a floor.
+    let c = Costs {
+        by_model: vec![
+            ("claude-a".to_owned(), Some(0.125)),
+            ("claude-b".to_owned(), Some(2.55)),
+        ],
+        total: 2.675,
+        ..Costs::default()
+    };
+    let total_row = |md: &str| {
+        md.lines()
+            .find(|l| l.starts_with("| **Total**"))
+            .unwrap()
+            .to_owned()
+    };
+    assert!(!total_row(&markdown(&s, &c, true)).contains("at least"));
+    let v: Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
+    assert_eq!(v["totalCostIsFloor"], false);
+    s.pending = Pending {
+        lines: 3,
+        calls: 5,
+        tokens: 4_321,
+    };
+    let md = markdown(&s, &c, true);
+    assert!(total_row(&md).contains("**at least $"), "{md}");
+    let v: Value = serde_json::from_str(&json(&s, &c, true)).unwrap();
+    assert_eq!(v["totalCostIsFloor"], true);
+}
+
+#[test]
 fn json_has_a_top_level_pending_key_only_when_there_is_some() {
     use branch_tally_core::model::Pending;
     use serde_json::Value;

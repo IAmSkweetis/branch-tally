@@ -393,7 +393,10 @@ pub fn json(summary: &Summary, costs: &Costs, cost: bool) -> String {
         let _ = writeln!(
             o,
             "  \"totalCostIsFloor\": {},",
-            costs.is_floor() || heur.any_ambiguous() || summary.footnote.totals_overflowed
+            costs.is_floor()
+                || heur.any_ambiguous()
+                || summary.footnote.totals_overflowed
+                || summary.pending.any()
         );
     }
     // Not in the reference (#96): present only when a total saturated, so plain reports keep its

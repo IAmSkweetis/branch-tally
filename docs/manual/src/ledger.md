@@ -310,7 +310,13 @@ The JSON report has a top-level `pending` object:
 ```
 
 Both are left out when there are no unresolved pending lines. A live `report` reads them from the
-checkout's default ledger, `.tally/ledger.jsonl`, and shows none when there isn't one.
+checkout's default ledger, `.tally/ledger.jsonl`, and shows none when there isn't one. If that
+ledger exists but can't be read, the report still prints and says so on stderr:
+`note: the ledger could not be read, so pending usage is unknown and not in this report`.
+
+Some of the pending usage may belong to the branch being reported, so a total beside it is partial.
+When there are unresolved pending lines, the total cost reads "at least" and the JSON sets
+`totalCostIsFloor` to `true`.
 
 A report that counts no calls but finds unresolved pending lines is still printed, live or from
 the ledger, with or without `--with-live`. Its totals are zero and the pending line says how much

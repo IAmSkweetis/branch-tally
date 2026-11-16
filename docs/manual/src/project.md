@@ -223,6 +223,9 @@ unresolved ones are reported beside the totals instead, counted once per call:
 
 - The JSON has a top-level `pending` object, `"pending": { "lines": 1, "calls": 1, "tokens": 600 }`.
 
+Because that usage is outside the totals, a report with any of it labels the project total "at
+least", as the chart title does, and sets `totalCostIsFloor` and `totalTokensIsFloor` to `true`.
+
 Both are left out when there are no unresolved pending lines. The SVG chart doesn't show pending
 usage.
 
@@ -344,12 +347,12 @@ option: branch names appear in the table as they are in the ledger.
 | --- | ----- |
 | `totalCalls` | API calls in the project, each counted once. |
 | `totalTokens` | Their tokens, each call counted once. |
-| `totalTokensIsFloor` | `true` when some calls could not be placed with certainty, or a total overflowed, so token totals are a lower bound. |
+| `totalTokensIsFloor` | `true` when some calls could not be placed with certainty, a total overflowed, or unresolved pending usage sits outside the totals, so token totals are a lower bound. |
 | `totalsOverflowed` | `true` when a token or call total overflowed, in the project total or any branch, so every total is an unreliable floor (see [Overflowed totals](#overflowed-totals)). Absent otherwise. |
 | `doubleCount` | Present when the total may count some calls twice because the ledger mixes unredacted and redacted lines, or several salts: `mixedLedger` with `unredactedLines`, `redactedLines` and `distinctSalts`. See [A total that may count calls twice](#a-total-that-may-count-calls-twice). Absent otherwise. |
 | `pending` | `lines`, `calls` and `tokens` of the ledger's unresolved pending lines, which are in no total. See [Pending usage](#pending-usage). Absent when there are none. |
 | `totalCostUSD` | The estimated project cost in US dollars, each call counted once. |
-| `totalCostIsFloor` | `true` when any figure in the report is a floor: the total, a branch or a series point. |
+| `totalCostIsFloor` | `true` when any figure in the report is a floor: the total, a branch or a series point, or when unresolved pending usage sits outside the totals. |
 | `unpricedModels` | Model ids that had no price, across all branches. |
 | `overlap` | The shared calls: `calls`, `tokens`, `costUSD` and `costIsFloor`. Counted in more than one branch, once in the totals. |
 | `heuristics` | Calls and tokens per attribution heuristic, and `ambiguous`, as in `report`'s JSON, plus `isFloor`. Every key is present, with zeros where nothing applied. |
