@@ -985,5 +985,23 @@ mk_latest "$R" v2.0.0
 sh_run --to "$D"
 check "success leaves no staged file in the destination" test "$(ls -A "$D")" = branch-tally
 
+# 17l. A copy that fails after the staging file was created removes that file. A cat stub writes
+# part of the binary and fails; other cat calls go to the real one.
+fresh stagedfail
+mk_release "$R" v2.0.0 $X 2.0.0
+mk_latest "$R" v2.0.0
+mkdir -p "$D"
+cat > "$S/stubs/cat" <<CAT
+#!/bin/sh
+case "\$1" in
+  */branch-tally) printf 'partial'; exit 1 ;;
+esac
+exec "$TOOLBIN/cat" "\$@"
+CAT
+chmod +x "$S/stubs/cat"
+sh_run --to "$D"
+check "failed copy: install exits non-zero" test "$rc" -ne 0
+check "failed copy: no staged file left in the destination" empty_dir "$D"
+
 printf '\n%s cases run, %s failed\n' "$cases" "$failures"
 [ "$failures" -eq 0 ] && [ "$cases" -gt 0 ]

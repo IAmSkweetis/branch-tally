@@ -484,13 +484,20 @@ main() {
   # Stage beside the destination and rename over it, so an existing binary is replaced atomically.
   # The name is random and the file is created exclusively (noclobber: O_EXCL), so a path another
   # user planted in $dest, including a symlink, is never followed or overwritten. A taken name retries.
+  # Exit 4 means the file was created but the copy failed: that file is ours, so it is removed. Any
+  # other failure means the exclusive create failed, and the path is left alone.
   staged=
   tries=0
   while [ -z "$staged" ]; do
     tries=$((tries + 1))
     [ "$tries" -le 10 ] || die "cannot create a staging file in $dest"
     cand=$(mktemp -u "$dest/.branch-tally.new.XXXXXXXX") || die "cannot write to $dest"
-    if (set -C; cat "$bin" > "$cand") 2>/dev/null; then staged=$cand; fi
+    copy_rc=0
+    (set -C; { cat "$bin" >&3 || exit 4; } 3>"$cand") 2>/dev/null || copy_rc=$?
+    case $copy_rc in
+      0) staged=$cand ;;
+      4) rm -f "$cand"; die "cannot copy the binary to $dest" ;;
+    esac
   done
   chmod 755 "$staged" || { rm -f "$staged"; die "cannot chmod $staged"; }
   mv -f "$staged" "$dest/branch-tally" || { rm -f "$staged"; die "cannot install to $dest/branch-tally"; }

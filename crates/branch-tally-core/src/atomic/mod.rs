@@ -5,6 +5,9 @@
 //! the open fail instead of being followed. It then fsyncs and renames over the target. The
 //! temporary file is removed on any failure.
 //!
+//! The temporary name is `.<target name>.<suffix>.tmp`, or `.<suffix>.tmp` when the target name is
+//! too long for that to stay within a 255-byte file name.
+//!
 //! Replacing the target does not preserve its permissions: the new file gets the process default.
 //! The target itself is replaced, not written through, so a symlink at the target is swapped for a
 //! regular file rather than followed.
@@ -99,10 +102,16 @@ pub fn write_atomic_with(
     ))
 }
 
+/// The longest destination name kept in a temporary name: the 255-byte `NAME_MAX` less the 38
+/// bytes of `.`, `.`, a 32-character suffix and `.tmp`. A longer name is dropped, never truncated.
+const MAX_NAME_IN_TEMP: usize = 255 - 38;
+
 fn temp_path(dir: &Path, name: &OsStr, suffix: &str) -> PathBuf {
     let mut file = OsString::from(".");
-    file.push(name);
-    file.push(".");
+    if name.as_encoded_bytes().len() <= MAX_NAME_IN_TEMP {
+        file.push(name);
+        file.push(".");
+    }
     file.push(suffix);
     file.push(".tmp");
     dir.join(file)
@@ -239,6 +248,26 @@ mod tests {
         assert_eq!(a.len(), 32);
         assert!(a.bytes().all(|c| c.is_ascii_hexdigit()));
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn a_long_target_name_still_fits_the_temporary_name_limit() {
+        // 240 bytes is a valid file name, but 240 + 38 would pass the 255-byte NAME_MAX.
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join(format!("{}.svg", "g".repeat(236)));
+        write_atomic(&target, b"data").unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"data");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn the_target_name_is_kept_in_the_temporary_name_when_it_fits() {
+        let fits = "f".repeat(MAX_NAME_IN_TEMP);
+        let temp = temp_path(Path::new("d"), OsStr::new(&fits), "s");
+        assert_eq!(temp, Path::new("d").join(format!(".{fits}.s.tmp")));
+        let long = "l".repeat(MAX_NAME_IN_TEMP + 1);
+        let temp = temp_path(Path::new("d"), OsStr::new(&long), "s");
+        assert_eq!(temp, Path::new("d").join(".s.tmp"));
     }
 
     // Not on Apple platforms: APFS and HFS+ refuse a file name that is not valid UTF-8 (EILSEQ), so
