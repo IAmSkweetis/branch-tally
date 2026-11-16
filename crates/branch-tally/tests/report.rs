@@ -414,20 +414,19 @@ fn dry_run_without_pr_is_a_usage_error() {
 }
 
 /// Gives the world's repository an `origin` remote. `--pr` resolves `--repo` from it.
+#[cfg(unix)]
 fn add_origin(world: &World, url: &str) {
     let status = std::process::Command::new("git")
         .args(["remote", "add", "origin", url])
         .current_dir(&world.repo)
-        .env(
-            "GIT_CONFIG_GLOBAL",
-            if cfg!(windows) { "NUL" } else { "/dev/null" },
-        )
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .status()
         .unwrap();
     assert!(status.success());
 }
 
+#[cfg(unix)]
 const OVERRIDE_NOTE: &str = "note: config format = \"json\" was overridden by --pr";
 
 #[cfg(unix)]
