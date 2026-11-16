@@ -94,6 +94,7 @@ fn sample() -> (Summary, Costs) {
         subagents: branch_tally_core::model::SubagentSummary::default(),
         work_branch: None,
         unstamped: Unstamped::default(),
+        pending: branch_tally_core::model::Pending::default(),
         redacted: false,
     };
     // 0.125 and 2.675 are ties for two decimals: 0.125 is exact (half-even gives 0.12), 2.675 is
