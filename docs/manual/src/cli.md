@@ -276,7 +276,7 @@ contributors control. The Markdown report shows them as text, never as formattin
 | `heuristics` | Calls and tokens per attribution heuristic (`sessionClaim`, `worktreeRecovery`, `originRecovery`, `dispatcherRollUp`, `timelineForward`, `timelineCarried`) and `ambiguous`, plus `isFloor`. `captured` is added only when [hook captures](captures.md) placed at least one call. Absent when no heuristic applied. |
 | `doubleCount` | Present when the total may count some calls twice, an overcount rather than a floor: `mixedLedger` (`unredactedLines`, `redactedLines`, `distinctSalts`) when the ledger is mixed, and `liveMatch` (`"no-salt"`, `"salt-unreadable"`, `"fingerprint-mismatch"` or `"partially-matched"`) when live calls could not be matched to redacted lines. Either or both. It does not change `totalCostIsFloor`. See [Mixed ledgers](ledger-redaction.md#mixed-ledgers). Absent otherwise. |
 | `unstamped` | `calls` and `tokens`: the calls in the repository that carry no branch stamp and were not attributed to any branch (see [Unstamped calls](#unstamped-calls)). Absent when there are none, and in a report from the ledger alone. |
-| `pending` | `lines`, `calls` and `tokens`: the ledger's unresolved pending lines, counted across the whole ledger and kept out of every total (see [Pending usage in reports](ledger.md#pending-usage-in-reports)). Absent when there are none. |
+| `pending` | `lines`, `calls` and `tokens`: the ledger's unresolved pending lines, counted across the whole ledger and kept out of every total, leaving out calls this report already counts (see [Pending usage in reports](ledger.md#pending-usage-in-reports)). Absent when there are none. |
 | `subagents` | Subagent totals (calls, tokens, dispatched subagents, workspaces, worktrees, unattributed and unlinked counts, cost) and `rows`, one per subagent and model with token counts and cost. Present when subagents did part of the work. |
 | `sessions` | One object per session: `id`, `origin` (`"main"` or the worktree), `first` and `last` timestamps, `calls`, `tokens` and `agents`. |
 | `models` | One object per model id: `calls`, `input`, `cacheWrite5m`, `cacheWrite1h`, `cacheRead`, `output`, `thinking` and `costUSD` (`null` when unpriced). |
@@ -420,13 +420,17 @@ reported in the `note: N record(s) had an unreadable timestamp; …` line above.
 
 | Message (stderr, exit 1) | Cause |
 | ------------------------ | ----- |
-| `No transcript records found for branch '…'. Transcripts are local and purged after cleanupPeriodDays (default 30).` | Nothing for this branch in this machine's transcripts. |
+| `No transcript records found for branch '…'. Transcripts are local and purged after cleanupPeriodDays (default 30).` | Nothing for this branch in this machine's transcripts. A live `report` also needs the checkout's ledger to hold no unresolved pending lines; see below. |
 | `No Claude Code transcript directory at <path>` | `~/.claude/projects` does not exist on this machine. |
-| `No ledger records found for branch '…'. …` | `--from-ledger` found no lines for the branch. |
+| `No ledger records found for branch '…'. …` | `--from-ledger` found no lines for the branch, and no unresolved pending lines. |
 | `no ledger at <path>` | `--from-ledger` and the ledger file does not exist. |
 | `refusing to use <path>: it is …` | A default `.tally/` path is a symbolic link or the wrong kind of file. See [Symbolic links are refused](ledger.md#symbolic-links-are-refused). |
 | `cannot read price table <path>: …` | The price override or cache could not be read. A refused `.tally/prices.toml` shows as `refusing to use …` instead; see [Which price table is used](#which-price-table-is-used). |
 | `config file <path> …` | The config file is invalid. See [Config reference](config.md#errors). |
+
+A `report` that counts no calls for the branch, live or from the ledger, but finds unresolved
+[pending lines](ledger.md#pending-usage-in-reports), is not an error: it prints zero totals with
+the pending line, and exits 0.
 
 With `--from-ledger`, a ledger that has conflicting lines for one request stops the report with
 exit 3, not 1:
@@ -547,10 +551,12 @@ A ledger with conflicting lines for one request stops `project` with exit 3 and 
 `error: N ledger request(s) have conflicting lines, …` line as `report --from-ledger`, unless
 `--allow-ledger-conflicts` is given. That applies to a file named with `--ledger` too.
 
-A ledger with no lines is not an error: the report says `No branches recorded in the ledger.` The
-ledger notes on stderr are the same as for `report --from-ledger`; see
-[Report from the ledger](ledger.md#report-from-the-ledger). The price override note is the same as
-for `report`; see [What the report says on stderr](#what-the-report-says-on-stderr).
+A ledger with no lines is not an error: the report says `No branches recorded in the ledger.` A
+ledger whose only lines are unresolved pending lines prints the same, followed by the pending line
+(see [Pending usage](project.md#pending-usage)). The ledger notes on stderr are the same as for
+`report --from-ledger`; see [Report from the ledger](ledger.md#report-from-the-ledger). The price
+override note is the same as for `report`; see
+[What the report says on stderr](#what-the-report-says-on-stderr).
 
 ## `branch-tally capture`
 
@@ -704,9 +710,10 @@ recorded for the base branch that also repeats a base request gets both
 
 A second synthetic example shows the pending and resolution rules. The base holds one line. On the
 head, lines 2 and 3 are pending lines for `main`, line 4 resolves line 2 to `feat/x`, and line 5 is
-an ordinary `feat/x` line. Lines 6 to 10 are wrong: a plain line for `main`, a resolution with no
+an ordinary `feat/x` line. Lines 6 to 11 are wrong: a plain line for `main`, a resolution with no
 pending line behind it, a resolution whose token counts differ from line 3's, a second resolution
-of line 2's request to `docs/old`, and a line marked both pending and resolved:
+of line 2's request to `docs/old`, a line marked both pending and resolved, and a pending line
+recorded for `feat/x`:
 
 ```text
 note: 1 new ledger line(s) recorded for branch docs/old
@@ -717,7 +724,8 @@ ledger: line 7: resolution has no matching pending line
 ledger: line 8: resolution differs from the pending line it resolves
 ledger: line 9: request resolved to a different branch elsewhere
 ledger: line 10: line is both pending and resolved
-ledger check: 6 violation(s) against main
+ledger: line 11: pending line recorded for a branch other than the base
+ledger check: 7 violation(s) against main
 ```
 
 Line 4 was valid on its own, but line 9 resolves the same request to another branch, so both are
