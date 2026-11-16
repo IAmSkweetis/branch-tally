@@ -190,6 +190,35 @@ not over a real stamp, and the #6 dispatcher roll-up is kept.
 - `select_timeline` keeps a record iff its assigned branch equals the request (`Exact`); there is
   no session claim. An ambiguous record is kept only when its raw stamp equals the request.
 
+### Pending ledger lines (#131, [decision 0006](../decisions/0006-pending-ledger-lines.md))
+
+A session usually starts on the default branch and cuts its work branch partway through, so the
+calls before the cut are stamped `main`. The ledger can't rewrite a line, so `record` handles them
+in two steps in `report/`:
+
+- **Written pending.** `record_at` on the repository's default branch (found as the timeline does:
+  `origin/HEAD`, else `init.defaultBranch`, else `main` assumed) marks each line it writes
+  `"pending": true`. `recorded_for`, `branch`, `basis` and `kept_by` stay as attribution made them.
+  `Recorded.pending_written` counts them.
+- **Resolved by appending.** `record_at` on any other branch, and `resolve_at` on request, run
+  `attribute_timeline` with the default work-branch rule over the live records and read the
+  captures. Only `TimelineForward`, `DispatcherRolledUp` and a session's first capture at or after
+  the record's `ts` (that names a work branch) place a pending line, and only the lines that
+  target the current or named branch get a resolution line. Claim mode already records a session's
+  pre-cut calls for the branch, so those pending lines count as `covered`.
+- **Never guessed.** `TimelineAmbiguous`, `TimelineCarried` (the session went back to the default
+  branch after a work branch: it is never assigned back), a session with no work branch and no
+  capture, an unlinked subagent, a record with no `ts`, a transcript and capture that disagree, and
+  a line with no live transcript or no salt matching its `redaction` fingerprint all stay pending.
+  Each is counted by reason in `PendingStats`, and `Summary.pending` reports what is left,
+  repository-wide and outside the totals.
+- **Redacted ledgers.** Live request ids are hashed under each salt whose fingerprint is on a
+  ledger line to find a line's evidence. The resolution copies the line's own hashed ids, so it
+  needs no salt to write.
+- The live report (`run`) fills `Summary.pending` from the default ledger when one exists, and
+  reports zero without a `.tally/`. An unreadable ledger also reads as zero there, which the field
+  documents as "none or unknown".
+
 ## The dispatch link
 
 Observed 2026-11-09, Claude Code 2.1.3xx, by probing real transcripts for ids and key names only:
