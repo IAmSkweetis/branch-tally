@@ -395,10 +395,15 @@ pub(crate) struct ReportArgs {
     #[arg(long, conflicts_with = "pr")]
     pub(crate) json: bool,
 
-    /// Splice the Markdown table into PR N (default: this branch's open PR). Cannot be combined
-    /// with --json or --format json; a config-file `format = "json"` yields to --pr (with a note).
-    #[arg(long, num_args = 0..=1, default_missing_value = "", value_name = "N")]
-    pub(crate) pr: Option<String>,
+    /// Splice the Markdown table into PR N, a positive number (default: this branch's open
+    /// same-repository PR; a fork PR needs its number). Cannot be combined with --json or
+    /// --format json; a config-file `format = "json"` yields to --pr (with a note).
+    #[arg(long, num_args = 0..=1, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
+    #[expect(
+        clippy::option_option,
+        reason = "clap's shape for an optional value: absent, bare --pr, --pr N"
+    )]
+    pub(crate) pr: Option<Option<u64>>,
 
     /// With --pr, print the body without editing. Requires --pr.
     #[arg(long, requires = "pr")]

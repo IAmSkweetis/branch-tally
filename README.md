@@ -81,6 +81,10 @@ branch-tally report          # the current branch's token usage and estimated co
 branch-tally report --pr     # write the table into the branch's pull request
 ```
 
+`--pr` uses the [GitHub CLI](https://cli.github.com/) and the repository your `origin` remote
+points at. On its own it finds the branch's one open pull request in that repository; for any
+other, such as a PR from a fork, name it with `--pr 42`.
+
 [Getting Started](https://branch-tally.io/getting-started.html) walks through the first report and
 how to read it.
 

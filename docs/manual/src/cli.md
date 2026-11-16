@@ -65,7 +65,7 @@ Reports the token usage and estimated cost for `BRANCH` (default: the current br
 | `--format <FORMAT>` | `md` | Output format: `md` or `json`. See [Output formats](#output-formats). |
 | `--md` | | Same as `--format md`. |
 | `--json` | | Same as `--format json`. Can't be combined with `--pr`. |
-| `--pr [<N>]` | | Splice the Markdown table into pull request `N`, or this branch's open PR when `N` is omitted. Can't be combined with `--json` or `--format json`. See [Updating a pull request](#updating-a-pull-request). |
+| `--pr [<N>]` | | Splice the Markdown table into pull request `N`, a positive number, or this branch's one open same-repository PR when `N` is omitted. A PR from a fork needs its number. Can't be combined with `--json` or `--format json`. See [Updating a pull request](#updating-a-pull-request). |
 | `--dry-run` | | Needs `--pr`. Print the new PR body without editing the PR. |
 | `--cost` | on | Show estimated costs. Undoes `cost = false` in the config file. |
 | `--no-cost` | | Omit estimated costs: the cost column in Markdown, the cost keys in JSON. See [Output formats](#output-formats). |
@@ -92,6 +92,8 @@ These are command-line errors (exit 2):
 - both halves of an on/off pair: `--cost` with `--no-cost`, `--redact` with `--no-redact`,
   `--keep-names` with `--redact-names`;
 - `--pr` with `--json` or `--format json`, because the PR body is always Markdown;
+- `--pr` with a value that is not a whole number of 1 or more, such as `0`, a URL or a branch
+  name. `gh` is never run;
 - `--dry-run` without `--pr`;
 - `--ledger`, `--with-live` or `--allow-ledger-conflicts` without `--from-ledger`. On `record`
   and `project`, `--ledger` needs nothing else;
@@ -344,18 +346,58 @@ branch-tally report --pr             # write it to this branch's open PR
 branch-tally report --pr 42          # write it to PR #42
 ```
 
-Without a number, it looks up the open PR whose head is the branch. If the PR body holds a
-`<!-- token-report:start -->` line with a `<!-- token-report:end -->` line after it, everything
-from the first start line to the first end line after it is replaced, markers included. A marker
-counts only on a line of its own, as branch-tally writes it. A name in the previous report that
-happens to spell a marker sits inside a table row, so it can't cut the region short and leave old
-text behind. Prose elsewhere in the body that quotes a marker is left alone. Otherwise a
-`## Token usage` section holding the report is appended to the body.
+`N` must be a whole number of 1 or more. Anything else, such as `0`, `-1`, a PR URL or a branch
+name, is a command-line error (exit 2), and `gh` is never run. Because the value after `--pr` is
+optional, a word straight after a bare `--pr` is read as `N`: write `report my-branch --pr`, not
+`report --pr my-branch`.
+
+#### Which repository and which PR
+
+Every `gh` call that `--pr` makes names the repository with `--repo`, taken from the `origin`
+remote of the repository being reported on. It is always `HOST/OWNER/REPO`, such as
+`github.com/acme/widget` or `ghe.example.com/acme/widget` for GitHub Enterprise, so `gh` never
+takes the host from its `GH_HOST` environment variable. Nothing is guessed. If there is no
+`origin`, or its URL is not a GitHub repository URL that branch-tally can read, the run stops
+before `gh` is called (exit 1). The message never prints the URL, because a remote URL can hold
+credentials:
+
+```text
+cannot tell which GitHub repository --pr should use: this repository needs an `origin` remote that points at GitHub (run `git remote get-url origin` to check it)
+```
+
+`--dry-run` makes the same calls to read the PR, so it needs `origin` and `gh` too.
+
+With a number, branch-tally writes to that PR in the `origin` repository, whatever its head
+branch. Without a number, it lists the open PRs whose head is the branch and keeps only the
+same-repository ones: the head is in the `origin` repository itself. A PR whose head is in a fork
+is never picked, even when its branch has the same name. It is counted in the message instead. To
+update a fork's PR, name it: `--pr N`.
+
+`gh` is asked for at most 100 open PRs. If it returns 100 or more, counting fork PRs, the list may
+have been cut short, so branch-tally doesn't choose from it. Otherwise the outcome depends on how
+many same-repository PRs are left. On every exit 1 below, no PR is edited:
+
+| What `gh` lists for the branch | What happens |
+| ------------------------------ | ------------ |
+| 100 or more open PRs | Exit 1: `100 or more open PRs were listed for branch '…', so the list may be truncated and no PR was chosen. Pass --pr N to name the one to update.` |
+| exactly one same-repository PR | The table is written to it. |
+| no same-repository PR, no fork PR | Exit 1: `No open PR found for branch '…'. Open the PR first, then re-run with --pr.` |
+| no same-repository PR, some fork PRs | Exit 1: `No open PR found for branch '…' (<count> fork PR(s) ignored; pass --pr N for one). Open the PR first, then re-run with --pr.` `<count>` is how many fork PRs for the branch were skipped. |
+| more than one same-repository PR | Exit 1: `More than one open PR for branch '…': 3, 12. Pass --pr N to choose one.` The numbers are every match, in order. branch-tally never picks one. |
+
+#### What is written
+
+If the PR body holds a `<!-- token-report:start -->` line with a `<!-- token-report:end -->`
+line after it, everything from the first start line to the first end line after it is replaced,
+markers included. A marker counts only on a line of its own, as branch-tally writes it. A name in
+the previous report that happens to spell a marker sits inside a table row, so it can't cut the
+region short and leave old text behind. Prose elsewhere in the body that quotes a marker is left
+alone. Otherwise a `## Token usage` section holding the report is appended to the body.
 
 It tells you on stderr what happened: `Token usage table written to PR #N.`,
 `PR #N already up to date.`, or, with `--dry-run`, the new body on stdout followed by
-`--- dry run: PR #N not modified ---`. With no open PR for the branch it fails with
-`No open PR found for branch '…'. Open the PR first, then re-run with --pr.` (exit 1).
+`--- dry run: PR #N not modified ---`. A failed `gh` call stops the run (exit 1) with a message that
+names the `gh` command and repeats what `gh` printed.
 
 To keep a place for the report in your PR template, add the markers where you want it:
 
@@ -398,6 +440,10 @@ Redaction applies to the report only, and is off by default. The ledger has its 
 | `note: git worktree list was unavailable, so worktree recovery was skipped` | `git worktree list` failed, so subagent calls in worktrees could not be recovered. |
 | `note: using the repository price override (.tally/prices.toml); prices are not the bundled or cached table` | Costs come from the repository's own price table, not from branch-tally's. Printed in every output format; stdout is unchanged. See [Which price table is used](#which-price-table-is-used). |
 | `note: config format = "json" was overridden by --pr; the PR body is Markdown` | The config file sets `format = "json"` and `--pr` was given, so the Markdown table was written (or, with `--dry-run`, printed) instead of JSON. See [Updating a pull request](#updating-a-pull-request). |
+| `cannot tell which GitHub repository --pr should use: …` | Exit 1, `--pr` only. There is no `origin` remote, or it isn't a GitHub URL branch-tally can read. `gh` was not run. See [Which repository and which PR](#which-repository-and-which-pr). |
+| `No open PR found for branch '…'. …` | Exit 1, bare `--pr` only. The branch has no open same-repository PR. When fork PRs were skipped, the message counts them. Nothing was edited. |
+| `More than one open PR for branch '…': …. Pass --pr N to choose one.` | Exit 1, bare `--pr` only. Several same-repository PRs match, and branch-tally won't pick one. Nothing was edited. |
+| `100 or more open PRs were listed for branch '…', so the list may be truncated and no PR was chosen. Pass --pr N to name the one to update.` | Exit 1, bare `--pr` only. `gh` returned a full page of open PRs for the branch, so the right PR may be missing from it. Nothing was edited. |
 | The ledger notes | See [Report from the ledger](ledger.md#report-from-the-ledger). |
 
 Recorded text in these messages, such as a model id or a branch, has its control characters

@@ -227,7 +227,7 @@ pub(crate) fn run(args: &ReportArgs) -> Result<(), Failure> {
     let markdown = render::markdown(&report.summary, &report.costs, settings.cost.value);
     match &args.pr {
         None => stdout(&format!("{}\n", render::wrap(&markdown))),
-        Some(number) => update(&cwd, &report, &markdown, number, args.dry_run)?,
+        Some(number) => update(&cwd, &report, &markdown, *number, args.dry_run)?,
     }
     Ok(())
 }
@@ -550,24 +550,53 @@ fn update(
     cwd: &Path,
     report: &Report,
     markdown: &str,
-    number: &str,
+    number: Option<u64>,
     dry_run: bool,
 ) -> Result<(), String> {
     // gh runs in the main checkout, as the reference does after resolving it.
     let repo: PathBuf = SystemGit.main_checkout(cwd);
-    let number = (!number.is_empty()).then_some(number);
+    // `--repo` comes from `origin` and nothing else: no guessing. The error carries a fixed
+    // message because the remote URL may hold credentials.
+    let gh_repo = SystemGit.origin_repo(&repo).map_err(|_| {
+        "cannot tell which GitHub repository --pr should use: this repository needs an `origin` \
+         remote that points at GitHub (run `git remote get-url origin` to check it)"
+            .to_owned()
+    })?;
     let outcome = update_pr(
         &SystemGh::new(repo),
         &report.branch,
         markdown,
+        &gh_repo,
         number,
         dry_run,
     )
     .map_err(|e| match e {
-        PrError::NoOpenPr { branch } => format!(
-            "No open PR found for branch {}. Open the PR first, then re-run with --pr.",
+        PrError::NoOpenPr { branch, ignored } => {
+            let note = if ignored == 0 {
+                String::new()
+            } else {
+                format!(" ({ignored} fork PR(s) ignored; pass --pr N for one)")
+            };
+            format!(
+                "No open PR found for branch {}{note}. Open the PR first, then re-run with --pr.",
+                repr(&branch)
+            )
+        }
+        PrError::TooManyPrs { branch, limit } => format!(
+            "{limit} or more open PRs were listed for branch {}, so the list may be truncated and \
+             no PR was chosen. Pass --pr N to name the one to update.",
             repr(&branch)
         ),
+        PrError::AmbiguousPr { branch, numbers } => format!(
+            "More than one open PR for branch {}: {}. Pass --pr N to choose one.",
+            repr(&branch),
+            numbers
+                .iter()
+                .map(u64::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        e @ PrError::InvalidRepo { .. } => e.to_string(),
         PrError::Gh(e) => e.to_string(),
     })?;
     match outcome {

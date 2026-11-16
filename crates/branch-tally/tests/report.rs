@@ -1,7 +1,8 @@
 //! End-to-end tests: the built binary against the shared fixtures, in a real git repository.
 //!
-//! `--pr` talks to `gh`, which is not faked here (a portable fake executable needs a manifest
-//! target); its splice logic is tested against the fake `Gh` in core (`tests/pr.rs`).
+//! `--pr` talks to `gh`, which is mostly not faked here; its splice logic is tested against the
+//! fake `Gh` in core (`tests/pr.rs`), and the selector and `--repo` wiring against a shell-script
+//! `gh` in `tests/pr_selector.rs`.
 
 #![expect(
     clippy::unwrap_used,
@@ -412,16 +413,40 @@ fn dry_run_without_pr_is_a_usage_error() {
     assert_usage_error(&["report", "--dry-run"]);
 }
 
+/// Gives the world's repository an `origin` remote. `--pr` resolves `--repo` from it.
+#[cfg(unix)]
+fn add_origin(world: &World, url: &str) {
+    let status = std::process::Command::new("git")
+        .args(["remote", "add", "origin", url])
+        .current_dir(&world.repo)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .status()
+        .unwrap();
+    assert!(status.success());
+}
+
+#[cfg(unix)]
 const OVERRIDE_NOTE: &str = "note: config format = \"json\" was overridden by --pr";
 
+#[cfg(unix)]
 #[test]
 fn config_json_yields_to_pr_with_a_stderr_note() {
     let world = World::scenario("subagent");
     world.write_default_config("format = \"json\"\n");
-    // No gh on PATH: the run fails at gh, but only after the note, and nothing JSON is printed.
-    let empty = tempfile::tempdir().expect("tempdir");
+    add_origin(&world, "https://github.com/acme/widget.git");
+    // git but no gh on PATH: origin resolves, the run fails at gh, but only after the note, and
+    // nothing JSON is printed. (Without git, origin resolution would fail first.)
+    let only_git = tempfile::tempdir().expect("tempdir");
+    let git = std::env::var("PATH")
+        .unwrap_or_default()
+        .split(':')
+        .map(|d| std::path::Path::new(d).join("git"))
+        .find(|p| p.is_file())
+        .expect("git on PATH");
+    std::os::unix::fs::symlink(git, only_git.path().join("git")).expect("symlink git");
     let mut cmd = world.command(&world.repo, &["report", "feat/x", "--pr", "5", "--dry-run"]);
-    cmd.env("PATH", empty.path());
+    cmd.env("PATH", only_git.path());
     let out = cmd.output().expect("run");
     let err = stderr(&out);
     assert!(err.contains(OVERRIDE_NOTE), "{err}");
@@ -438,6 +463,7 @@ fn config_json_with_pr_dry_run_prints_the_markdown_body() {
     use std::os::unix::fs::PermissionsExt;
     let world = World::scenario("subagent");
     world.write_default_config("format = \"json\"\n");
+    add_origin(&world, "https://github.com/acme/widget.git");
     let bin = tempfile::tempdir().expect("tempdir");
     let gh = bin.path().join("gh");
     fs::write(&gh, "#!/bin/sh\necho '{\"body\":\"\"}'\n").expect("write gh");

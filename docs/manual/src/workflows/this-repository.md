@@ -264,10 +264,11 @@ git push                               # one push: the round's work and its ledg
 just token-report --pr --from-ledger   # optional: refresh the table in the PR body
 ```
 
-`report --pr --from-ledger` finds the branch's open pull request and replaces what sits between
-the markers. That edits the body, not the branch, and an edit doesn't cancel the checks a push
-started: only the PR-title check runs on an edited pull request, in its own workflow. The last
-round's own usage is still missing from the table, so the floor line stays.
+`report --pr --from-ledger` finds the branch's one open pull request in the `origin` repository
+and replaces what sits between the markers. That edits the body, not the branch, and an edit
+doesn't cancel the checks a push started: only the PR-title check runs on an edited pull request,
+in its own workflow. The last round's own usage is still missing from the table, so the floor line
+stays.
 
 ```mermaid
 sequenceDiagram
