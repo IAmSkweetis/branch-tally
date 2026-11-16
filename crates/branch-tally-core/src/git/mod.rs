@@ -113,6 +113,21 @@ pub trait Git {
     /// ([`GitError::UnexpectedOutput`]).
     fn default_branch(&self, repo: &Path) -> Result<String, GitError>;
 
+    /// The GitHub repository `origin` points at, as gh's `--repo` argument, always
+    /// `HOST/OWNER/REPO` (e.g. `github.com/acme/widget`), github.com included, so the host
+    /// never comes from gh's `GH_HOST` environment variable. Read from `git remote get-url origin`. Userinfo (credentials) in the URL
+    /// is dropped and the raw URL never appears in the value or in an error.
+    ///
+    /// There is deliberately no guess: no `origin` remote, or a URL that is not unambiguously
+    /// `host/owner/repo` (extra path segments, a local path, a query), is an `Err`.
+    ///
+    /// # Errors
+    ///
+    /// [`GitError::Failed`] when there is no `origin` or `repo` is not a repository,
+    /// [`GitError::UnexpectedOutput`] when the URL cannot be parsed, [`GitError::Spawn`] when
+    /// git cannot run.
+    fn origin_repo(&self, repo: &Path) -> Result<String, GitError>;
+
     /// The configured `init.defaultBranch` (`git config --get init.defaultBranch`), the fallback
     /// when [`Git::default_branch`] cannot resolve `origin/HEAD`. It is a setting, not a fact
     /// about the repository, so a report that uses it must say so.
@@ -149,6 +164,61 @@ pub fn parse_origin_head(output: &str) -> Option<String> {
     } else {
         Some(name.to_owned())
     }
+}
+
+/// Parse a remote URL into gh's `--repo` form, always `HOST/OWNER/REPO` with the host
+/// lowercased (github.com included). Pure. See [`Git::origin_repo`].
+///
+/// Accepts `https://`, `http://`, `ssh://` and `git://` URLs and scp-style `[user@]host:owner/repo`.
+/// Userinfo is dropped; an ssh port is dropped; an http(s)/git port is refused. A trailing `.git`
+/// and `/` are removed. `None` for anything else.
+#[must_use]
+pub fn parse_origin_url(url: &str) -> Option<String> {
+    let url = url.trim();
+    let (host, path) = if let Some((scheme, rest)) = url.split_once("://") {
+        let (authority, path) = rest.split_once('/')?;
+        let host_port = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+        let (host, port) = match host_port.split_once(':') {
+            Some((h, p)) => (h, Some(p)),
+            None => (host_port, None),
+        };
+        match (scheme, port) {
+            ("https" | "http" | "git" | "ssh", None) => {}
+            ("ssh", Some(p)) if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => {}
+            _ => return None,
+        }
+        (host, path)
+    } else {
+        // scp-style `[user@]host:owner/repo`. A one-letter "host" is a Windows drive.
+        let (left, path) = url.split_once(':')?;
+        let host = left.rsplit_once('@').map_or(left, |(_, h)| h);
+        if host.len() < 2 {
+            return None;
+        }
+        (host, path)
+    };
+    if host.is_empty()
+        || !host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+    {
+        return None;
+    }
+    let path = path.strip_suffix('/').unwrap_or(path);
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let (owner, repo) = path.split_once('/')?;
+    let name_ok = |n: &str| {
+        !n.is_empty()
+            && n != "."
+            && n != ".."
+            && n.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+    };
+    if !name_ok(owner) || !name_ok(repo) {
+        return None;
+    }
+    let host = host.to_ascii_lowercase();
+    Some(format!("{host}/{owner}/{repo}"))
 }
 
 /// Parse `git worktree list --porcelain` output. Pure.
@@ -277,6 +347,14 @@ impl Git for SystemGit {
         })
     }
 
+    fn origin_repo(&self, repo: &Path) -> Result<String, GitError> {
+        const SUBCOMMAND: &str = "remote get-url origin";
+        let out = Self::run(repo, SUBCOMMAND, &["remote", "get-url", "origin"])?;
+        parse_origin_url(&out).ok_or(GitError::UnexpectedOutput {
+            subcommand: SUBCOMMAND,
+        })
+    }
+
     fn init_default_branch(&self, repo: &Path) -> Result<String, GitError> {
         const SUBCOMMAND: &str = "config --get init.defaultBranch";
         let out = Self::run(repo, SUBCOMMAND, &["config", "--get", "init.defaultBranch"])?;
@@ -390,6 +468,7 @@ pub struct FakeGit {
     worktrees: BTreeMap<PathBuf, Vec<Worktree>>,
     default_branches: BTreeMap<PathBuf, String>,
     init_default_branches: BTreeMap<PathBuf, String>,
+    origin_repos: BTreeMap<PathBuf, String>,
     /// Known revs per repo; the value maps repo-relative path (forward slashes) to bytes.
     revs: BTreeMap<(PathBuf, String), BTreeMap<String, Vec<u8>>>,
 }
@@ -437,6 +516,13 @@ impl FakeGit {
         branch: impl Into<String>,
     ) -> Self {
         self.default_branches.insert(repo.into(), branch.into());
+        self
+    }
+
+    /// Script `origin_repo(repo)`.
+    #[must_use]
+    pub fn with_origin_repo(mut self, repo: impl Into<PathBuf>, slug: impl Into<String>) -> Self {
+        self.origin_repos.insert(repo.into(), slug.into());
         self
     }
 
@@ -516,6 +602,16 @@ impl Git for FakeGit {
             })
     }
 
+    fn origin_repo(&self, repo: &Path) -> Result<String, GitError> {
+        self.origin_repos
+            .get(repo)
+            .cloned()
+            .ok_or(GitError::Failed {
+                subcommand: "remote get-url origin",
+                code: Some(2),
+            })
+    }
+
     fn init_default_branch(&self, repo: &Path) -> Result<String, GitError> {
         self.init_default_branches
             .get(repo)
@@ -536,6 +632,102 @@ impl Git for FakeGit {
                 subcommand: "rev-parse --verify <rev>",
                 code: Some(1),
             })
+    }
+}
+
+#[cfg(test)]
+mod origin_url_tests {
+    use super::*;
+
+    #[test]
+    fn github_forms_become_owner_repo() {
+        for url in [
+            "https://github.com/acme/widget",
+            "https://github.com/acme/widget.git",
+            "https://github.com/acme/widget/",
+            "https://github.com/acme/widget.git\n",
+            "https://user:tok3n@github.com/acme/widget.git",
+            "http://github.com/acme/widget",
+            "git@github.com:acme/widget.git",
+            "git@github.com:acme/widget",
+            "github.com:acme/widget.git",
+            "ssh://git@github.com/acme/widget.git",
+            "ssh://git@github.com:22/acme/widget.git",
+            "git://github.com/acme/widget.git",
+            "https://GitHub.com/acme/widget",
+        ] {
+            assert_eq!(
+                parse_origin_url(url).as_deref(),
+                Some("github.com/acme/widget"),
+                "{url}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_host_is_named_never_left_to_the_environment() {
+        assert_eq!(
+            parse_origin_url("git@ghe.example.com:acme/widget.git").as_deref(),
+            Some("ghe.example.com/acme/widget")
+        );
+        assert_eq!(
+            parse_origin_url("https://u:p@ghe.example.com/acme/widget").as_deref(),
+            Some("ghe.example.com/acme/widget")
+        );
+    }
+
+    #[test]
+    fn names_keep_dots_and_dashes() {
+        assert_eq!(
+            parse_origin_url("https://github.com/my-org/a.b-c.git").as_deref(),
+            Some("github.com/my-org/a.b-c")
+        );
+    }
+
+    #[test]
+    fn garbage_is_rejected_not_guessed() {
+        for url in [
+            "",
+            "\n",
+            "origin",
+            "/srv/git/widget.git",
+            "C:/work/widget",
+            "C:\\work\\widget",
+            "file:///srv/widget.git",
+            "https://github.com/",
+            "https://github.com/acme",
+            "https://github.com/acme/",
+            "https://github.com/acme/widget/extra",
+            "https://github.com/acme/widget?x=1",
+            "https://github.com/acme/widget#frag",
+            "https://github.com:8443/acme/widget",
+            "git@github.com:widget.git",
+            "git@github.com:acme/widget/extra.git",
+            "git@github.com:/acme/widget.git",
+            "https://github.com/acme/.git",
+            "https://github.com/ac me/widget",
+            "https:///acme/widget",
+        ] {
+            assert_eq!(parse_origin_url(url), None, "{url:?}");
+        }
+    }
+
+    #[test]
+    fn credentials_never_reach_the_value() {
+        let got =
+            parse_origin_url("https://user:s3cret@github.com/acme/widget").unwrap_or_default();
+        assert!(!got.contains("s3cret") && !got.contains("user"));
+        assert_eq!(got, "github.com/acme/widget");
+    }
+
+    #[test]
+    fn fake_origin_repo_scripted_and_unscripted() {
+        let f = FakeGit::new().with_origin_repo("/r", "github.com/acme/widget");
+        assert_eq!(
+            f.origin_repo(Path::new("/r")).unwrap(),
+            "github.com/acme/widget"
+        );
+        assert!(f.origin_repo(Path::new("/other")).is_err());
     }
 }
 
