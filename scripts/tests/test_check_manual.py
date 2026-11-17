@@ -50,6 +50,31 @@ class CheckManual(unittest.TestCase):
         ok = GOOD.replace("<p>x</p>", "<script type=\"application/json\">{}</script>")
         self.assertEqual(self.check({"index.html": ok}), [])
 
+    def test_import_map_is_an_inline_script(self):
+        # CSP applies its inline-script check to import maps: they are not inert data blocks.
+        bad = GOOD.replace("<p>x</p>", "<script type=\"importmap\">{\"imports\": {}}</script>")
+        self.assertTrue(any("inline" in p for p in self.check({"i.html": bad})))
+
+    def test_speculation_rules_are_an_inline_script(self):
+        bad = GOOD.replace("<p>x</p>", "<script type=\"speculationrules\">{}</script>")
+        self.assertTrue(any("inline" in p for p in self.check({"i.html": bad})))
+
+    def test_csp_meta_in_body_is_rejected(self):
+        # Browsers ignore a CSP <meta> outside <head>, so the page has no effective policy.
+        bad = GOOD.replace(CSP, "").replace("<p>x</p>", f"{CSP}<p>x</p>")
+        problems = self.check({"i.html": bad})
+        self.assertTrue(any("outside <head>" in p for p in problems))
+        self.assertTrue(any("no Content-Security-Policy" in p for p in problems))
+
+    def test_script_src_elem_override_rejected(self):
+        bad = GOOD.replace("script-src 'self'",
+                           "script-src 'self'; script-src-elem https://example.invalid")
+        self.assertTrue(any("script-src-elem" in p for p in self.check({"i.html": bad})))
+
+    def test_script_src_attr_override_rejected(self):
+        bad = GOOD.replace("script-src 'self'", "script-src 'self'; script-src-attr 'unsafe-inline'")
+        self.assertTrue(any("script-src-attr" in p for p in self.check({"i.html": bad})))
+
     def test_missing_csp_rejected(self):
         bad = GOOD.replace(CSP, "")
         self.assertTrue(any("Content-Security-Policy" in p for p in self.check({"i.html": bad})))

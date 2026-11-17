@@ -13,14 +13,19 @@ import sys
 from html.parser import HTMLParser
 from pathlib import Path
 
-# <script type=...> values that are data blocks, never executed, so CSP does not apply.
-DATA_TYPES = {"application/json", "application/ld+json", "importmap", "speculationrules"}
+# <script type=...> values that are data blocks, never executed, so CSP does not apply. Import maps
+# and speculation rules are not among them: CSP checks them like inline scripts.
+DATA_TYPES = {"application/json", "application/ld+json"}
+# Directives that take precedence over script-src for script elements or event-handler attributes.
+SCRIPT_OVERRIDES = ("script-src-elem", "script-src-attr")
 
 
 class _Page(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self.policies: list[str] = []
+        self.misplaced_policies = 0
+        self._in_head = False
         self.inline_scripts = 0
         self.scripts = 0
         self.handlers: set[str] = set()
@@ -33,8 +38,16 @@ class _Page(HTMLParser):
         for k in names:
             if k.startswith("on"):
                 self.handlers.add(k)
+        if tag == "head":
+            self._in_head = True
+        elif tag == "body":
+            self._in_head = False
         if tag == "meta" and names.get("http-equiv", "").lower() == "content-security-policy":
-            self.policies.append(names.get("content", ""))
+            # Browsers apply a CSP <meta> only inside <head>; one anywhere else is ignored.
+            if self._in_head:
+                self.policies.append(names.get("content", ""))
+            else:
+                self.misplaced_policies += 1
         if tag == "script":
             self.scripts += 1
             self._in_script = True
@@ -49,14 +62,22 @@ class _Page(HTMLParser):
     def handle_endtag(self, tag: str) -> None:
         if tag == "script":
             self._in_script = False
+        elif tag == "head":
+            self._in_head = False
+
+
+def _directives(policy: str) -> dict[str, list[str]]:
+    """Directive name -> its sources. Browsers use the first occurrence of a repeated name."""
+    found: dict[str, list[str]] = {}
+    for directive in policy.split(";"):
+        parts = directive.split()
+        if parts:
+            found.setdefault(parts[0].lower(), parts[1:])
+    return found
 
 
 def _script_src(policy: str) -> list[str] | None:
-    for directive in policy.split(";"):
-        parts = directive.split()
-        if parts and parts[0].lower() == "script-src":
-            return parts[1:]
-    return None
+    return _directives(policy).get("script-src")
 
 
 def check_page(html: str, is_frame: bool = False) -> list[str]:
@@ -67,9 +88,14 @@ def check_page(html: str, is_frame: bool = False) -> list[str]:
     problems = []
     if not page.policies and (page.scripts or not is_frame):
         problems.append("no Content-Security-Policy <meta>")
+    if page.misplaced_policies:
+        problems.append(f"{page.misplaced_policies} CSP <meta> outside <head>, ignored by browsers")
     for policy in page.policies:
         if _script_src(policy) != ["'self'"]:
             problems.append(f"script-src must be exactly 'self', the policy says: {policy!r}")
+        for name in SCRIPT_OVERRIDES:
+            if name in _directives(policy):
+                problems.append(f"{name} overrides script-src; remove it: {policy!r}")
     if page.inline_scripts:
         problems.append(f"{page.inline_scripts} inline <script> block(s); move them to a file")
     for handler in sorted(page.handlers):
