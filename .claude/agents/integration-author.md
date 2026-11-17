@@ -29,8 +29,8 @@ recipes or roster. It runs in someone else's project.
 
 ## Scope
 
-**Write**: `action.yml`, `action/**`, `examples/**`, and the reference page for what
-you changed.
+**Write**: `action.yml`, `action/**`, `examples/**`, `install.sh`, `install.ps1`,
+`tests/install/**`, and the reference page for what you changed.
 
 **Never write**: `crates/**` (raise `needs_core_api`), any `Cargo.toml`, `.claude/**`, `.github/**`
 (this repository's CI), `justfile`, `tests/fixtures/**`, `reference/**`.

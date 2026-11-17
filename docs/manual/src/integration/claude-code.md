@@ -150,7 +150,21 @@ can take longer than 1.5 seconds. To give it more time, do one of these:
   Claude Code v2.1.268 or later. Before that, the variable raised only the overall budget, and a
   hook with no `timeout` of its own was still stopped after 1.5 seconds.
 - Add your own `SessionEnd` hook that runs `branch-tally record; exit 0` with a `timeout` (up to 60
-  seconds) in your settings file.
+  seconds) in your settings file:
+
+  ```json
+  {
+    "hooks": {
+      "SessionEnd": [
+        {
+          "hooks": [
+            { "type": "command", "command": "branch-tally record; exit 0", "timeout": 60 }
+          ]
+        }
+      ]
+    }
+  }
+  ```
 
 These rules belong to Claude Code, not branch-tally. Check the `SessionEnd` section of the
 [Claude Code hooks reference](https://code.claude.com/docs/en/hooks) for the current behaviour.

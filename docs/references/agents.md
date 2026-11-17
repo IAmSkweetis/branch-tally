@@ -22,7 +22,7 @@ implementing agent owns both halves.
 | **Core Implementer** | one named module of `crates/branch-tally-core/src/` (not `sources/`), its unit tests, and `crates/branch-tally-core/tests/<module>.rs`. The `pricing` slice also owns `data/**`. | red + green `cargo_test` |
 | **Harness Source Author** | one harness: `crates/branch-tally-core/src/sources/<harness>/`, `crates/branch-tally-core/tests/sources_<harness>.rs`, `tests/fixtures/<harness>/**` | red + green `cargo_test`, plus a scrub check on every fixture |
 | **CLI Builder** | `crates/branch-tally/src/**`, `crates/branch-tally/tests/**` | red + green `cargo_test`, plus `dogfood` evidence |
-| **Integration Author** | `action.yml`, `action/**`, `examples/**`: the surfaces users install into their harness or CI | red + green test where one is possible, plus `dogfood` evidence |
+| **Integration Author** | `action.yml`, `action/**`, `examples/**`, `install.sh`, `install.ps1`, `tests/install/**`: the surfaces users install into their harness or CI | red + green test where one is possible, plus `dogfood` evidence |
 | **Docs Author** | `docs/manual/src/**` and `README.md`: the user manual and the README that links to it. Runs on Opus. Dispatched in the **last** wave of any feature that changes a flag, a config key or an install method, after the behaviour has merged | `dogfood` evidence listing every command that verified a documented fact, plus the book build and rumdl |
 
 ### The `model` slice is special

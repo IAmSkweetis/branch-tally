@@ -174,6 +174,23 @@ class CheckPins(unittest.TestCase):
         problems = self.check(ci=ci)
         self.assertTrue(any("setup-uv" in p and "version" in p for p in problems))
 
+    def test_named_setup_uv_step_is_read(self):
+        named = SETUP_UV.replace("      - uses: astral-sh/setup-uv",
+                                 "      - name: Install uv\n        uses: astral-sh/setup-uv")
+        self.assertEqual(self.check(ci=CI + named), [])
+
+    def test_named_setup_uv_step_without_version_rejected(self):
+        named = SETUP_UV.replace("      - uses: astral-sh/setup-uv",
+                                 "      - name: Install uv\n        uses: astral-sh/setup-uv")
+        named = named.replace('          version: "0.13.8"\n', "")
+        problems = self.check(ci=CI + named + "      - run: echo next\n")
+        self.assertTrue(any("setup-uv" in p and "version" in p for p in problems))
+
+    def test_settings_floating_uvx_version_rejected(self):
+        bad = SETTINGS.replace("Bash(just ci)", "Bash(uvx ruff@latest check *)")
+        problems = self.check(settings=bad)
+        self.assertTrue(any("ruff" in p and "latest" in p for p in problems))
+
     def test_setup_uv_steps_disagreeing_rejected(self):
         ci = CI + SETUP_UV.replace("0.13.8", "0.13.7")
         problems = self.check(ci=ci)

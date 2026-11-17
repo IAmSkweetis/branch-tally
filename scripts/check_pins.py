@@ -74,7 +74,15 @@ def setup_uv_pins(root: Path) -> tuple[str | None, list[str]]:
         for i, line in enumerate(lines):
             if "astral-sh/setup-uv@" not in line:
                 continue
+            # The step's boundary is its `- ` item marker, which may sit on an earlier line
+            # (`- name: …` then `uses: …`), so keys like `with:` can share `uses:`'s indent.
             indent = len(line) - len(line.lstrip())
+            if not line.lstrip().startswith("- "):
+                for prev in reversed(lines[:i]):
+                    p_indent = len(prev) - len(prev.lstrip())
+                    if prev.lstrip().startswith("- ") and p_indent < indent:
+                        indent = p_indent
+                        break
             found = None
             for nxt in lines[i + 1:]:
                 stripped = nxt.strip()
@@ -108,6 +116,9 @@ def settings_uvx(root: Path, rumdl: str | None) -> list[str]:
         tool, version = m.group(1), m.group(2)
         if not version:
             problems.append(f"{tool}: unpinned `uvx {tool}` in .claude/settings.json")
+        elif not re.fullmatch(r"\d+\.\d+\.\d+", version):
+            problems.append(f"{tool}: `uvx {tool}@{version}` in .claude/settings.json is not an "
+                            "exact X.Y.Z version")
         elif tool == "rumdl" and rumdl and version != rumdl:
             problems.append(f"rumdl: .claude/settings.json uses {version} but the justfile "
                             f"pins {rumdl}")
