@@ -2,7 +2,7 @@
 no longer matches its recorded checksum.
 
 mise.toml is a local convenience. The authorities are the justfile (`<tool>_version`), the CI
-workflows (`tool: name@version` for taiki-e/install-action), the `scripts/ci-install-*.sh` scripts
+workflows (`tool: name@version` for taiki-e/install-action, `version:` on astral-sh/setup-uv), the `scripts/ci-install-*.sh` scripts
 and rust-toolchain.toml. This script reads those as text and compares, so it needs neither mise nor
 just. Usage: check_pins.py [root].
 """
@@ -62,6 +62,52 @@ def workflow_pins(root: Path) -> tuple[dict[str, str], list[str]]:
     return pins, problems
 
 
+def setup_uv_pins(root: Path) -> tuple[str | None, list[str]]:
+    """The uv version every `astral-sh/setup-uv` step pins with `version:`, and any problems."""
+    versions: dict[str, str] = {}
+    problems: list[str] = []
+    for wf in sorted((root / ".github" / "workflows").glob("*.yml")):
+        lines = _read(wf).splitlines()
+        for i, line in enumerate(lines):
+            if "astral-sh/setup-uv@" not in line:
+                continue
+            indent = len(line) - len(line.lstrip())
+            found = None
+            for nxt in lines[i + 1:]:
+                stripped = nxt.strip()
+                if stripped and len(nxt) - len(nxt.lstrip()) <= indent:
+                    break  # the next step
+                m = re.match(r"version:\s*[\"']?([^\"'\s#]+)", stripped)
+                if m:
+                    found = m.group(1)
+            if found is None or not re.fullmatch(r"\d+\.\d+\.\d+", found):
+                problems.append(f"uv: a setup-uv step in {wf.name} has no exact `version:` pin")
+            else:
+                versions.setdefault(found, wf.name)
+    if len(versions) > 1:
+        problems.append("uv: setup-uv steps disagree (" + ", ".join(
+            f"{v} in {n}" for v, n in sorted(versions.items())) + ")")
+        return None, problems
+    return (next(iter(versions)) if versions else None), problems
+
+
+def settings_uvx(root: Path, rumdl: str | None) -> list[str]:
+    """Every `uvx <tool>` in .claude/settings.json (hooks and permissions) must be pinned, and
+    rumdl must be the justfile's version."""
+    path = root / ".claude" / "settings.json"
+    if not path.is_file():
+        return [".claude/settings.json is missing"]
+    problems = []
+    for m in re.finditer(r"\buvx\s+([A-Za-z0-9_.-]+)(?:@([^\s\"']+))?", _read(path)):
+        tool, version = m.group(1), m.group(2)
+        if not version:
+            problems.append(f"{tool}: unpinned `uvx {tool}` in .claude/settings.json")
+        elif tool == "rumdl" and rumdl and version != rumdl:
+            problems.append(f"rumdl: .claude/settings.json uses {version} but the justfile "
+                            f"pins {rumdl}")
+    return problems
+
+
 def script_pin(root: Path, tool: str, script: Path) -> tuple[str | None, list[str]]:
     """The version a CI install script pins, and any problems with the pin.
 
@@ -110,6 +156,13 @@ def check(root: Path) -> list[str]:
     problems += wf_problems
     for tool, version in wf.items():
         expected[tool] = (version, ".github/workflows")
+    uv_version, uv_problems = setup_uv_pins(root)
+    problems += uv_problems
+    if uv_version:
+        expected["uv"] = (uv_version, "the setup-uv steps in .github/workflows")
+    elif not uv_problems:
+        problems.append("uv: no astral-sh/setup-uv step pins a version")
+    problems += settings_uvx(root, justfile_pins(root).get("rumdl"))
     for tool, script in INSTALL_SCRIPTS.items():
         version, script_problems = script_pin(root, tool, script)
         problems += script_problems
@@ -151,7 +204,7 @@ def main() -> int:
         print(f"error: {p}", file=sys.stderr)
     if not problems:
         print("pins agree: mise.toml matches the justfile, workflows, CI install scripts and "
-              "rust-toolchain.toml; vendored assets match their checksums")
+              "rust-toolchain.toml; .claude/settings.json uvx pins match the justfile; vendored assets match their checksums")
     return 1 if problems else 0
 
 
