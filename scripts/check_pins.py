@@ -112,7 +112,9 @@ def settings_uvx(root: Path, rumdl: str | None) -> list[str]:
     text = _read(path)
     if not re.search(r"\buvx\s+rumdl@", text):
         problems.append("rumdl: .claude/settings.json has no `uvx rumdl@` pin to check")
-    for m in re.finditer(r"\buvx\s+([A-Za-z0-9_.-]+)(?:@([^\s\"']+))?", text):
+    # `)` closes an exact-command permission (`Bash(uvx ruff@0.11.0)`) and `;` ends a hook
+    # command, so neither is part of the version.
+    for m in re.finditer(r"\buvx\s+([A-Za-z0-9_.-]+)(?:@([^\s\"');]+))?", text):
         tool, version = m.group(1), m.group(2)
         if not version:
             problems.append(f"{tool}: unpinned `uvx {tool}` in .claude/settings.json")

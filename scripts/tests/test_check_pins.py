@@ -191,6 +191,11 @@ class CheckPins(unittest.TestCase):
         problems = self.check(settings=bad)
         self.assertTrue(any("ruff" in p and "latest" in p for p in problems))
 
+    def test_settings_exact_command_permission_is_accepted(self):
+        good = SETTINGS.replace('"Bash(just ci)"', '"Bash(just ci)",\n      "Bash(uvx ruff@0.11.0)"')
+        self.assertIn("Bash(uvx ruff@0.11.0)", good)
+        self.assertEqual(self.check(settings=good), [])
+
     def test_setup_uv_steps_disagreeing_rejected(self):
         ci = CI + SETUP_UV.replace("0.13.8", "0.13.7")
         problems = self.check(ci=ci)
