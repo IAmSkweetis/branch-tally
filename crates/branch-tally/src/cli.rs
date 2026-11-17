@@ -43,7 +43,7 @@ pub(crate) enum Command {
 
     /// Record this session's branch from a Claude Code hook payload on stdin.
     ///
-    /// Meant to be run by the capture plugin's hooks (`SessionStart`, `SubagentStop`, `Stop`), not by
+    /// Meant to be run from Claude Code hooks (`SessionStart`, `SubagentStop`, `Stop`), not by
     /// hand. Appends an id-only event (session, agent, branch, kind, time) to the main checkout's
     /// .tally/captures.jsonl. No paths or message content are stored. Silent on success; on
     /// failure it prints a short fixed message and exits 1, and the hook command's `; exit 0`
