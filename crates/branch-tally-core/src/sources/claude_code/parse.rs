@@ -6,7 +6,7 @@
 
 use std::collections::HashSet;
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{self, BufRead, BufReader, Read};
 use std::path::Path;
 
 use serde::Deserialize;
@@ -98,6 +98,41 @@ fn non_empty(value: Option<String>) -> Option<String> {
     value.filter(|v| !v.is_empty())
 }
 
+/// The longest transcript line, in bytes excluding the newline, that is parsed (16 MiB). A longer
+/// line is counted as malformed and skipped without being held in memory. The longest real line
+/// measured was ~132 KiB; lines embedding base64 images can reach several MiB.
+pub(super) const MAX_LINE_BYTES: usize = 16 * 1024 * 1024;
+
+/// What `read_bounded_line` found.
+enum Bounded {
+    Eof,
+    Line,
+    TooLong,
+}
+
+/// Reads one line into `buf` holding at most `max + 1` bytes. A longer line is discarded up to
+/// its newline without being buffered and reported as `TooLong`.
+fn read_bounded_line<R: BufRead>(
+    reader: &mut R,
+    buf: &mut Vec<u8>,
+    max: usize,
+) -> io::Result<Bounded> {
+    buf.clear();
+    // `max` content bytes plus the newline; the extra byte detects an over-long line.
+    let limit = (max as u64).saturating_add(1);
+    let read = reader.by_ref().take(limit).read_until(b'\n', buf)?;
+    if read == 0 {
+        return Ok(Bounded::Eof);
+    }
+    if buf.len() as u64 == limit && buf.last() != Some(&b'\n') {
+        buf.clear();
+        buf.shrink_to(0);
+        reader.skip_until(b'\n')?;
+        return Ok(Bounded::TooLong);
+    }
+    Ok(Bounded::Line)
+}
+
 /// Reads one JSONL file, updating `stats` and `seen` and passing kept records to `sink`.
 pub(super) fn read_file(
     path: &Path,
@@ -105,6 +140,7 @@ pub(super) fn read_file(
     seen: &mut HashSet<String>,
     stats: &mut ReadStats,
     sink: &mut dyn FnMut(Record),
+    max_line: usize,
 ) -> Result<(), SourceError> {
     let io = |source| SourceError::Io {
         path: path.to_path_buf(),
@@ -115,9 +151,13 @@ pub(super) fn read_file(
 
     let mut buf = Vec::new();
     loop {
-        buf.clear();
-        if reader.read_until(b'\n', &mut buf).map_err(io)? == 0 {
-            break;
+        match read_bounded_line(&mut reader, &mut buf, max_line).map_err(io)? {
+            Bounded::Eof => break,
+            Bounded::TooLong => {
+                stats.malformed_lines += 1;
+                continue;
+            }
+            Bounded::Line => {}
         }
         let bytes = buf.trim_ascii();
         if bytes.is_empty() {
@@ -336,6 +376,7 @@ pub(super) fn read_dispatches(
     ctx: &FileContext<'_>,
     seen: &mut HashSet<(String, String)>,
     out: &mut Vec<Dispatch>,
+    max_line: usize,
 ) -> Result<(), SourceError> {
     let io = |source| SourceError::Io {
         path: path.to_path_buf(),
@@ -344,9 +385,11 @@ pub(super) fn read_dispatches(
     let mut reader = BufReader::new(File::open(path).map_err(io)?);
     let mut buf = Vec::new();
     loop {
-        buf.clear();
-        if reader.read_until(b'\n', &mut buf).map_err(io)? == 0 {
-            break;
+        // An over-long line is skipped here; the record pass has already counted it as malformed.
+        match read_bounded_line(&mut reader, &mut buf, max_line).map_err(io)? {
+            Bounded::Eof => break,
+            Bounded::TooLong => continue,
+            Bounded::Line => {}
         }
         let bytes = buf.trim_ascii();
         // Most lines are not dispatches; skip parsing them again.
@@ -375,4 +418,58 @@ pub(super) fn read_dispatches(
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rec(id: &str) -> String {
+        format!(
+            r#"{{"type":"assistant","requestId":"{id}","uuid":"u-{id}","sessionId":"s1","timestamp":"2026-01-01T00:00:00.000Z","message":{{"model":"m","usage":{{"input_tokens":1,"output_tokens":2}}}}}}"#
+        )
+    }
+
+    fn run(body: &str, cap: usize) -> (Vec<Record>, ReadStats) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s1.jsonl");
+        std::fs::write(&path, body).unwrap();
+        let ctx = FileContext {
+            parent_session: None,
+            fallback_session: "s1",
+            origin: &Origin::Main,
+        };
+        let (mut records, mut stats, mut seen) = (Vec::new(), ReadStats::default(), HashSet::new());
+        read_file(
+            &path,
+            &ctx,
+            &mut seen,
+            &mut stats,
+            &mut |r| records.push(r),
+            cap,
+        )
+        .unwrap();
+        (records, stats)
+    }
+
+    #[test]
+    fn an_over_long_line_is_counted_malformed_and_the_next_line_is_read() {
+        let long = format!(r#"{{"pad":"{}"}}"#, "x".repeat(500));
+        let body = format!("{}\n{long}\n{}\n", rec("a"), rec("b"));
+        let (records, stats) = run(&body, 400);
+        assert_eq!(records.len(), 2);
+        assert_eq!(stats.malformed_lines, 1);
+    }
+
+    #[test]
+    fn a_line_exactly_at_the_cap_is_parsed_and_one_over_is_not() {
+        let line = rec("a");
+        let (records, stats) = run(&format!("{line}\n"), line.len());
+        assert_eq!((records.len(), stats.malformed_lines), (1, 0));
+        let (records, stats) = run(&format!("{line}\n"), line.len() - 1);
+        assert_eq!((records.len(), stats.malformed_lines), (0, 1));
+        // Unterminated final line, one over the cap.
+        let (records, stats) = run(&line, line.len() - 1);
+        assert_eq!((records.len(), stats.malformed_lines), (0, 1));
+    }
 }
