@@ -11,9 +11,11 @@ just. Usage: check_pins.py [root].
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import sys
 import tomllib
+from collections.abc import Iterator
 from pathlib import Path
 
 # justfile variables that pin a tool: mise tool name -> justfile variable.
@@ -65,6 +67,10 @@ def workflow_pins(root: Path) -> tuple[dict[str, str], list[str]]:
     return pins, problems
 
 
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip())
+
+
 def setup_uv_pins(root: Path) -> tuple[str | None, list[str]]:
     """The uv version every `astral-sh/setup-uv` step pins with `version:`, and any problems."""
     versions: dict[str, str] = {}
@@ -74,17 +80,17 @@ def setup_uv_pins(root: Path) -> tuple[str | None, list[str]]:
         for i, line in enumerate(lines):
             if "astral-sh/setup-uv@" not in line:
                 continue
-            # The step's boundary is its `- ` item marker, which may sit on an earlier line
-            # (`- name: …` then `uses: …`), so keys like `with:` can share `uses:`'s indent.
-            indent = len(line) - len(line.lstrip())
+            # Scan the whole step, from its `- ` item marker to the next step. The marker may sit
+            # on an earlier line (`- name: …`), and `with:` may come before or after `uses:`.
+            start = i
             if not line.lstrip().startswith("- "):
-                for prev in reversed(lines[:i]):
-                    p_indent = len(prev) - len(prev.lstrip())
-                    if prev.lstrip().startswith("- ") and p_indent < indent:
-                        indent = p_indent
+                for j in range(i - 1, -1, -1):
+                    if lines[j].lstrip().startswith("- ") and _indent(lines[j]) < _indent(line):
+                        start = j
                         break
+            indent = _indent(lines[start])
             found = None
-            for nxt in lines[i + 1:]:
+            for nxt in lines[start + 1:]:
                 stripped = nxt.strip()
                 if stripped and len(nxt) - len(nxt.lstrip()) <= indent:
                     break  # the next step
@@ -102,19 +108,38 @@ def setup_uv_pins(root: Path) -> tuple[str | None, list[str]]:
     return (next(iter(versions)) if versions else None), problems
 
 
+def _json_strings(value: object) -> Iterator[str]:
+    """Every string in a decoded JSON value, keys included, depth first."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            yield k
+            yield from _json_strings(v)
+    elif isinstance(value, list):
+        for v in value:
+            yield from _json_strings(v)
+
+
 def settings_uvx(root: Path, rumdl: str | None) -> list[str]:
     """Every `uvx <tool>` in .claude/settings.json (hooks and permissions) must be pinned, and
     rumdl must be the justfile's version."""
     path = root / ".claude" / "settings.json"
     if not path.is_file():
         return [".claude/settings.json is missing"]
+    # Scan the decoded strings, not the raw text: a JSON escape such as `\n` would otherwise put
+    # a letter directly before `uvx` and hide it from `\b`.
+    try:
+        strings = list(_json_strings(json.loads(_read(path))))
+    except json.JSONDecodeError as e:
+        return [f".claude/settings.json is not valid JSON ({e.msg}, line {e.lineno})"]
     problems = []
-    text = _read(path)
-    if not re.search(r"\buvx\s+rumdl@", text):
+    if not any(re.search(r"\buvx\s+rumdl@", s) for s in strings):
         problems.append("rumdl: .claude/settings.json has no `uvx rumdl@` pin to check")
     # `)` closes an exact-command permission (`Bash(uvx ruff@0.11.0)`) and `;` ends a hook
     # command, so neither is part of the version.
-    for m in re.finditer(r"\buvx\s+([A-Za-z0-9_.-]+)(?:@([^\s\"');]+))?", text):
+    uvx = re.compile(r"\buvx\s+([A-Za-z0-9_.-]+)(?:@([^\s\"');]+))?")
+    for m in (m for s in strings for m in uvx.finditer(s)):
         tool, version = m.group(1), m.group(2)
         if not version:
             problems.append(f"{tool}: unpinned `uvx {tool}` in .claude/settings.json")

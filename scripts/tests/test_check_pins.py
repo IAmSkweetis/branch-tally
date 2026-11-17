@@ -186,10 +186,30 @@ class CheckPins(unittest.TestCase):
         problems = self.check(ci=CI + named + "      - run: echo next\n")
         self.assertTrue(any("setup-uv" in p and "version" in p for p in problems))
 
+    def test_setup_uv_version_before_uses_is_read(self):
+        reordered = ("      - name: Install uv\n"
+                     "        with:\n"
+                     '          version: "0.13.8"\n'
+                     "        uses: astral-sh/setup-uv@abc # v10\n")
+        self.assertEqual(self.check(ci=CI + reordered), [])
+
     def test_settings_floating_uvx_version_rejected(self):
         bad = SETTINGS.replace("Bash(just ci)", "Bash(uvx ruff@latest check *)")
         problems = self.check(settings=bad)
         self.assertTrue(any("ruff" in p and "latest" in p for p in problems))
+
+    def test_settings_uvx_after_escaped_newline_rejected(self):
+        # The JSON text holds `\n`, so the raw text has an `n` directly before `uvx`.
+        bad = SETTINGS.replace('"type": "command",',
+                               '"type": "command", "command": "echo ready\\nuvx ruff check ."}, '
+                               '{"type": "command",')
+        self.assertIn("ready\\nuvx ruff", bad)
+        problems = self.check(settings=bad)
+        self.assertTrue(any("unpinned" in p and "ruff" in p for p in problems), problems)
+
+    def test_settings_invalid_json_rejected(self):
+        problems = self.check(settings=SETTINGS.replace('"hooks": {', '"hooks" {', 1))
+        self.assertTrue(any("not valid JSON" in p for p in problems), problems)
 
     def test_settings_exact_command_permission_is_accepted(self):
         good = SETTINGS.replace('"Bash(just ci)"', '"Bash(just ci)",\n      "Bash(uvx ruff@0.11.0)"')
