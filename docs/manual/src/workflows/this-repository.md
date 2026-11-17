@@ -6,7 +6,7 @@ The procedures live in the repository's Claude Code skills (`.claude/skills/feat
 `.claude/skills/create-gh-pr/` and `.claude/skills/worktree-cleanup/`), its `justfile` and its
 [pull request template](https://github.com/IAmSkweetis/branch-tally/blob/main/.github/PULL_REQUEST_TEMPLATE.md).
 
-Both [Claude Code plugins](../integration/claude-code.md) run in the repository, and the
+The [Claude Code hooks](../integration/claude-code.md) run in the repository, and the
 [ledger](../ledger.md) is committed with each pull request. A PR's token report is published from
 that committed ledger, not straight from the transcripts.
 
@@ -64,10 +64,10 @@ own commits become part of `main`'s history. The ledger lines arrive on `main` i
 
 ## The hooks and the ledger
 
-The repository's `.claude/settings.json` declares this repository as the `branch-tally` plugin
-marketplace and enables both plugins, `branch-tally-capture` and `branch-tally-record`, in the way
-[shown on the Claude Code page](../integration/claude-code.md#for-everyone-who-works-in-a-repository).
-Every session started in the repository therefore runs them:
+The repository's `.claude/settings.json` declares the hooks itself, with no plugin. `SessionStart`,
+`SubagentStop` and `Stop` each run `branch-tally capture; exit 0` with a 30-second `timeout`, and
+`SessionEnd` runs `branch-tally record; exit 0`. They call `branch-tally` from the `PATH`, so a
+contributor needs the binary installed. Every session started in the repository runs them:
 
 ```mermaid
 flowchart LR

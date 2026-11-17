@@ -134,23 +134,24 @@ The full option list is in the [CLI reference](cli.md#branch-tally-record).
 
 ## Record automatically when a session ends
 
-Remembering to run `record` before `cleanupPeriodDays` runs out is easy to get wrong. The optional
-`branch-tally-record` Claude Code plugin does it for you: its `SessionEnd` hook runs
-`branch-tally record` every time a session in the repository ends.
+Remembering to run `record` before `cleanupPeriodDays` runs out is easy to get wrong. A Claude
+Code `SessionEnd` hook that runs `branch-tally record; exit 0` does it for you, every time a session
+in the repository ends.
 
-```text
-/plugin marketplace add IAmSkweetis/branch-tally
-/plugin install branch-tally-record@branch-tally
-```
+The optional `branch-tally-record` Claude Code plugin that installed this hook is moving to a
+separate repository, and a link will follow on the
+[Claude Code integration](integration/claude-code.md#the-claude-code-plugin-is-moving) page. Until
+then, the hook can go in a settings file of your own, as described in
+[SessionEnd time limit](integration/claude-code.md#sessionend-time-limit).
 
 The hook records the branch the session's directory has checked out when the session ends, with
 the `mode` and `work-branch` from your [config file](config.md). It is the same command as above,
 so the same rules hold: it writes only in a repository that has
 [opted in](#opt-the-repository-in), it only writes the file, a second run appends nothing new, and
-you still commit and push the ledger yourself. Installing the plugin does not opt a repository in.
+you still commit and push the ledger yourself. Adding the hook does not opt a repository in.
 It needs `branch-tally` on your `PATH`, and it never blocks the session, even when `record` fails.
 
-Claude Code gives a `SessionEnd` hook 1.5 seconds by default, and a plugin can't raise that.
+Claude Code gives a `SessionEnd` hook 1.5 seconds by default, unless its settings raise that.
 `record` reads every transcript for the repository, so a long history can need more. Set
 `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS` (in milliseconds) or use a hook in your own settings with
 a `timeout`, as described in
@@ -160,9 +161,9 @@ session end, or a `record` by hand, writes the rest, provided it runs before the
 purged.
 
 A branch worked on from several sessions, or with sessions that ended on another branch, may
-still need a `record` by hand for the branches the hook did not see. Installing the plugin, and
-the companion `branch-tally-capture` plugin, is covered on the
-[Claude Code integration](integration/claude-code.md) page.
+still need a `record` by hand for the branches the hook did not see. The record hook and the
+companion capture hooks are covered on the [Claude Code integration](integration/claude-code.md)
+page.
 
 ## Usage recorded on the default branch
 
@@ -202,7 +203,7 @@ current branch, or the one named.
 
 - **Automatically, at the end of `record`** on any branch other than the default. After appending
   the branch's own lines, `record` resolves the pending lines that belong to that branch. The
-  [record plugin](integration/claude-code.md) runs `record` at every session end, so pending lines
+  [record hook](integration/claude-code.md) runs `record` at every session end, so pending lines
   are resolved the next time a session on that machine ends with their branch checked out.
 - **By hand, with [`branch-tally ledger resolve`](cli.md#branch-tally-ledger-resolve)**, which does
   only the resolving. Add `--dry-run` to see the counts first:

@@ -9,7 +9,7 @@ branch-tally <COMMAND>
 | [`report`](#branch-tally-report) | Report Claude Code token usage for a git branch. |
 | [`record`](#branch-tally-record) | Append this branch's attributed usage to the repository ledger (write only). |
 | [`project`](#branch-tally-project) | Report project-wide totals and the cost-over-time series from the ledger. |
-| [`capture`](#branch-tally-capture) | Record this session's branch from a Claude Code hook payload on stdin. Run by the [capture plugin](integration/claude-code.md), not by hand. |
+| [`capture`](#branch-tally-capture) | Record this session's branch from a Claude Code hook payload on stdin. Run by Claude Code [hooks](integration/claude-code.md), not by hand. |
 | [`ledger check`](#branch-tally-ledger-check) | Fail unless a branch's `.tally/` files, in the working tree or at a given commit, are a well-formed append to a base ref's. |
 | [`ledger redact`](#branch-tally-ledger-redact) | Rewrite the ledger's unredacted lines with the keyed hash. The one command that changes existing ledger lines. |
 | [`ledger resolve`](#branch-tally-ledger-resolve) | Resolve pending ledger lines to the branch cut after them, by appending. |
@@ -122,7 +122,7 @@ assigns calls to branches.
 - places a session's own call that has no stamp, or a `worktree-agent-…` stamp, on the branch the
   session's [hook captures](captures.md) name both before and after that call (*captured hook
   data*). A call with captures on one side only is not placed this way. This needs the capture
-  plugin, and wins over the worktree and origin recovery below;
+  hooks, and wins over the worktree and origin recovery below;
 - recovers the branch of a subagent call stamped `worktree-agent-…` from the worktree it ran in
   (*worktree recovery*), and of an unstamped call read from a worktree's transcripts from that
   worktree (*origin recovery*), using `git worktree list`, so the worktree must still exist;
@@ -612,12 +612,12 @@ override note is the same as for `report`; see
 branch-tally capture
 ```
 
-Run by the [capture plugin](integration/claude-code.md)'s hooks (`SessionStart`, `SubagentStop`,
-`Stop`), not by hand. It takes no options. It reads one hook payload from stdin and appends an
-id-only event to `.tally/captures.jsonl` in the **main checkout**, so a worktree session's captures
-land in one place. The event holds the session id, the agent id, the branch, the event kind and a
-timestamp. No path and no message content is stored or printed. The file and how reports use it are
-described in [Hook captures](captures.md).
+Run by Claude Code's [capture hooks](integration/claude-code.md#set-up-captures) (`SessionStart`,
+`SubagentStop`, `Stop`), not by hand. It takes no options. It reads one hook payload from stdin and
+appends an id-only event to `.tally/captures.jsonl` in the **main checkout**, so a worktree
+session's captures land in one place. The event holds the session id, the agent id, the branch,
+the event kind and a timestamp. No path and no message content is stored or printed. The file and
+how reports use it are described in [Hook captures](captures.md).
 
 - The branch is the current branch of the payload's `cwd` (the process directory when the payload
   has none). A detached HEAD records nothing.
