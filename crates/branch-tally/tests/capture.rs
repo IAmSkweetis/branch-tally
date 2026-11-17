@@ -296,7 +296,7 @@ fn detached_head_records_nothing() {
 }
 
 #[test]
-fn help_says_it_is_for_the_plugin_hooks() {
+fn help_says_it_is_for_claude_code_hooks() {
     let out = Command::new(BIN)
         .args(["capture", "--help"])
         .output()
@@ -304,7 +304,8 @@ fn help_says_it_is_for_the_plugin_hooks() {
     assert_eq!(out.status.code(), Some(0));
     let help = text(&out.stdout);
     assert!(help.contains("hook"), "{help}");
-    assert!(help.contains("plugin"), "{help}");
+    assert!(help.contains("Claude Code hooks"), "{help}");
+    assert!(!help.contains("plugin"), "{help}");
 }
 
 /// The `/x/...` Git Bash form of a drive path only means something on Windows, so this is gated.
