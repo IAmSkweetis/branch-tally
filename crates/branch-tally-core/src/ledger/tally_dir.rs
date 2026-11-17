@@ -46,6 +46,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::LedgerError;
+use super::bounded::{Bounded, MAX_LINE_BYTES, read_bounded};
 
 /// The directory name, relative to the main checkout.
 pub const TALLY_DIR: &str = ".tally";
@@ -111,7 +112,7 @@ pub struct TallyDir {
     handle: Arc<File>,
 }
 
-fn refused(path: &Path, reason: &'static str) -> LedgerError {
+pub(super) fn refused(path: &Path, reason: &'static str) -> LedgerError {
     LedgerError::Refused {
         path: path.to_owned(),
         reason,
@@ -337,6 +338,36 @@ impl TallyDir {
 
     /// `read` with a seam that runs after `.tally` is verified and before the file is opened.
     fn read_with(&self, name: &str, between: &dyn Fn()) -> Result<Option<Vec<u8>>, LedgerError> {
+        let Some((mut file, path)) = self.open_for_read(name, between)? else {
+            return Ok(None);
+        };
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .map_err(|source| LedgerError::Read { path, source })?;
+        Ok(Some(bytes))
+    }
+
+    /// Reads the line file `name` holding at most [`MAX_LINE_BYTES`] of any one line (#103): an
+    /// over-long line is skipped without being buffered and stands in the bytes as a marker no
+    /// parser accepts, so it is counted as malformed under its own line number.
+    ///
+    /// # Errors
+    /// As [`TallyDir::read`].
+    pub(super) fn read_bounded(&self, name: &str) -> Result<Option<Bounded>, LedgerError> {
+        let Some((file, path)) = self.open_for_read(name, &|| {})? else {
+            return Ok(None);
+        };
+        read_bounded(file, MAX_LINE_BYTES)
+            .map(Some)
+            .map_err(|source| LedgerError::Read { path, source })
+    }
+
+    /// Verifies and opens `name` for reading. `Ok(None)` when it does not exist.
+    fn open_for_read(
+        &self,
+        name: &str,
+        between: &dyn Fn(),
+    ) -> Result<Option<(File, PathBuf)>, LedgerError> {
         let path = self.file_path(name);
         if !is_plain_name(name) {
             return Err(refused(&path, "the name is not a single plain component"));
@@ -352,14 +383,12 @@ impl TallyDir {
             source,
         };
         between();
-        let mut file = self.open_file(name, false).map_err(read_err)?;
+        let file = self.open_file(name, false).map_err(read_err)?;
         let meta = file.metadata().map_err(read_err)?;
         if !is_plain_file(&meta) {
             return Err(refused(&path, "it is not a regular file"));
         }
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes).map_err(read_err)?;
-        Ok(Some(bytes))
+        Ok(Some((file, path)))
     }
 
     /// Creates `name` exclusively with `bytes`. `Ok(true)` when this call created it, `Ok(false)`
@@ -503,8 +532,10 @@ impl TallyDir {
         }
         between();
         if let Some(expected) = expected {
-            let unchanged = match self.read(name) {
-                Ok(now) => now.as_deref().unwrap_or_default() == expected,
+            // Bounded like every ledger read: an over-long line shows as a marker, which differs
+            // from `expected` (callers refuse to rewrite a file holding one), so it reads as changed.
+            let unchanged = match self.read_bounded(name) {
+                Ok(now) => now.unwrap_or_default().bytes == expected,
                 Err(e) => {
                     drop(file);
                     self.remove_quietly(&temp);

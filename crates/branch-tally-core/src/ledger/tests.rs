@@ -810,4 +810,137 @@ fn redacting_a_ledger_keeps_pending_and_resolved() {
     );
 }
 
+mod bounded_lines {
+    //! #103 (F-12): ledger lines longer than `MAX_LINE_BYTES` are counted as malformed, not
+    //! buffered. A *valid* entry padded past the cap is used throughout, so a reader that still
+    //! slurps the whole file would accept it and these tests would fail.
+    use super::*;
+
+    fn padded(id: &str) -> String {
+        let mut text = line(id, 1, None);
+        text.push_str(&" ".repeat(MAX_LINE_BYTES));
+        text
+    }
+
+    fn seed(p: &Path) {
+        write_lines(p, &[line("r1", 1, None), padded("r2"), line("r3", 1, None)]);
+    }
+
+    fn assert_overlong_counted(l: &Ledger) {
+        let ids: Vec<_> = l
+            .entries()
+            .iter()
+            .map(|e| e.request_id.to_string())
+            .collect();
+        assert_eq!(ids, vec!["r1", "r3"]);
+        let s = l.stats();
+        assert_eq!((s.lines, s.malformed), (3, 1));
+        assert_eq!(s.bad_line_numbers, vec![2]);
+    }
+
+    #[test]
+    fn the_production_cap_is_one_mebibyte() {
+        assert_eq!(MAX_LINE_BYTES, 1024 * 1024);
+    }
+
+    #[test]
+    fn read_counts_an_overlong_line_as_malformed_and_continues() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = path(&dir);
+        seed(&p);
+        assert_overlong_counted(&read(&p).unwrap());
+    }
+
+    #[test]
+    fn read_default_counts_an_overlong_line_as_malformed_and_continues() {
+        let dir = tempfile::tempdir().unwrap();
+        seed(&path(&dir));
+        assert_overlong_counted(&read_default(dir.path()).unwrap());
+    }
+
+    #[test]
+    fn a_line_of_exactly_the_cap_is_still_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = path(&dir);
+        let mut text = line("r1", 1, None);
+        text.push_str(&" ".repeat(MAX_LINE_BYTES - text.len()));
+        assert_eq!(text.len(), MAX_LINE_BYTES);
+        write_lines(&p, &[text]);
+        assert_eq!(read(&p).unwrap().entries().len(), 1);
+    }
+
+    #[test]
+    fn append_default_does_not_dedupe_against_an_overlong_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = path(&dir);
+        seed(&p);
+        let out = append_default(
+            dir.path(),
+            &[selected("r2", "b", 1)],
+            "b",
+            Mode::Claim,
+            None,
+            &Identity,
+            &CLOCK,
+        )
+        .unwrap();
+        assert_eq!((out.appended, out.skipped), (1, 0));
+        let l = read(&p).unwrap();
+        assert_eq!(l.entries().len(), 3);
+        assert_eq!(l.stats().bad_line_numbers, vec![2]);
+        // The existing over-long line is left in place, not rewritten.
+        assert!(std::fs::read(&p).unwrap().len() > MAX_LINE_BYTES);
+    }
+
+    #[test]
+    fn append_explicit_path_does_not_dedupe_against_an_overlong_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = path(&dir);
+        seed(&p);
+        let out = append(
+            &p,
+            &[selected("r2", "b", 1)],
+            "b",
+            Mode::Claim,
+            None,
+            &Identity,
+            &CLOCK,
+        )
+        .unwrap();
+        assert_eq!((out.appended, out.skipped), (1, 0));
+    }
+
+    #[test]
+    fn append_entries_paths_do_not_dedupe_against_an_overlong_line() {
+        let entry = LedgerEntry::from_selected(&selected("r2", "b", 1), "b", Mode::Claim, None);
+        let dir = tempfile::tempdir().unwrap();
+        let p = path(&dir);
+        seed(&p);
+        let out = append_entries(&p, std::slice::from_ref(&entry), &CLOCK).unwrap();
+        assert_eq!((out.appended, out.skipped), (1, 0));
+        let dir = tempfile::tempdir().unwrap();
+        seed(&path(&dir));
+        let out = append_entries_default(dir.path(), &[entry], &CLOCK).unwrap();
+        assert_eq!((out.appended, out.skipped), (1, 0));
+    }
+
+    #[test]
+    fn redact_refuses_a_ledger_holding_an_overlong_line_and_leaves_it_untouched() {
+        let redactor = KeyedRedact::new(Salt::generate().unwrap(), false);
+        let dir = tempfile::tempdir().unwrap();
+        let p = path(&dir);
+        seed(&p);
+        let before = std::fs::read(&p).unwrap();
+        assert!(matches!(
+            redact_ledger(&p, &redactor),
+            Err(LedgerError::Refused { .. })
+        ));
+        assert!(matches!(
+            redact_ledger_default(dir.path(), &redactor),
+            Err(LedgerError::Refused { .. })
+        ));
+        assert_eq!(std::fs::read(&p).unwrap(), before);
+    }
+}
+
 mod keyed;
