@@ -21,6 +21,10 @@ gitleaks_version := "8.30.1"
 cliff_version := "2.13.1"
 mdbook_version := "0.5.4"
 mdbook_mermaid_version := "0.17.1"
+# jq runs the PostToolUse lint hook in .claude/settings.json; gh runs scripts/repo_settings.py. Both
+# are pinned for `mise install` only: CI uses the runner image's gh and has no use for jq.
+jq_version := "1.8.1"
+gh_version := "2.104.0"
 
 # Rust checks run only once the workspace exists (#3). Until then they say so and exit 0.
 has_cargo := path_exists(justfile_directory() / "Cargo.toml")

@@ -153,7 +153,7 @@ its own lists the recipes.
 | `just secret-scan [args…]` | `gitleaks git` over the full history of every local ref, redacted. CI passes `--log-opts=HEAD` | `gitleaks git --redact .` |
 | `just audit-workflows [--offline]` | `zizmor` over `.github/`, pinned. Online audits run when `GH_TOKEN` is set. | `uvx zizmor@<pin> .github/` |
 | `just test-scripts` | proves `scripts/check-commit-subject.sh`, `scripts/check-branch-name.sh` and `scripts/package.sh` and `scripts/sign-checksums.sh` (release signing, against the real minisign when present, a failure in CI when absent) reject what they must and accept what they should | `sh scripts/test-checks.sh` |
-| `just check-pins` | fails when `mise.toml` disagrees with the pins in the justfile, the workflows (including `setup-uv`'s `version:`), `rust-toolchain.toml`, `scripts/ci-install-minisign.sh` or `scripts/ci-install-pwsh.sh` (whose `sha256` pins must also be well-formed 64-hex digests) (or lacks one of them, or lists a tool nothing else pins), when `.claude/settings.json` runs an unpinned `uvx` tool or a rumdl other than the justfile's, or when a vendored manual asset no longer matches its recorded sha256. Reads the files as text: needs `uv` only, not mise, just's evaluator or the network | `uv run scripts/check_pins.py` |
+| `just check-pins` | fails when `mise.toml` disagrees with the pins in the justfile, `.python-version`, the workflows (including `setup-uv`'s `version:`), `rust-toolchain.toml`, `scripts/ci-install-minisign.sh` or `scripts/ci-install-pwsh.sh` (whose `sha256` pins must also be well-formed 64-hex digests) (or lacks one of them, or lists a tool nothing else pins), when `.claude/settings.json` runs an unpinned `uvx` tool or a rumdl other than the justfile's, or when a vendored manual asset no longer matches its recorded sha256. Reads the files as text: needs `uv` only, not mise, just's evaluator or the network | `uv run scripts/check_pins.py` |
 | `just test-py` | `unittest` for `scripts/scrub_transcripts.py`, `scripts/make_goldens.py` and `scripts/splice_token_report.py`, including one end-to-end run of the reference | `uv run python -m unittest discover -s scripts/tests` |
 | `just lint-install` | ShellCheck on `install.sh` and its test, PSScriptAnalyzer on the `.ps1` files. A missing tool is a printed skip locally and an error when `CI` is set | `sh scripts/lint-install.sh` |
 | `just test-install` | the installers' offline tests under `sh` and `pwsh`, with the same skip rule | `sh scripts/test-install.sh` |
@@ -190,26 +190,27 @@ The PostToolUse lint hook and its permission entry in `.claude/settings.json` ru
 from `rumdl_version`, and when any `uvx <tool>` in that file has no `@version`.
 
 **`mise.toml`.** `mise install` at the repository root sets up a dev machine with every one of those
-pins (`rust`, `just`, `uv`, `cargo-nextest`, `cargo-deny`, `gitleaks`, `git-cliff`, `rumdl`,
-`zizmor`, `mdbook`, `mdbook-mermaid`, `minisign`, `powershell`, `shellcheck`). It is a
-**local convenience, not an authority**: the justfile, the workflows, the `scripts/ci-install-*.sh`
-scripts (minisign and pwsh, each pinned by version and archive sha256) and `rust-toolchain.toml`
-still decide what CI runs, and nothing in CI or the hooks calls mise. `just check-pins` (part of
-`just ci`, and a CI step in the `scripts` job) compares them as text and fails on any drift: a
-version that differs, a pinned tool missing from `mise.toml`, or a tool in `mise.toml` that nothing
-else pins (so mise can't grow a pin of its own). To bump a tool, change it where it is really
-pinned, then in `mise.toml` in the same commit. Backends: `aqua:` (via the short registry name) for
-`just`, `cargo-deny`, `gitleaks`, `git-cliff`, `rumdl`, `zizmor`, `mdbook`, `minisign`, `shellcheck`
-(pinned by the `installers.yml` lint job's `tool:` line) and `powershell` (PowerShell 7, the `pwsh`
-the installer jobs run; Windows PowerShell 5.1 ships with Windows and can't be installed anywhere
-else); `cargo:cargo-nextest` (not in the aqua registry; compiles from source unless `cargo-binstall`
-is installed); `github:badboy/mdbook-mermaid` (no registry entry). `uv` is pinned by the workflows'
-`setup-uv` steps. `git`, `sh` and the tools the OS or CI image ships are not pinned, so they are not
-in `mise.toml`; install them yourself. `gh`, `jq` (used by the lint hook) and the Python that
-`uv run` selects (scripts declare `requires-python >=3.11`) are unpinned for now because no
-repository file is yet their authority, and each is listed as such in `mise.toml`. PSScriptAnalyzer
-is pinned (in `installers.yml`) but is a PowerShell module, not a mise tool:
-`Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser`.
+pins (`rust`, `just`, `uv`, `python`, `jq`, `gh`, `cargo-nextest`, `cargo-deny`, `gitleaks`,
+`git-cliff`, `rumdl`, `zizmor`, `mdbook`, `mdbook-mermaid`, `minisign`, `powershell`, `shellcheck`).
+It is a **local convenience, not an authority**: the justfile, the workflows, the
+`scripts/ci-install-*.sh` scripts (minisign and pwsh, each pinned by version and archive sha256) and
+`rust-toolchain.toml` still decide what CI runs, and nothing in CI or the hooks calls mise.
+`just check-pins` (part of `just ci`, and a CI step in the `scripts` job) compares them as text and
+fails on any drift: a version that differs, a pinned tool missing from `mise.toml`, or a tool in
+`mise.toml` that nothing else pins (so mise can't grow a pin of its own). To bump a tool, change it
+where it is really pinned, then in `mise.toml` in the same commit. Backends: `aqua:` (via the short
+registry name) for `just`, `cargo-deny`, `gitleaks`, `git-cliff`, `rumdl`, `zizmor`, `mdbook`,
+`minisign`, `shellcheck` (pinned by the `installers.yml` lint job's `tool:` line) and `powershell`
+(PowerShell 7, the `pwsh` the installer jobs run; Windows PowerShell 5.1 ships with Windows and
+can't be installed anywhere else); `cargo:cargo-nextest` (not in the aqua registry; compiles from
+source unless `cargo-binstall` is installed); `github:badboy/mdbook-mermaid` (no registry entry).
+`uv` is pinned by the workflows' `setup-uv` steps. `git`, `sh` and the tools the OS or CI image
+ships are not pinned, so they are not in `mise.toml`; install them yourself. `jq` (the lint hook)
+and `gh` (`scripts/repo_settings.py`) are pinned by `jq_version` and `gh_version` in the justfile,
+for local setup only: CI keeps the runner's `gh`. Python is pinned by `.python-version` (3.15, which
+`uv run` and `uvx` honour; `requires-python` stays `>=3.11`), and `check-pins` keeps `mise.toml`'s
+`python` equal to it. PSScriptAnalyzer is pinned (in `installers.yml`) but is a PowerShell module,
+not a mise tool: `Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser`.
 
 `mise.toml` also lists `rust`, even though `rustup` already reads `rust-toolchain.toml` and installs
 that channel the first time `cargo` runs. The file stays the authority (it also carries the

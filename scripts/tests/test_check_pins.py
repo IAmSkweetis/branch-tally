@@ -21,6 +21,8 @@ gitleaks_version := "8.30.1"
 cliff_version := "2.13.1"
 mdbook_version := "0.5.4"
 mdbook_mermaid_version := "0.17.1"
+jq_version := "1.8.1"
+gh_version := "2.104.0"
 '''
 SETUP_UV = """      - uses: astral-sh/setup-uv@abc # v10
         with:
@@ -55,6 +57,9 @@ gitleaks = "8.30.1"
 git-cliff = "2.13.1"
 rumdl = "0.3.2"
 uv = "0.13.8"
+jq = "1.8.1"
+gh = "2.104.0"
+python = "3.15"
 zizmor = "1.31.1"
 minisign = "0.12"
 powershell = "7.7.0"
@@ -80,7 +85,7 @@ MERMAID = b"// stand-in for the vendored mermaid bundle\n"
 
 
 def make_repo(mise: str = MISE, justfile: str = JUSTFILE, ci: str = CI, asset: bytes = ASSET,
-              sha: str | None = None, settings: str | None = SETTINGS, minisign: str | None = MINISIGN_SCRIPT,
+              sha: str | None = None, settings: str | None = SETTINGS, python: str | None = "3.15\n", minisign: str | None = MINISIGN_SCRIPT,
               pwsh: str | None = PWSH_SCRIPT, mermaid_sha: str | None = None) -> Path:
     root = Path(tempfile.mkdtemp())
     (root / ".github" / "workflows").mkdir(parents=True)
@@ -93,6 +98,8 @@ def make_repo(mise: str = MISE, justfile: str = JUSTFILE, ci: str = CI, asset: b
     if pwsh is not None:
         (root / "scripts" / "ci-install-pwsh.sh").write_text(pwsh, encoding="utf-8")
     (root / "rust-toolchain.toml").write_text(TOOLCHAIN, encoding="utf-8")
+    if python is not None:
+        (root / ".python-version").write_text(python, encoding="utf-8")
     if settings is not None:
         (root / ".claude").mkdir()
         (root / ".claude" / "settings.json").write_text(settings, encoding="utf-8")
@@ -258,6 +265,34 @@ class CheckPins(unittest.TestCase):
     def test_powershell_script_missing_rejected(self):
         problems = self.check(pwsh=None)
         self.assertTrue(any("powershell" in p for p in problems))
+
+    def test_drifted_jq_rejected(self):
+        problems = self.check(justfile=JUSTFILE.replace('jq_version := "1.8.1"', 'jq_version := "1.8.2"'))
+        self.assertTrue(any("jq" in p and "1.8.2" in p for p in problems))
+
+    def test_jq_missing_from_mise_rejected(self):
+        problems = self.check(mise=MISE.replace('jq = "1.8.1"\n', ""))
+        self.assertTrue(any("jq" in p and "missing" in p for p in problems))
+
+    def test_drifted_gh_rejected(self):
+        problems = self.check(mise=MISE.replace('gh = "2.104.0"', 'gh = "2.100.0"'))
+        self.assertTrue(any("gh" in p and "2.104.0" in p for p in problems))
+
+    def test_gh_missing_from_mise_rejected(self):
+        problems = self.check(mise=MISE.replace('gh = "2.104.0"\n', ""))
+        self.assertTrue(any("gh" in p and "missing" in p for p in problems))
+
+    def test_drifted_python_rejected(self):
+        problems = self.check(mise=MISE.replace('python = "3.15"', 'python = "3.14"'))
+        self.assertTrue(any("python" in p and "3.15" in p for p in problems))
+
+    def test_python_missing_from_mise_rejected(self):
+        problems = self.check(mise=MISE.replace('python = "3.15"\n', ""))
+        self.assertTrue(any("python" in p and "missing" in p for p in problems))
+
+    def test_python_version_file_missing_rejected(self):
+        problems = self.check(python=None)
+        self.assertTrue(any(".python-version" in p for p in problems))
 
     def test_real_repository_agrees(self):
         self.assertEqual(cp.check(REPO), [])
