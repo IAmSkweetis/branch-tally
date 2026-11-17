@@ -17,7 +17,7 @@ just = "1.59.0"
 # pinned rumdl and zizmor, so a drifting uv changes what they resolve.
 uv = "0.13.8"
 # Authority: .python-version, which uv honours for `uv run` and uvx.
-python = "3.15"
+python = "3.15.2"
 # Authorities: jq_version and gh_version in the justfile.
 jq = "1.8.1"
 gh = "2.104.0"

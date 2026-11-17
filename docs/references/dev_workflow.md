@@ -207,9 +207,20 @@ source unless `cargo-binstall` is installed); `github:badboy/mdbook-mermaid` (no
 `uv` is pinned by the workflows' `setup-uv` steps. `git`, `sh` and the tools the OS or CI image
 ships are not pinned, so they are not in `mise.toml`; install them yourself. `jq` (the lint hook)
 and `gh` (`scripts/repo_settings.py`) are pinned by `jq_version` and `gh_version` in the justfile,
-for local setup only: CI keeps the runner's `gh`. Python is pinned by `.python-version` (3.15, which
-`uv run` and `uvx` honour; `requires-python` stays `>=3.11`), and `check-pins` keeps `mise.toml`'s
-`python` equal to it. PSScriptAnalyzer is pinned (in `installers.yml`) but is a PowerShell module,
+for local setup only: CI keeps the runner's `gh`. Python is pinned by `.python-version` (exactly
+`3.15.2`, which `uv run` honours; `check-pins` rejects a minor-only value, and keeps `mise.toml`'s
+`python` equal to it; `requires-python` stays `>=3.11`). The `uvx` tools here (rumdl, zizmor) are
+binary wheels and don't use it.
+
+CI lets uv download that Python, and the download is verified. uv 0.13.8 carries a SHA-256 for every
+managed Python build (`crates/uv-python-managed/download-metadata.json`; for
+`cpython-3.15.2-linux-x86_64-gnu` it is
+`ad23d1b73fac26440b0306ae06911031344c49a90ec19716c8362e7fa40cae43`) and fails with `HashMismatch`
+when the download differs, so pinning uv pins the Python hashes. `setup-uv` (pinned at `68559e99`)
+validates the uv binary itself with SHA-256: the step's `checksum:` input if set, else its built-in
+`KNOWN_CHECKSUMS` (which stop at uv 0.13.6, so 0.13.8 is not in them), else the sha256 from Astral's
+versions manifest fetched at run time. No step sets `checksum:`, so uv 0.13.8 is verified against
+that remote manifest. PSScriptAnalyzer is pinned (in `installers.yml`) but is a PowerShell module,
 not a mise tool: `Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser`.
 
 `mise.toml` also lists `rust`, even though `rustup` already reads `rust-toolchain.toml` and installs

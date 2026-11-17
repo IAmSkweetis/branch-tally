@@ -2,8 +2,9 @@
 no longer matches its recorded checksum.
 
 mise.toml is a local convenience. The authorities are the justfile (`<tool>_version`), the CI
-workflows (`tool: name@version` for taiki-e/install-action, `version:` on astral-sh/setup-uv), the `scripts/ci-install-*.sh` scripts
-and rust-toolchain.toml. This script reads those as text and compares, so it needs neither mise nor
+workflows (`tool: name@version` for taiki-e/install-action, `version:` on
+astral-sh/setup-uv), the `scripts/ci-install-*.sh` scripts, `.python-version` and
+rust-toolchain.toml. This script reads those as text and compares, so it needs neither mise nor
 just. Usage: check_pins.py [root].
 """
 
@@ -100,7 +101,10 @@ def settings_uvx(root: Path, rumdl: str | None) -> list[str]:
     if not path.is_file():
         return [".claude/settings.json is missing"]
     problems = []
-    for m in re.finditer(r"\buvx\s+([A-Za-z0-9_.-]+)(?:@([^\s\"']+))?", _read(path)):
+    text = _read(path)
+    if not re.search(r"\buvx\s+rumdl@", text):
+        problems.append("rumdl: .claude/settings.json has no `uvx rumdl@` pin to check")
+    for m in re.finditer(r"\buvx\s+([A-Za-z0-9_.-]+)(?:@([^\s\"']+))?", text):
         tool, version = m.group(1), m.group(2)
         if not version:
             problems.append(f"{tool}: unpinned `uvx {tool}` in .claude/settings.json")
@@ -171,10 +175,11 @@ def check(root: Path) -> list[str]:
         if version:
             expected[tool] = (version, str(script))
     py = root / ".python-version"
-    if py.is_file() and py.read_text(encoding="utf-8").strip():
-        expected["python"] = (py.read_text(encoding="utf-8").strip(), ".python-version")
+    pyver = py.read_text(encoding="utf-8").strip() if py.is_file() else ""
+    if re.fullmatch(r"\d+\.\d+\.\d+", pyver):
+        expected["python"] = (pyver, ".python-version")
     else:
-        problems.append(".python-version is missing or empty")
+        problems.append(".python-version is missing or not an exact X.Y.Z patch version")
     channel = tomllib.loads(_read(root / "rust-toolchain.toml"))["toolchain"]["channel"]
     expected["rust"] = (channel, "rust-toolchain.toml")
 
