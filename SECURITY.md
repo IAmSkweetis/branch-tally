@@ -26,7 +26,7 @@ the maintainer can see.
 Please include:
 
 - the branch-tally version (`branch-tally --version`), OS, and how you installed it (release
-  binary, GitHub Action, Claude Code plugin, or from source);
+  binary, GitHub Action, or from source);
 - what an attacker can do, and what they need first;
 - the smallest reproduction you can manage.
 
@@ -58,7 +58,8 @@ In scope:
 - **Reading outside its scope.** branch-tally reading files other than the harness transcripts and
   repository state it needs.
 - **Supply chain and distribution.** Release binaries, checksums and attestations, the GitHub
-  Action, the Claude Code plugin, and installers and package-registry releases.
+  Action, and installers and package-registry releases. The Claude Code plugin is moving to a
+  separate repository; report its issues there once it is published (link to follow).
 - **This repository's CI.** Workflow weaknesses in `.github/workflows` that could compromise
   releases or secrets.
 
