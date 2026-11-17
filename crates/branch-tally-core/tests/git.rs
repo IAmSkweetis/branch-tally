@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use branch_tally_core::git::{Git, GitError, SystemGit, normalize_path};
+use branch_tally_core::git::{Git, GitError, MAX_FILE_AT_BYTES, SystemGit, normalize_path};
 
 fn git(dir: &Path, args: &[&str]) {
     let out = Command::new("git")
@@ -340,4 +340,51 @@ fn origin_repo_with_a_local_path_origin_is_an_error_without_leaking_it() {
     let err = SystemGit.origin_repo(&f.main).expect_err("local path");
     assert!(matches!(err, GitError::UnexpectedOutput { .. }));
     assert!(!err.to_string().contains(origin));
+}
+
+#[test]
+fn file_at_over_the_limit_is_a_typed_error_naming_path_rev_and_limit() {
+    let f = fixture();
+    commit_file(&f.main, ".tally/ledger.jsonl", &[b'x'; 11]);
+    let err = SystemGit
+        .file_at_limited(&f.main, "HEAD", Path::new(".tally/ledger.jsonl"), 10)
+        .expect_err("over the cap");
+    let GitError::FileTooLarge { path, rev, limit } = &err else {
+        unreachable!("expected FileTooLarge, got {err:?}");
+    };
+    assert_eq!(path, ".tally/ledger.jsonl");
+    assert_eq!(rev, "HEAD");
+    assert_eq!(*limit, 10);
+    assert!(!err.to_string().contains("xxx"));
+}
+
+#[test]
+fn file_at_exactly_at_the_limit_is_read() {
+    let f = fixture();
+    commit_file(&f.main, "a.txt", &[b'x'; 10]);
+    let got = SystemGit
+        .file_at_limited(&f.main, "HEAD", Path::new("a.txt"), 10)
+        .expect("at the cap");
+    assert_eq!(got.map(|b| b.len()), Some(10));
+}
+
+#[test]
+fn file_at_production_cap_is_256_mib_and_wired() {
+    assert_eq!(MAX_FILE_AT_BYTES, 256 * 1024 * 1024);
+    // One byte over the production cap, made sparse so the working file costs no disk; git
+    // compresses the zeros to a few hundred KiB.
+    let f = fixture();
+    let big = f.main.join("big.bin");
+    let file = std::fs::File::create(&big).expect("create");
+    file.set_len(MAX_FILE_AT_BYTES + 1).expect("set_len");
+    drop(file);
+    git(&f.main, &["add", "big.bin"]);
+    git(&f.main, &["commit", "-q", "-m", "big"]);
+    let err = SystemGit
+        .file_at(&f.main, "HEAD", Path::new("big.bin"))
+        .expect_err("over the production cap");
+    assert!(matches!(
+        err,
+        GitError::FileTooLarge { limit, .. } if limit == MAX_FILE_AT_BYTES
+    ));
 }
