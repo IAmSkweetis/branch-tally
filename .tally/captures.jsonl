@@ -12,3 +12,10 @@
 {"v":1,"harness":"claude-code","kind":"stop","session_id":"a9ea57a1-80a6-488f-8127-96179eb2f20b","branch":"fix/issue-67-ledger-redaction","ts":"2026-11-15T19:55:17Z"}
 {"v":1,"harness":"claude-code","kind":"stop","session_id":"a9ea57a1-80a6-488f-8127-96179eb2f20b","branch":"main","ts":"2026-11-15T20:01:03Z"}
 {"v":1,"harness":"claude-code","kind":"subagent-stop","session_id":"a9ea57a1-80a6-488f-8127-96179eb2f20b","agent_id":"a921c76361fa8e94a","branch":"main","ts":"2026-11-15T20:04:05Z"}
+{"v":1,"harness":"claude-code","kind":"stop","session_id":"116d690e-206a-4b8d-8979-87aa8c9042a0","branch":"fix/issue-102-plugin-and-tool-pins","ts":"2026-11-17T02:17:16Z"}
+{"v":1,"harness":"claude-code","kind":"subagent-stop","session_id":"116d690e-206a-4b8d-8979-87aa8c9042a0","agent_id":"a11d4877fdd49cbf5","branch":"chore/remove-plugin-from-repo","worktree_branch":"chore/remove-plugin-from-repo","ts":"2026-11-17T02:20:04Z"}
+{"v":1,"harness":"claude-code","kind":"stop","session_id":"116d690e-206a-4b8d-8979-87aa8c9042a0","branch":"fix/issue-102-plugin-and-tool-pins","ts":"2026-11-17T02:20:11Z"}
+{"v":1,"harness":"claude-code","kind":"stop","session_id":"116d690e-206a-4b8d-8979-87aa8c9042a0","branch":"fix/issue-102-plugin-and-tool-pins","ts":"2026-11-17T02:20:14Z"}
+{"v":1,"harness":"claude-code","kind":"subagent-stop","session_id":"116d690e-206a-4b8d-8979-87aa8c9042a0","agent_id":"aadce52af54ee41f6","branch":"ci/plugin-removal-and-tool-pins","worktree_branch":"ci/plugin-removal-and-tool-pins","ts":"2026-11-17T02:23:02Z"}
+{"v":1,"harness":"claude-code","kind":"subagent-stop","session_id":"116d690e-206a-4b8d-8979-87aa8c9042a0","agent_id":"a11d4877fdd49cbf5","branch":"chore/remove-plugin-from-repo","worktree_branch":"chore/remove-plugin-from-repo","ts":"2026-11-17T02:24:24Z"}
+{"v":1,"harness":"claude-code","kind":"stop","session_id":"116d690e-206a-4b8d-8979-87aa8c9042a0","branch":"fix/issue-102-plugin-and-tool-pins","ts":"2026-11-17T02:42:46Z"}
