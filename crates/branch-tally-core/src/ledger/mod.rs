@@ -31,7 +31,7 @@ use std::path::{Path, PathBuf};
 
 use bounded::read_file;
 
-pub use bounded::MAX_LINE_BYTES;
+pub use bounded::{MAX_LINE_BYTES, MAX_TALLY_FILE_BYTES};
 pub use keyed_append::{
     append_keyed_default, append_keyed_default_pending, append_keyed_explicit,
     append_keyed_explicit_pending,
@@ -474,6 +474,15 @@ pub enum LedgerError {
         path: PathBuf,
         /// The underlying error.
         source: std::io::Error,
+    },
+    /// A `.tally/` file is larger than the most core will read (#103). Nothing past the limit was
+    /// buffered.
+    #[error("{} is larger than the {limit}-byte limit and was not read", path.display())]
+    TooLarge {
+        /// The file's path.
+        path: PathBuf,
+        /// The limit in bytes.
+        limit: u64,
     },
     /// Writing the ledger failed.
     #[error("cannot write ledger {}: {source}", path.display())]
