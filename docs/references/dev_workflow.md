@@ -159,7 +159,7 @@ its own lists the recipes.
 | `just lint-install` | ShellCheck on `install.sh` and its test, PSScriptAnalyzer on the `.ps1` files. A missing tool is a printed skip locally and an error when `CI` is set | `sh scripts/lint-install.sh` |
 | `just test-install` | the installers' offline tests under `sh` and `pwsh`, with the same skip rule | `sh scripts/test-install.sh` |
 | `just test-install-live [shell]` | `install.ps1`'s downloader against real GitHub, under `pwsh` (the default) or `powershell` (Windows PowerShell 5.1). Needs the network, so not part of `just ci` | `pwsh -NoProfile -ExecutionPolicy Bypass -File tests/install/install_live_test.ps1` |
-| `just docs` | build the user manual with mdBook and mdbook-mermaid (pinned) into `docs/manual/book/`; a `SUMMARY.md` entry with no page fails it ([The user manual](#the-user-manual)) | `mdbook build docs/manual` |
+| `just docs` | build the user manual with mdBook and mdbook-mermaid (pinned) into `docs/manual/book/`; a `SUMMARY.md` entry with no page fails it, and so does a built page without the CSP `<meta>` or with an inline script (`scripts/check_manual.py`) ([The user manual](#the-user-manual)) | `mdbook build docs/manual`, then `uv run scripts/check_manual.py docs/manual/book` |
 | `just docs-serve` | serve the manual locally and rebuild on change, at `http://localhost:3000` | `mdbook serve docs/manual` |
 | `just scrub --root <repo root> <src> <dest>` | scrub a real transcript tree into a committable fixture ([testing.md](testing.md#fixtures)) | `uv run scripts/scrub_transcripts.py …` |
 | `just goldens [scenario] [--check]` | regenerate the fixture goldens from the reference; `--check` writes nothing and fails on a difference | `uv run scripts/make_goldens.py …` |
@@ -316,8 +316,8 @@ The user manual is an [mdBook](https://rust-lang.github.io/mdBook/) in `docs/man
 ([0003-user-manual.md](../decisions/0003-user-manual.md)). `book.toml` is at its root, the pages
 and `SUMMARY.md` are in `src/`, and the build goes to `docs/manual/book/` (gitignored, and excluded
 from `rumdl`). Diagrams are Mermaid fenced blocks, rendered by the `mdbook-mermaid` preprocessor.
-Its two assets, `mermaid.min.js` and `mermaid-init.js`, are committed beside `book.toml`, outside
-`src/`.
+The preprocessor only turns the fences into `<pre class="mermaid">`; the Mermaid library is
+vendored (below), with `mermaid-init.js`, beside `book.toml`, outside `src/`.
 
 - **URL.** The manual is served at the apex, `https://branch-tally.io/` (DNS is done; the custom
   domain is set by hand in the repository's Settings, Pages). So `site-url` in `book.toml` is `"/"`.
@@ -336,12 +336,42 @@ Its two assets, `mermaid.min.js` and `mermaid-init.js`, are committed beside `bo
   half-rendered `<svg>` makes svg-pan-zoom throw). To update the library: replace the file from the
   npm tarball, write the new sha256 to `svg-pan-zoom.min.js.sha256`, and update the `book.toml`
   header and `svg-pan-zoom.LICENSE`.
+- **Mermaid bundle.** `mermaid.min.js` is vendored from the npm tarball, not from
+  `mdbook-mermaid install`: the newest `mdbook-mermaid` (0.17.1) still bundles Mermaid 11.6.0, which
+  has XSS advisories (CVE-2025-54880/54881, fixed in 11.10.0). It is Mermaid 11.17.2 (MIT: licence
+  in `mermaid.LICENSE`). Version, source URL, the registry's integrity and shasum, and the sha256
+  are in the `book.toml` header; `mermaid.min.js.sha256` is checked by `just check-pins`, and the
+  `.gitattributes` `-diff` on the bundle means that sha256 file is the reviewable change. To
+  update it, stay on 11.x until the manual is checked against 12: download
+  `https://registry.npmjs.org/mermaid/-/mermaid-<version>.tgz`, verify it against
+  `npm view mermaid@<version> dist.integrity dist.shasum` (or the registry JSON), extract
+  `package/dist/mermaid.min.js` and `package/LICENSE`, write
+  `sha256sum mermaid.min.js > mermaid.min.js.sha256`, update the `book.toml` header and
+  `mermaid.LICENSE`, and run `just check-pins` and `just docs`. `mermaid-init.js` stays as
+  `mdbook-mermaid install` 0.17.1 writes it.
+- **Content-Security-Policy.** GitHub Pages sends no headers, so `theme/index.hbs` (mdBook's own
+  template, overridden) puts a CSP `<meta>` on every page: `default-src 'self'`,
+  `script-src 'self'` (no `'unsafe-inline'`), `object-src 'none'`, `base-uri 'self'`, and
+  same-origin `img-src` (plus `data:`), `font-src`, `connect-src` and `form-action`. `style-src`
+  does allow `'unsafe-inline'`: Mermaid writes `<style>` elements and `style` attributes into its
+  SVG, and mdBook's scripts set inline styles. The default template's inline scripts now live in
+  `mdbook-boot.js`, loaded at the same four places with a `data-phase`, fed by `data-*` attributes
+  on `<html>`. **The override mirrors the pinned mdBook's template, so when `mdbook_version`
+  moves, refresh it:** `mdbook init --theme <tmp>` with the new version, diff its
+  `theme/index.hbs` (and the inline scripts in it) against ours, carry upstream changes over, and
+  rebuild. Only `index.hbs` is overridden; mdBook falls back to its own copy of every other theme
+  file. `just docs` runs `scripts/check_manual.py` on the output, which fails on a page with no
+  CSP, a `script-src` other than `'self'`, an inline `<script>` or an `on...=` handler (only the
+  script-free no-JS sidebar frame `toc.html` may lack the CSP). It checks the HTML, not a
+  browser: nothing here loads a page, so a runtime CSP violation (say a new Mermaid release using
+  `eval`) shows only in a browser console. Open a built diagram page and look when bumping
+  Mermaid, mdBook or the theme.
 - **Versions.** `mdbook_version` and `mdbook_mermaid_version` in the justfile. mdBook 0.5 changed
   the preprocessor API, so `mdbook-mermaid` must be a release built against it (0.17 and later).
   mdBook prints a "built against version 0.5.0 of mdbook" warning when the patch versions differ;
   that is harmless within 0.5. To move the pin, bump both versions and both checksums in `docs.yml`,
-  then run `mdbook-mermaid install docs/manual` with the new binary and commit the two refreshed
-  assets.
+  refresh the theme override (above), and commit. Do not run `mdbook-mermaid install` over the
+  vendored bundle.
 - **`create-missing = false`.** A `SUMMARY.md` entry that points at a missing page fails the build
   instead of quietly creating an empty page.
 - **CI.** The `Docs` workflow (`docs.yml`) builds the book on a PR that touches `docs/manual/**`,

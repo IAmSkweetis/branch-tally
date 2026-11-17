@@ -68,9 +68,10 @@ test-install: (_require "git" "install Git for Windows: https://gitforwindows.or
 test-install-live shell="pwsh": (_require shell "install PowerShell 7: https://learn.microsoft.com/powershell/scripting/install")
     {{ shell }} -NoProfile -ExecutionPolicy Bypass -File tests/install/install_live_test.ps1
 
-# Build the user manual (docs/manual) into docs/manual/book. Fails on a SUMMARY.md entry with no page.
-docs: (_require "mdbook" ("install it: https://github.com/rust-lang/mdBook/releases/tag/v" + mdbook_version + " or cargo install mdbook --version " + mdbook_version + " --locked")) (_require "mdbook-mermaid" ("install it: https://github.com/badboy/mdbook-mermaid/releases/tag/v" + mdbook_mermaid_version + " or cargo install mdbook-mermaid --version " + mdbook_mermaid_version + " --locked"))
+# Build the user manual (docs/manual) into docs/manual/book, then check every page carries the CSP and no inline script. Fails on a SUMMARY.md entry with no page.
+docs: (_require "uv" "install uv: https://docs.astral.sh/uv/getting-started/installation/") (_require "mdbook" ("install it: https://github.com/rust-lang/mdBook/releases/tag/v" + mdbook_version + " or cargo install mdbook --version " + mdbook_version + " --locked")) (_require "mdbook-mermaid" ("install it: https://github.com/badboy/mdbook-mermaid/releases/tag/v" + mdbook_mermaid_version + " or cargo install mdbook-mermaid --version " + mdbook_mermaid_version + " --locked"))
     mdbook build docs/manual
+    uv run scripts/check_manual.py docs/manual/book
 
 # Serve the user manual locally and rebuild on change (http://localhost:3000).
 docs-serve: (_require "mdbook" ("install it: https://github.com/rust-lang/mdBook/releases/tag/v" + mdbook_version + " or cargo install mdbook --version " + mdbook_version + " --locked")) (_require "mdbook-mermaid" ("install it: https://github.com/badboy/mdbook-mermaid/releases/tag/v" + mdbook_mermaid_version + " or cargo install mdbook-mermaid --version " + mdbook_mermaid_version + " --locked"))

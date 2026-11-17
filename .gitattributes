@@ -9,6 +9,9 @@ tests/fixtures/** -text
 # Hook-written capture events are append-only, id-only JSONL too; same union merge as the ledger.
 .tally/captures.jsonl merge=union
 
-# Vendored by `mdbook-mermaid install`; keep byte for byte, and out of diffs and language stats.
+# Vendored (mermaid.min.js from the npm tarball, provenance in docs/manual/book.toml; mermaid-init.js
+# as `mdbook-mermaid install` writes it). Keep byte for byte and out of language stats. `-diff` hides
+# the bundle from diffs, so its sha256 in mermaid.min.js.sha256 is the reviewable change, and
+# `just check-pins` fails when the two disagree.
 docs/manual/mermaid.min.js -text -diff linguist-vendored
 docs/manual/mermaid-init.js -text linguist-vendored
