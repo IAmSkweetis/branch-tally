@@ -129,6 +129,6 @@ this branch; see [Unstamped calls](cli.md#unstamped-calls).
   [Attribution modes](cli.md#attribution-modes)).
 - Save your preferred defaults in a [config file](config.md).
 - Keep the numbers after transcripts are purged with the [ledger](ledger.md), and let the
-  optional [Claude Code plugins](integration/claude-code.md) record it for you at the end of each
-  session. `record` and the plugins write only in a repository you have
+  optional [Claude Code hooks](integration/claude-code.md) record it for you at the end of each
+  session. `record` and the hooks write only in a repository you have
   [opted in](ledger.md#opt-the-repository-in) by committing a `.tally/` directory.

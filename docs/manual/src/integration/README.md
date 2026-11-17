@@ -8,7 +8,7 @@ transcripts are purged.
 
 | Harness | Page | Sets up |
 | ------- | ---- | ------- |
-| Claude Code | [Claude Code](claude-code.md) | Two optional plugins: `branch-tally-capture` for hook captures and `branch-tally-record` for the ledger. |
+| Claude Code | [Claude Code](claude-code.md) | Optional hooks: `capture` for hook captures and `record` for the ledger. The plugin that installed them is moving to a separate repository. |
 
 The files an integration writes are the same whichever harness wrote them. Each line of
 `.tally/captures.jsonl` and `.tally/ledger.jsonl` names its harness in a `harness` field, and

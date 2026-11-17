@@ -10,8 +10,8 @@ for that branch. It can also write the table into the branch's pull request. Tha
 done by subagents running in git worktrees.
 
 Claude Code is the agent harness supported today. branch-tally ships as a command-line tool for
-Linux, macOS and Windows, plus two optional Claude Code plugins whose hooks keep its numbers intact
-after transcripts are purged (see [Claude Code integration](integration/claude-code.md)).
+Linux, macOS and Windows. Optional Claude Code hooks keep its numbers intact after transcripts are
+purged (see [Claude Code integration](integration/claude-code.md)).
 
 > **Status: pre-alpha.** The flags, output and ledger format may still change between releases.
 > Follow the [roadmap](https://github.com/IAmSkweetis/branch-tally/milestone/1) for what is planned.
@@ -100,5 +100,5 @@ mouse wheel. Once it is zoomed in, drag to pan, and the reset button returns it 
 - [Persisting the Ledger](ledger.md): keep usage after transcripts are purged, and combine
   machines.
 - [Integration](integration/): run branch-tally from your agent harness's hooks. For
-  Claude Code, two optional plugins capture each session's branch and fill the ledger for you.
+  Claude Code, optional hooks capture each session's branch and fill the ledger for you.
 - [CLI reference](cli.md) and [Config reference](config.md): every flag and key.

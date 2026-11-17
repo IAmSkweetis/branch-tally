@@ -1,30 +1,34 @@
 # Claude Code
 
 branch-tally reads Claude Code's transcripts with no setup. This page covers the optional part:
-running branch-tally from Claude Code's own hooks.
+running branch-tally from Claude Code's own hooks, so the numbers keep working after Claude Code
+purges old transcripts and after worktrees are removed.
 
-branch-tally's repository is also a Claude Code plugin marketplace. It offers two optional plugins
-that run branch-tally from Claude Code hooks, so the numbers keep working after Claude Code purges
-old transcripts and after worktrees are removed.
+| Hooks | Run on | Run | Give you |
+| ----- | ------ | --- | -------- |
+| Capture | `SessionStart`, `SubagentStop`, `Stop` | `branch-tally capture` | A record of which branch each session was on, so calls whose transcript stamp is missing can still be attributed. See [Set up captures](#set-up-captures). |
+| Record | `SessionEnd` | `branch-tally record` | The [ledger](../ledger.md) filled in at the end of every session, before the transcripts can be purged. |
 
-| Plugin | Runs on | Runs | Gives you |
-| ------ | ------- | ---- | --------- |
-| `branch-tally-capture` | `SessionStart`, `SubagentStop`, `Stop` | `branch-tally capture` | A record of which branch each session was on, so calls whose transcript stamp is missing can still be attributed. See [Set up captures](#set-up-captures). |
-| `branch-tally-record` | `SessionEnd` | `branch-tally record` | The [ledger](../ledger.md) filled in at the end of every session, before the transcripts can be purged. |
+## The Claude Code plugin is moving
 
-They are separate plugins so you can install, disable or remove each one on its own. Claude Code
-can turn off a whole plugin but not one hook inside it.
+The Claude Code plugins that installed these hooks, `branch-tally-capture` and
+`branch-tally-record`, are moving to a separate repository. They can no longer be installed from
+branch-tally's repository. A link to their new home will follow on this page once it exists.
 
-## Before you install
+Until then, the capture hooks can go in a settings file of your own, as shown in
+[Set up captures](#set-up-captures), and so can a `SessionEnd` hook that runs `record`, as described
+in [SessionEnd time limit](#sessionend-time-limit).
 
-- **Install the binary first.** Both plugins call `branch-tally` by name, so it must be on the
-  `PATH` that Claude Code's hooks see. See [Installation](../installation/). Without it
-  the hooks do nothing.
+## Before you set up the hooks
+
+- **Install the binary first.** The hooks call `branch-tally` by name, so it must be on the `PATH`
+  that Claude Code's hooks see. See [Installation](../installation/). Without it the hooks do
+  nothing.
 - **Start Claude Code inside the repository.** The hooks run in the session's working directory.
   In a directory that is not a git checkout they find nothing to record.
-- **Opt the repository in.** Installing a plugin does not turn recording on. The hooks write only
-  in a repository that already has a `.tally/` directory, and they never create it. Create and
-  commit it once, from the repository's root:
+- **Opt the repository in.** Adding the hooks does not turn recording on. The hooks write only in a
+  repository that already has a `.tally/` directory, and they never create it. Create and commit it
+  once, from the repository's root:
 
   ```sh
   mkdir .tally
@@ -37,69 +41,26 @@ can turn off a whole plugin but not one hook inside it.
   `record` prints only `no .tally/ directory: nothing recorded (create it to opt in)`. See
   [Opt the repository in](../ledger.md#opt-the-repository-in).
 
-## Install
-
-In Claude Code, add the marketplace once, then install the plugins you want:
-
-```text
-/plugin marketplace add IAmSkweetis/branch-tally
-/plugin install branch-tally-capture@branch-tally
-/plugin install branch-tally-record@branch-tally
-```
-
-Install either one, both, or neither. To stop one later, disable or uninstall it:
-
-```text
-/plugin disable branch-tally-record@branch-tally
-/plugin uninstall branch-tally-record@branch-tally
-```
-
-### For everyone who works in a repository
-
-To turn the plugins on for a whole team, declare the marketplace and enable the plugins in the
-repository's `.claude/settings.json` and commit it. branch-tally's own repository does this:
-
-```json
-{
-  "extraKnownMarketplaces": {
-    "branch-tally": {
-      "source": {
-        "source": "github",
-        "repo": "IAmSkweetis/branch-tally"
-      }
-    }
-  },
-  "enabledPlugins": {
-    "branch-tally-capture@branch-tally": true,
-    "branch-tally-record@branch-tally": true
-  }
-}
-```
-
-Claude Code applies a marketplace declared this way only after each person trusts the folder. See
-the [Claude Code settings documentation](https://code.claude.com/docs/en/settings) for the rules.
-Everyone still needs the `branch-tally` binary installed.
-
 ## What the hooks do
 
 ```mermaid
 flowchart LR
-    S[SessionStart, Stop,<br/>SubagentStop] -- capture plugin --> C[".tally/captures.jsonl<br/>(main checkout)"]
-    E[SessionEnd] -- record plugin --> L[".tally/ledger.jsonl"]
+    S[SessionStart, Stop,<br/>SubagentStop] -- capture --> C[".tally/captures.jsonl<br/>(main checkout)"]
+    E[SessionEnd] -- record --> L[".tally/ledger.jsonl"]
     C -. "read by report, record" .-> R[report]
     L -. "report --from-ledger" .-> R
 ```
 
 Both hooks write only into a `.tally/` directory that already exists (see
-[Before you install](#before-you-install)), and never through a symbolic link (see
+[Before you set up the hooks](#before-you-set-up-the-hooks)), and never through a symbolic link (see
 [Symbolic links are refused](../ledger.md#symbolic-links-are-refused)).
 
-**`branch-tally-capture`** runs `branch-tally capture` when a session starts, when a subagent
+**The capture hooks** run `branch-tally capture` when a session starts, when a subagent
 finishes and when the main agent stops. Each run appends one line to `.tally/captures.jsonl` in the
 repository's main checkout: the session id, the agent id for a subagent, the branch, the kind of
 event and the time.
 
-**`branch-tally-record`** runs `branch-tally record` when a session ends. That appends the current
+**The record hook** runs `branch-tally record` when a session ends. That appends the current
 branch's attributed usage to `.tally/ledger.jsonl`, exactly as running `record` by hand would:
 
 - It records the branch that the session's directory has checked out when the session ends, in the
@@ -118,11 +79,8 @@ branch's attributed usage to `.tally/ledger.jsonl`, exactly as running `record` 
 it. In Claude Code, captures come from three hooks: `SessionStart`, `SubagentStop` and `Stop`. Each
 runs `branch-tally capture`, which reads the hook payload Claude Code passes on stdin.
 
-1. Install the `branch-tally-capture` plugin, as shown in [Install](#install). It sets up all
-   three hooks.
-
-   To use your own settings file instead of the plugin, add the same three hooks to it. This is
-   what the plugin installs:
+1. Add the three hooks to a Claude Code settings file, such as the repository's
+   `.claude/settings.json`. These are the hooks the capture plugin installed:
 
    ```json
    {
@@ -156,7 +114,8 @@ runs `branch-tally capture`, which reads the hook payload Claude Code passes on 
    (see [The hooks never block a session](#the-hooks-never-block-a-session)).
 
 2. Opt the repository in by creating and committing `.tally/`, as shown in
-   [Before you install](#before-you-install). Without it, `capture` writes nothing.
+   [Before you set up the hooks](#before-you-set-up-the-hooks). Without it, `capture` writes
+   nothing.
 
 3. Start Claude Code in the repository and work as usual. The first capture creates
    `captures.jsonl` inside the main checkout's `.tally/`.
@@ -176,8 +135,8 @@ a directory that is not a repository, a detached HEAD, a branch with no usage ye
 symbolic link in `.tally/`, or a usage error. Claude Code never sees a failure and never blocks
 `Stop` or `SubagentStop`.
 
-The three capture hooks each set a 30-second `timeout`. The record hook sets none, because a
-plugin can't change how long `SessionEnd` gets. That limit is covered next.
+The three capture hooks each set a 30-second `timeout`. `SessionEnd` has a limit of its own,
+covered next.
 
 ## SessionEnd time limit
 
@@ -189,9 +148,9 @@ can take longer than 1.5 seconds. To give it more time, do one of these:
 - Set `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS`, in milliseconds, before you start Claude Code. For
   example, `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS=10000 claude` allows 10 seconds. This needs
   Claude Code v2.1.268 or later. Before that, the variable raised only the overall budget, and a
-  hook with no `timeout` of its own, like the record plugin's, was still stopped after 1.5 seconds.
+  hook with no `timeout` of its own was still stopped after 1.5 seconds.
 - Add your own `SessionEnd` hook that runs `branch-tally record; exit 0` with a `timeout` (up to 60
-  seconds) in your settings file, instead of installing the record plugin.
+  seconds) in your settings file.
 
 These rules belong to Claude Code, not branch-tally. Check the `SessionEnd` section of the
 [Claude Code hooks reference](https://code.claude.com/docs/en/hooks) for the current behaviour.
