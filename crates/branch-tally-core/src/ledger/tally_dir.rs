@@ -46,7 +46,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::LedgerError;
-use super::bounded::{Bounded, MAX_LINE_BYTES, MAX_TALLY_FILE_BYTES, read_bounded};
+use super::bounded::{Bounded, MAX_TALLY_FILE_BYTES, read_open_file};
 
 /// The directory name, relative to the main checkout.
 pub const TALLY_DIR: &str = ".tally";
@@ -387,9 +387,9 @@ impl TallyDir {
         let Some((file, path)) = self.open_for_read(name, &|| {})? else {
             return Ok(None);
         };
-        read_bounded(file, MAX_LINE_BYTES)
+        read_open_file(file)
             .map(Some)
-            .map_err(|source| LedgerError::Read { path, source })
+            .map_err(|source| LedgerError::from_read(&path, source))
     }
 
     /// Verifies and opens `name` for reading. `Ok(None)` when it does not exist.
@@ -562,10 +562,13 @@ impl TallyDir {
         }
         between();
         if let Some(expected) = expected {
-            // Bounded like every ledger read: an over-long line shows as a marker, which differs
-            // from `expected` (callers refuse to rewrite a file holding one), so it reads as changed.
+            // Bounded like every ledger read. An over-long line shows as the marker a literal
+            // marker line also reads as, so any over-long line counts as changed.
             let unchanged = match self.read_bounded(name) {
-                Ok(now) => now.unwrap_or_default().bytes == expected,
+                Ok(now) => {
+                    let now = now.unwrap_or_default();
+                    now.overlong == 0 && now.bytes == expected
+                }
                 Err(e) => {
                     drop(file);
                     self.remove_quietly(&temp);

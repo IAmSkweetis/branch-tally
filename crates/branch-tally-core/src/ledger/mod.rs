@@ -522,6 +522,24 @@ pub enum LedgerError {
     },
 }
 
+impl LedgerError {
+    /// The error for a failed bounded read of the line file at `path`: a file over
+    /// [`MAX_TALLY_FILE_BYTES`] is [`LedgerError::TooLarge`], anything else [`LedgerError::Read`].
+    pub(crate) fn from_read(path: &Path, source: std::io::Error) -> Self {
+        if source.kind() == std::io::ErrorKind::FileTooLarge {
+            Self::TooLarge {
+                path: path.to_owned(),
+                limit: MAX_TALLY_FILE_BYTES,
+            }
+        } else {
+            Self::Read {
+                path: path.to_owned(),
+                source,
+            }
+        }
+    }
+}
+
 fn line_text(entry: &LedgerEntry) -> String {
     // An entry is plain data with string keys, so serialization cannot fail; an empty string
     // would still sort deterministically if it somehow did.
@@ -559,12 +577,7 @@ pub fn read(path: &Path) -> Result<Ledger, LedgerError> {
     let bytes = match read_file(path).map(|b| b.bytes) {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Ledger::default()),
-        Err(source) => {
-            return Err(LedgerError::Read {
-                path: path.to_owned(),
-                source,
-            });
-        }
+        Err(source) => return Err(LedgerError::from_read(path, source)),
     };
     Ok(parse_ledger(&bytes))
 }
@@ -766,12 +779,7 @@ pub fn append_pending(
     let existing = match read_file(path).map(|b| b.bytes) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(source) => {
-            return Err(LedgerError::Read {
-                path: path.to_owned(),
-                source,
-            });
-        }
+        Err(source) => return Err(LedgerError::from_read(path, source)),
     };
     let Plan { buf, out } = plan_append(
         &existing,
@@ -892,12 +900,7 @@ pub fn append_entries(
     let existing = match read_file(path).map(|b| b.bytes) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(source) => {
-            return Err(LedgerError::Read {
-                path: path.to_owned(),
-                source,
-            });
-        }
+        Err(source) => return Err(LedgerError::from_read(path, source)),
     };
     let Plan { buf, out } = plan_entries(&existing, entries, clock);
     if out.appended == 0 {

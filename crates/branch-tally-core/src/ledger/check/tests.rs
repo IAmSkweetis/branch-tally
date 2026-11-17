@@ -437,3 +437,40 @@ fn check_uses_the_production_file_limit() {
     let r = run_bytes((None, None), (Some(&big), None), None);
     assert_eq!(rules(&r), vec![Rule::FileTooLarge]);
 }
+
+fn line_too_long(file: CheckedFile, line: u64) -> Violation {
+    Violation {
+        file,
+        line: Some(line),
+        rule: Rule::LineTooLong,
+    }
+}
+
+#[test]
+fn a_line_of_exactly_the_cap_plus_a_cr_is_too_long_in_both_files() {
+    // The reader counts the CR, so the check must measure the physical line.
+    let mut head = vec![b'a'; MAX_LINE_BYTES];
+    head.extend(b"\r\n");
+    let r = run_bytes((None, None), (Some(&head), None), None);
+    assert_eq!(r.violations, vec![line_too_long(CheckedFile::Ledger, 1)]);
+    let r = run_bytes((None, None), (None, Some(&head)), None);
+    assert_eq!(r.violations, vec![line_too_long(CheckedFile::Captures, 1)]);
+}
+
+#[test]
+fn an_overlong_whitespace_only_line_is_too_long_in_both_files() {
+    let mut head = b"\n".to_vec();
+    head.extend(vec![b' '; MAX_LINE_BYTES + 1]);
+    head.push(b'\n');
+    let r = run_bytes((None, None), (Some(&head), None), None);
+    assert_eq!(r.violations, vec![line_too_long(CheckedFile::Ledger, 2)]);
+    let r = run_bytes((None, None), (None, Some(&head)), None);
+    assert_eq!(r.violations, vec![line_too_long(CheckedFile::Captures, 2)]);
+}
+
+#[test]
+fn a_whitespace_only_line_at_the_cap_is_still_ignored() {
+    let mut head = vec![b' '; MAX_LINE_BYTES];
+    head.push(b'\n');
+    assert!(run_bytes((None, None), (Some(&head), None), None).is_clean());
+}

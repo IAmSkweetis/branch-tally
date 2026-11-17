@@ -31,8 +31,14 @@ pub(super) struct Bounded {
     pub overlong: u64,
 }
 
-/// Reads `reader` to the end holding at most `cap` bytes of any one line.
-pub(super) fn read_bounded<R: Read>(reader: R, cap: usize) -> io::Result<Bounded> {
+/// Reads `reader` to the end holding at most `cap` bytes of any one line and taking in at most
+/// `max_total` bytes in all.
+///
+/// # Errors
+/// An error of kind [`io::ErrorKind::FileTooLarge`] as soon as more than `max_total` bytes have
+/// been read; nothing past the buffer that crossed the limit is consumed. Other read errors pass
+/// through.
+pub(super) fn read_bounded<R: Read>(reader: R, cap: usize, max_total: u64) -> io::Result<Bounded> {
     let mut reader = BufReader::new(reader);
     let mut out = Bounded::default();
     // Length of the current line kept so far, whether it already exceeded the cap, and where it
@@ -40,10 +46,15 @@ pub(super) fn read_bounded<R: Read>(reader: R, cap: usize) -> io::Result<Bounded
     let mut line_len = 0usize;
     let mut skipping = false;
     let mut line_start = 0usize;
+    let mut total = 0u64;
     loop {
         let chunk = reader.fill_buf()?;
         if chunk.is_empty() {
             break;
+        }
+        total = total.saturating_add(chunk.len() as u64);
+        if total > max_total {
+            return Err(io::Error::from(io::ErrorKind::FileTooLarge));
         }
         let used = chunk.len();
         let mut rest = chunk;
@@ -77,10 +88,20 @@ pub(super) fn read_bounded<R: Read>(reader: R, cap: usize) -> io::Result<Bounded
     Ok(out)
 }
 
-/// Reads the line file at `path` with [`MAX_LINE_BYTES`]. A missing file is an `io::Error` of
-/// kind `NotFound`, as with `std::fs::read`.
+/// Reads the line file at `path` with [`MAX_LINE_BYTES`] and [`MAX_TALLY_FILE_BYTES`]. A missing
+/// file is an `io::Error` of kind `NotFound`, as with `std::fs::read`; a file over the size limit
+/// is one of kind `FileTooLarge`, refused on its length alone before any read.
 pub(super) fn read_file(path: &std::path::Path) -> io::Result<Bounded> {
-    read_bounded(std::fs::File::open(path)?, MAX_LINE_BYTES)
+    let file = std::fs::File::open(path)?;
+    read_open_file(file)
+}
+
+/// [`read_file`] for a file already open.
+pub(super) fn read_open_file(file: std::fs::File) -> io::Result<Bounded> {
+    if file.metadata()?.len() > MAX_TALLY_FILE_BYTES {
+        return Err(io::Error::from(io::ErrorKind::FileTooLarge));
+    }
+    read_bounded(file, MAX_LINE_BYTES, MAX_TALLY_FILE_BYTES)
 }
 
 #[cfg(test)]
@@ -88,7 +109,7 @@ mod tests {
     use super::*;
 
     fn read(input: &[u8], cap: usize) -> Bounded {
-        read_bounded(input, cap).unwrap()
+        read_bounded(input, cap, u64::MAX).unwrap()
     }
 
     #[test]
@@ -117,7 +138,7 @@ mod tests {
     fn an_overlong_line_is_never_buffered() {
         // A reader that would hand out far more than the cap; the output stays tiny.
         let big = std::io::repeat(b'a').take(50_000_000);
-        let got = read_bounded(big, 16).unwrap();
+        let got = read_bounded(big, 16, u64::MAX).unwrap();
         assert_eq!(got.bytes, OVERLONG_MARKER);
         assert_eq!(got.overlong, 1);
         assert!(got.bytes.capacity() < 1024);
@@ -129,5 +150,34 @@ mod tests {
         input.push(b'\n');
         assert_eq!(read(&input, 100_000).overlong, 0);
         assert_eq!(read(&input, 99_999).overlong, 1);
+    }
+
+    #[test]
+    fn many_short_lines_past_the_total_limit_are_refused() {
+        let input = b"a\n".repeat(10);
+        let err = read_bounded(&input[..], 8, 19).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::FileTooLarge);
+        // Exactly at the limit is fine.
+        assert_eq!(read_bounded(&input[..], 8, 20).unwrap().bytes, input);
+    }
+
+    #[test]
+    fn the_total_limit_stops_the_read_without_draining_the_reader() {
+        let mut source = std::io::repeat(b'a').take(50_000_000);
+        let err = read_bounded(&mut source, 16, 1000).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::FileTooLarge);
+        // Only a buffer or so past the limit was consumed, not the whole source.
+        assert!(source.limit() > 49_000_000, "{}", source.limit());
+    }
+
+    #[test]
+    fn read_file_refuses_a_file_over_the_production_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("big");
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(MAX_TALLY_FILE_BYTES + 1).unwrap();
+        drop(file);
+        let err = read_file(&path).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::FileTooLarge);
     }
 }
