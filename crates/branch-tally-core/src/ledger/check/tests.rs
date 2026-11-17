@@ -327,3 +327,150 @@ fn a_faithful_resolution_of_a_fully_populated_pending_line_is_clean() {
     );
     assert!(r.is_clean(), "{:?}", r.violations);
 }
+
+fn run_bytes(
+    base: (Option<&[u8]>, Option<&[u8]>),
+    head: (Option<&[u8]>, Option<&[u8]>),
+    limit: Option<u64>,
+) -> CheckReport {
+    let input = CheckInput {
+        base_ledger: base.0,
+        head_ledger: head.0,
+        base_captures: base.1,
+        head_captures: head.1,
+        head_branch: "feat/x",
+        base_branch: "main",
+        now: &now(),
+    };
+    match limit {
+        Some(limit) => check_with_limit(&input, limit),
+        None => check(&input),
+    }
+}
+
+fn overlong() -> Vec<u8> {
+    let mut v = vec![b'a'; MAX_LINE_BYTES + 1];
+    v.push(b'\n');
+    v
+}
+
+#[test]
+fn an_overlong_new_ledger_line_is_a_violation_with_its_line_number() {
+    let mut head = join(&[entry("r1", "feat/x")]);
+    head.extend(overlong());
+    let r = run_bytes((None, None), (Some(&head), None), None);
+    assert_eq!(
+        r.violations,
+        vec![Violation {
+            file: CheckedFile::Ledger,
+            line: Some(2),
+            rule: Rule::LineTooLong
+        }]
+    );
+}
+
+#[test]
+fn an_overlong_new_captures_line_is_a_violation_with_its_line_number() {
+    let mut head = b"\n".to_vec();
+    head.extend(overlong());
+    let r = run_bytes((None, None), (None, Some(&head)), None);
+    assert_eq!(
+        r.violations,
+        vec![Violation {
+            file: CheckedFile::Captures,
+            line: Some(2),
+            rule: Rule::LineTooLong
+        }]
+    );
+}
+
+#[test]
+fn a_line_of_exactly_the_cap_is_parsed_not_flagged() {
+    let mut head = vec![b'a'; MAX_LINE_BYTES];
+    head.push(b'\n');
+    let r = run_bytes((None, None), (Some(&head), None), None);
+    assert_eq!(rules(&r), vec![Rule::Unparseable]);
+}
+
+#[test]
+fn a_file_over_the_limit_fails_as_too_large_and_is_not_checked() {
+    let head = join(&[entry("r1", "main")]);
+    let limit = head.len() as u64 - 1;
+    let r = run_bytes((None, None), (Some(&head), None), Some(limit));
+    assert_eq!(
+        r.violations,
+        vec![Violation {
+            file: CheckedFile::Ledger,
+            line: None,
+            rule: Rule::FileTooLarge
+        }]
+    );
+    let r = run_bytes((None, None), (Some(&head), None), Some(head.len() as u64));
+    assert_eq!(rules(&r), vec![Rule::RecordedForBaseBranch]);
+}
+
+#[test]
+fn a_base_or_captures_file_over_the_limit_is_too_large_too() {
+    let big = vec![b'\n'; 11];
+    let r = run_bytes((Some(&big), None), (None, Some(&big)), Some(10));
+    assert_eq!(
+        r.violations,
+        vec![
+            Violation {
+                file: CheckedFile::Ledger,
+                line: None,
+                rule: Rule::FileTooLarge
+            },
+            Violation {
+                file: CheckedFile::Captures,
+                line: None,
+                rule: Rule::FileTooLarge
+            },
+        ]
+    );
+}
+
+#[test]
+fn check_uses_the_production_file_limit() {
+    // A zero-filled allocation is lazily mapped, so this is cheap.
+    let big = vec![0u8; usize::try_from(MAX_TALLY_FILE_BYTES).unwrap() + 1];
+    let r = run_bytes((None, None), (Some(&big), None), None);
+    assert_eq!(rules(&r), vec![Rule::FileTooLarge]);
+}
+
+fn line_too_long(file: CheckedFile, line: u64) -> Violation {
+    Violation {
+        file,
+        line: Some(line),
+        rule: Rule::LineTooLong,
+    }
+}
+
+#[test]
+fn a_line_of_exactly_the_cap_plus_a_cr_is_too_long_in_both_files() {
+    // The reader counts the CR, so the check must measure the physical line.
+    let mut head = vec![b'a'; MAX_LINE_BYTES];
+    head.extend(b"\r\n");
+    let r = run_bytes((None, None), (Some(&head), None), None);
+    assert_eq!(r.violations, vec![line_too_long(CheckedFile::Ledger, 1)]);
+    let r = run_bytes((None, None), (None, Some(&head)), None);
+    assert_eq!(r.violations, vec![line_too_long(CheckedFile::Captures, 1)]);
+}
+
+#[test]
+fn an_overlong_whitespace_only_line_is_too_long_in_both_files() {
+    let mut head = b"\n".to_vec();
+    head.extend(vec![b' '; MAX_LINE_BYTES + 1]);
+    head.push(b'\n');
+    let r = run_bytes((None, None), (Some(&head), None), None);
+    assert_eq!(r.violations, vec![line_too_long(CheckedFile::Ledger, 2)]);
+    let r = run_bytes((None, None), (None, Some(&head)), None);
+    assert_eq!(r.violations, vec![line_too_long(CheckedFile::Captures, 2)]);
+}
+
+#[test]
+fn a_whitespace_only_line_at_the_cap_is_still_ignored() {
+    let mut head = vec![b' '; MAX_LINE_BYTES];
+    head.push(b'\n');
+    assert!(run_bytes((None, None), (Some(&head), None), None).is_clean());
+}

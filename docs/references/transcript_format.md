@@ -74,6 +74,11 @@ Choices the parser makes where the format is silent. Fixtures for each are in
   any counter. A blank line is ignored. A usage record lands in at most one counter, checked in
   the order `synthetic`, `no_dedupe_key`, `duplicates_removed`. Invalid JSON, invalid UTF-8, or a
   declared field of the wrong type (including a non-object `message`) is `malformed_lines`.
+- **Line-length cap.** A line over 16 MiB (`MAX_LINE_BYTES`, excluding the newline) is counted in
+  `malformed_lines`, discarded up to its newline without being held, and reading continues with
+  the next line. The dispatch pass skips such a line without counting it again. Observed
+  2026-11-17 (Claude Code transcripts on one machine): the longest real line across 23
+  transcripts was about 132 KiB, and base64 images can push lines to several MiB.
 - **Fallbacks.** Dedupe key is `requestId`, else `uuid`; an empty string counts as absent. The
   `uuid` is stored in `Record::request_id`, with `Record::request_id_is_fallback` set to true, and
   `ReadStats::fallback_key_used` counts the emitted records keyed this way (informational, not

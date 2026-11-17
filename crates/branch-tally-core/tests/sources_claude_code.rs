@@ -599,6 +599,31 @@ fn dispatches(scenario: &str) -> Vec<Dispatch> {
 type Link = (String, String, Option<String>);
 
 /// `(session, agent, branch)` triples, sorted for a stable comparison.
+#[test]
+fn a_line_over_the_production_cap_is_counted_malformed_and_reading_continues() {
+    // Generated here, never committed: one valid record, a 17 MiB line, one valid record.
+    let record = |id: &str| {
+        format!(
+            r#"{{"type":"assistant","requestId":"{id}","uuid":"u-{id}","sessionId":"s1","timestamp":"2026-01-01T00:00:00.000Z","cwd":"C:\\repo","message":{{"model":"m","usage":{{"input_tokens":1,"output_tokens":2}}}}}}"#
+        )
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("C--repo");
+    std::fs::create_dir(&root).unwrap();
+    let huge = format!(r#"{{"pad":"{}"}}"#, "x".repeat(17 * 1024 * 1024));
+    let body = format!("{}\n{huge}\n{}\n", record("a"), record("b"));
+    std::fs::write(root.join("s1.jsonl"), body).unwrap();
+
+    let roots = ClaudeCode
+        .discover(dir.path(), &RepoIdentity::new(r"C:\repo"))
+        .unwrap();
+    let mut records = Vec::new();
+    let stats = ClaudeCode.read(&roots, &mut |r| records.push(r)).unwrap();
+    assert_eq!(records.len(), 2);
+    assert_eq!(stats.malformed_lines, 1);
+    assert_eq!(ClaudeCode.dispatches(&roots).unwrap().len(), 0);
+}
+
 fn links(scenario: &str) -> Vec<Link> {
     let mut found: Vec<Link> = dispatches(scenario)
         .into_iter()

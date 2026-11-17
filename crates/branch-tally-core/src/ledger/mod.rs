@@ -19,6 +19,7 @@
 //! Bad input is counted in [`ReadStats`], never dropped silently and never a panic. Errors name
 //! a path, never line content.
 
+mod bounded;
 mod captures;
 mod check;
 mod keyed_append;
@@ -28,6 +29,9 @@ mod tally_dir;
 
 use std::path::{Path, PathBuf};
 
+use bounded::read_file;
+
+pub use bounded::{MAX_LINE_BYTES, MAX_TALLY_FILE_BYTES};
 pub use keyed_append::{
     append_keyed_default, append_keyed_default_pending, append_keyed_explicit,
     append_keyed_explicit_pending,
@@ -471,6 +475,15 @@ pub enum LedgerError {
         /// The underlying error.
         source: std::io::Error,
     },
+    /// A `.tally/` file is larger than the most core will read (#103). Nothing past the limit was
+    /// buffered.
+    #[error("{} is larger than the {limit}-byte limit and was not read", path.display())]
+    TooLarge {
+        /// The file's path.
+        path: PathBuf,
+        /// The limit in bytes.
+        limit: u64,
+    },
     /// Writing the ledger failed.
     #[error("cannot write ledger {}: {source}", path.display())]
     Write {
@@ -509,6 +522,24 @@ pub enum LedgerError {
     },
 }
 
+impl LedgerError {
+    /// The error for a failed bounded read of the line file at `path`: a file over
+    /// [`MAX_TALLY_FILE_BYTES`] is [`LedgerError::TooLarge`], anything else [`LedgerError::Read`].
+    pub(crate) fn from_read(path: &Path, source: std::io::Error) -> Self {
+        if source.kind() == std::io::ErrorKind::FileTooLarge {
+            Self::TooLarge {
+                path: path.to_owned(),
+                limit: MAX_TALLY_FILE_BYTES,
+            }
+        } else {
+            Self::Read {
+                path: path.to_owned(),
+                source,
+            }
+        }
+    }
+}
+
 fn line_text(entry: &LedgerEntry) -> String {
     // An entry is plain data with string keys, so serialization cannot fail; an empty string
     // would still sort deterministically if it somehow did.
@@ -543,15 +574,10 @@ fn parse_line(bytes: &[u8]) -> Result<(LedgerEntry, bool), bool> {
 /// # Errors
 /// [`LedgerError::Read`] when the file exists but cannot be read.
 pub fn read(path: &Path) -> Result<Ledger, LedgerError> {
-    let bytes = match std::fs::read(path) {
+    let bytes = match read_file(path).map(|b| b.bytes) {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Ledger::default()),
-        Err(source) => {
-            return Err(LedgerError::Read {
-                path: path.to_owned(),
-                source,
-            });
-        }
+        Err(source) => return Err(LedgerError::from_read(path, source)),
     };
     Ok(parse_ledger(&bytes))
 }
@@ -568,7 +594,9 @@ pub fn read_default(root: &Path) -> Result<Ledger, LedgerError> {
     let Some(tally) = TallyDir::open(root)? else {
         return Ok(Ledger::default());
     };
-    Ok(parse_ledger(&tally.read(LEDGER_FILE)?.unwrap_or_default()))
+    Ok(parse_ledger(
+        &tally.read_bounded(LEDGER_FILE)?.unwrap_or_default().bytes,
+    ))
 }
 
 fn parse_ledger(bytes: &[u8]) -> Ledger {
@@ -748,15 +776,10 @@ pub fn append_pending(
         source,
     };
     // Read once, for both the dedupe keys and the trailing-newline check. A missing file is empty.
-    let existing = match std::fs::read(path) {
+    let existing = match read_file(path).map(|b| b.bytes) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(source) => {
-            return Err(LedgerError::Read {
-                path: path.to_owned(),
-                source,
-            });
-        }
+        Err(source) => return Err(LedgerError::from_read(path, source)),
     };
     let Plan { buf, out } = plan_append(
         &existing,
@@ -839,7 +862,7 @@ pub fn append_default_pending(
             ..AppendOutcome::default()
         });
     };
-    let existing = tally.read(LEDGER_FILE)?.unwrap_or_default();
+    let existing = tally.read_bounded(LEDGER_FILE)?.unwrap_or_default().bytes;
     let Plan { buf, out } = plan_append(
         &existing,
         records,
@@ -874,15 +897,10 @@ pub fn append_entries(
         path: path.to_owned(),
         source,
     };
-    let existing = match std::fs::read(path) {
+    let existing = match read_file(path).map(|b| b.bytes) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(source) => {
-            return Err(LedgerError::Read {
-                path: path.to_owned(),
-                source,
-            });
-        }
+        Err(source) => return Err(LedgerError::from_read(path, source)),
     };
     let Plan { buf, out } = plan_entries(&existing, entries, clock);
     if out.appended == 0 {
@@ -917,7 +935,7 @@ pub fn append_entries_default(
             ..AppendOutcome::default()
         });
     };
-    let existing = tally.read(LEDGER_FILE)?.unwrap_or_default();
+    let existing = tally.read_bounded(LEDGER_FILE)?.unwrap_or_default().bytes;
     let Plan { buf, out } = plan_entries(&existing, entries, clock);
     if out.appended > 0 {
         tally.append(LEDGER_FILE, buf.as_bytes())?;

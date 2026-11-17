@@ -46,6 +46,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::LedgerError;
+use super::bounded::{Bounded, MAX_TALLY_FILE_BYTES, read_open_file};
 
 /// The directory name, relative to the main checkout.
 pub const TALLY_DIR: &str = ".tally";
@@ -111,7 +112,7 @@ pub struct TallyDir {
     handle: Arc<File>,
 }
 
-fn refused(path: &Path, reason: &'static str) -> LedgerError {
+pub(super) fn refused(path: &Path, reason: &'static str) -> LedgerError {
     LedgerError::Refused {
         path: path.to_owned(),
         reason,
@@ -332,11 +333,71 @@ impl TallyDir {
     /// [`LedgerError::Refused`] when it is a link or not a regular file, or `name` is not a
     /// single plain component; [`LedgerError::Read`] when it cannot be read.
     pub fn read(&self, name: &str) -> Result<Option<Vec<u8>>, LedgerError> {
-        self.read_with(name, &|| {})
+        self.read_limited(name, MAX_TALLY_FILE_BYTES)
+    }
+
+    /// [`TallyDir::read`] with the size limit given, so tests can use a small one.
+    fn read_limited(&self, name: &str, limit: u64) -> Result<Option<Vec<u8>>, LedgerError> {
+        self.read_with(name, limit, &|| {})
     }
 
     /// `read` with a seam that runs after `.tally` is verified and before the file is opened.
-    fn read_with(&self, name: &str, between: &dyn Fn()) -> Result<Option<Vec<u8>>, LedgerError> {
+    fn read_with(
+        &self,
+        name: &str,
+        limit: u64,
+        between: &dyn Fn(),
+    ) -> Result<Option<Vec<u8>>, LedgerError> {
+        let Some((file, path)) = self.open_for_read(name, between)? else {
+            return Ok(None);
+        };
+        let too_large = |path: PathBuf| LedgerError::TooLarge { path, limit };
+        // Refuse on the size alone first, so a huge file is never read; then cap the read itself,
+        // in case the file grew since.
+        let len = file
+            .metadata()
+            .map_err(|source| LedgerError::Read {
+                path: path.clone(),
+                source,
+            })?
+            .len();
+        if len > limit {
+            return Err(too_large(path));
+        }
+        let mut bytes = Vec::new();
+        file.take(limit.saturating_add(1))
+            .read_to_end(&mut bytes)
+            .map_err(|source| LedgerError::Read {
+                path: path.clone(),
+                source,
+            })?;
+        if bytes.len() as u64 > limit {
+            return Err(too_large(path));
+        }
+        Ok(Some(bytes))
+    }
+
+    /// Reads the line file `name` holding at most [`MAX_LINE_BYTES`] of any one line (#103): an
+    /// over-long line is skipped without being buffered and stands in the bytes as a marker no
+    /// parser accepts, so it is counted as malformed under its own line number.
+    ///
+    /// # Errors
+    /// As [`TallyDir::read`].
+    pub(super) fn read_bounded(&self, name: &str) -> Result<Option<Bounded>, LedgerError> {
+        let Some((file, path)) = self.open_for_read(name, &|| {})? else {
+            return Ok(None);
+        };
+        read_open_file(file)
+            .map(Some)
+            .map_err(|source| LedgerError::from_read(&path, source))
+    }
+
+    /// Verifies and opens `name` for reading. `Ok(None)` when it does not exist.
+    fn open_for_read(
+        &self,
+        name: &str,
+        between: &dyn Fn(),
+    ) -> Result<Option<(File, PathBuf)>, LedgerError> {
         let path = self.file_path(name);
         if !is_plain_name(name) {
             return Err(refused(&path, "the name is not a single plain component"));
@@ -352,14 +413,12 @@ impl TallyDir {
             source,
         };
         between();
-        let mut file = self.open_file(name, false).map_err(read_err)?;
+        let file = self.open_file(name, false).map_err(read_err)?;
         let meta = file.metadata().map_err(read_err)?;
         if !is_plain_file(&meta) {
             return Err(refused(&path, "it is not a regular file"));
         }
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes).map_err(read_err)?;
-        Ok(Some(bytes))
+        Ok(Some((file, path)))
     }
 
     /// Creates `name` exclusively with `bytes`. `Ok(true)` when this call created it, `Ok(false)`
@@ -503,8 +562,13 @@ impl TallyDir {
         }
         between();
         if let Some(expected) = expected {
-            let unchanged = match self.read(name) {
-                Ok(now) => now.as_deref().unwrap_or_default() == expected,
+            // Bounded like every ledger read. An over-long line shows as the marker a literal
+            // marker line also reads as, so any over-long line counts as changed.
+            let unchanged = match self.read_bounded(name) {
+                Ok(now) => {
+                    let now = now.unwrap_or_default();
+                    now.overlong == 0 && now.bytes == expected
+                }
                 Err(e) => {
                     drop(file);
                     self.remove_quietly(&temp);
@@ -632,6 +696,47 @@ mod tests {
         std::fs::write(dir.path().join(TALLY_DIR), b"x").unwrap();
         let err = TallyDir::open(dir.path()).unwrap_err();
         assert!(matches!(err, LedgerError::Refused { .. }), "{err}");
+    }
+
+    #[test]
+    fn a_file_over_the_limit_is_refused_with_too_large() {
+        let dir = checkout();
+        let tally = with_tally(dir.path());
+        tally.append("f.jsonl", b"0123456789").unwrap();
+        let err = tally.read_limited("f.jsonl", 9).unwrap_err();
+        assert!(
+            matches!(err, LedgerError::TooLarge { limit: 9, .. }),
+            "{err}"
+        );
+        assert_eq!(
+            tally.read_limited("f.jsonl", 10).unwrap().unwrap().len(),
+            10
+        );
+    }
+
+    #[test]
+    fn a_file_that_grows_past_the_limit_after_the_size_check_is_still_bounded() {
+        // The read itself is capped, not just the metadata check: a limit of 4 on a 10-byte
+        // file reached through the reading path must not return 10 bytes.
+        let dir = checkout();
+        let tally = with_tally(dir.path());
+        tally.append("f.jsonl", b"0123456789").unwrap();
+        assert!(tally.read_limited("f.jsonl", 4).is_err());
+    }
+
+    #[test]
+    fn read_uses_the_production_limit() {
+        let dir = checkout();
+        let tally = with_tally(dir.path());
+        // A sparse file one byte over the limit: nothing is written, nothing is read.
+        let file = std::fs::File::create(tally.file_path("big")).unwrap();
+        file.set_len(MAX_TALLY_FILE_BYTES + 1).unwrap();
+        drop(file);
+        let err = tally.read("big").unwrap_err();
+        assert!(
+            matches!(err, LedgerError::TooLarge { limit, .. } if limit == MAX_TALLY_FILE_BYTES),
+            "{err}"
+        );
     }
 
     #[test]
@@ -864,7 +969,7 @@ mod tests {
         std::fs::write(victim.join("f.jsonl"), b"theirs\n").unwrap();
         // Pinned behaviour: the read goes through the held fd and returns the original's bytes.
         let got = tally
-            .read_with("f.jsonl", &|| {
+            .read_with("f.jsonl", MAX_TALLY_FILE_BYTES, &|| {
                 swap_tally_for_link(dir.path(), &victim);
             })
             .unwrap();
