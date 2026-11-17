@@ -29,7 +29,7 @@ INSTALL_SCRIPTS = {
     "minisign": Path("scripts/ci-install-minisign.sh"),
     "powershell": Path("scripts/ci-install-pwsh.sh"),
 }
-VENDORED = [Path("docs/manual/svg-pan-zoom.min.js")]
+VENDORED = [Path("docs/manual/svg-pan-zoom.min.js"), Path("docs/manual/mermaid.min.js")]
 
 
 def _read(path: Path) -> str:
