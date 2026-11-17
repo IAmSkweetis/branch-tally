@@ -134,7 +134,7 @@ Never delete `main`, locally or remotely. Never force-push.
 
 ```bash
 git worktree prune
-git status --short -- . ':!.tally'    # must print nothing; .tally/ is appended to by the plugins
+git status --short -- . ':!.tally'    # must print nothing; .tally/ is appended to by the capture and record hooks
 git checkout main
 git fetch origin
 git merge --ff-only origin/main

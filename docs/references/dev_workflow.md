@@ -153,9 +153,8 @@ its own lists the recipes.
 | `just secret-scan [args…]` | `gitleaks git` over the full history of every local ref, redacted. CI passes `--log-opts=HEAD` | `gitleaks git --redact .` |
 | `just audit-workflows [--offline]` | `zizmor` over `.github/`, pinned. Online audits run when `GH_TOKEN` is set. | `uvx zizmor@<pin> .github/` |
 | `just test-scripts` | proves `scripts/check-commit-subject.sh`, `scripts/check-branch-name.sh` and `scripts/package.sh` and `scripts/sign-checksums.sh` (release signing, against the real minisign when present, a failure in CI when absent) reject what they must and accept what they should | `sh scripts/test-checks.sh` |
-| `just check-pins` | fails when `mise.toml` disagrees with the pins in the justfile, the workflows, `rust-toolchain.toml`, `scripts/ci-install-minisign.sh` or `scripts/ci-install-pwsh.sh` (whose `sha256` pins must also be well-formed 64-hex digests) (or lacks one of them, or lists a tool nothing else pins), or when a vendored manual asset no longer matches its recorded sha256. Reads the files as text: needs `uv` only, not mise, just's evaluator or the network | `uv run scripts/check_pins.py` |
+| `just check-pins` | fails when `mise.toml` disagrees with the pins in the justfile, the workflows (including `setup-uv`'s `version:`), `rust-toolchain.toml`, `scripts/ci-install-minisign.sh` or `scripts/ci-install-pwsh.sh` (whose `sha256` pins must also be well-formed 64-hex digests) (or lacks one of them, or lists a tool nothing else pins), when `.claude/settings.json` runs an unpinned `uvx` tool or a rumdl other than the justfile's, or when a vendored manual asset no longer matches its recorded sha256. Reads the files as text: needs `uv` only, not mise, just's evaluator or the network | `uv run scripts/check_pins.py` |
 | `just test-py` | `unittest` for `scripts/scrub_transcripts.py`, `scripts/make_goldens.py` and `scripts/splice_token_report.py`, including one end-to-end run of the reference | `uv run python -m unittest discover -s scripts/tests` |
-| `just check-plugin` | build the binary, then check the shipped plugin and marketplace: manifests parse, every hook command ends in `; exit 0`, every hook names a real subcommand of that binary. `claude plugin validate` also runs when the `claude` CLI is installed and is a printed `SKIP` otherwise (CI has none). Needs `cargo` and `uv` | `cargo build -p branch-tally` then `sh plugin/tests/check.sh target/debug/branch-tally` |
 | `just lint-install` | ShellCheck on `install.sh` and its test, PSScriptAnalyzer on the `.ps1` files. A missing tool is a printed skip locally and an error when `CI` is set | `sh scripts/lint-install.sh` |
 | `just test-install` | the installers' offline tests under `sh` and `pwsh`, with the same skip rule | `sh scripts/test-install.sh` |
 | `just test-install-live [shell]` | `install.ps1`'s downloader against real GitHub, under `pwsh` (the default) or `powershell` (Windows PowerShell 5.1). Needs the network, so not part of `just ci` | `pwsh -NoProfile -ExecutionPolicy Bypass -File tests/install/install_live_test.ps1` |
@@ -183,11 +182,16 @@ CI calls the same recipes, so a local `just ci` checks what CI checks.
 reads them back with `just --evaluate`, so local and CI runs use the same ones. Bump a version in
 the justfile only. For gitleaks also bump the archive checksum in `ci.yml`, and for mdbook or
 mdbook-mermaid the checksums in `docs.yml`; a mismatch fails the job. `just`, nextest and cargo-deny
-are pinned in `ci.yml`.
+are pinned in `ci.yml`, and `uv` by the `version:` of every `astral-sh/setup-uv` step in the
+workflows (they must all agree).
+
+The PostToolUse lint hook and its permission entry in `.claude/settings.json` run
+`uvx rumdl@<pin>`, the same rumdl as the justfile. `just check-pins` fails when either differs
+from `rumdl_version`, and when any `uvx <tool>` in that file has no `@version`.
 
 **`mise.toml`.** `mise install` at the repository root sets up a dev machine with every one of those
-pins (`rust`, `just`, `cargo-nextest`, `cargo-deny`, `gitleaks`, `git-cliff`, `rumdl`, `zizmor`,
-`mdbook`, `mdbook-mermaid`, `minisign`, `powershell`, `shellcheck`). It is a
+pins (`rust`, `just`, `uv`, `cargo-nextest`, `cargo-deny`, `gitleaks`, `git-cliff`, `rumdl`,
+`zizmor`, `mdbook`, `mdbook-mermaid`, `minisign`, `powershell`, `shellcheck`). It is a
 **local convenience, not an authority**: the justfile, the workflows, the `scripts/ci-install-*.sh`
 scripts (minisign and pwsh, each pinned by version and archive sha256) and `rust-toolchain.toml`
 still decide what CI runs, and nothing in CI or the hooks calls mise. `just check-pins` (part of
@@ -199,9 +203,12 @@ pinned, then in `mise.toml` in the same commit. Backends: `aqua:` (via the short
 (pinned by the `installers.yml` lint job's `tool:` line) and `powershell` (PowerShell 7, the `pwsh`
 the installer jobs run; Windows PowerShell 5.1 ships with Windows and can't be installed anywhere
 else); `cargo:cargo-nextest` (not in the aqua registry; compiles from source unless `cargo-binstall`
-is installed); `github:badboy/mdbook-mermaid` (no registry entry). `uv`, `git` and `sh` are not
-pinned anywhere, so they are not in `mise.toml`; install them yourself. PSScriptAnalyzer is pinned
-(in `installers.yml`) but is a PowerShell module, not a mise tool:
+is installed); `github:badboy/mdbook-mermaid` (no registry entry). `uv` is pinned by the workflows'
+`setup-uv` steps. `git`, `sh` and the tools the OS or CI image ships are not pinned, so they are not
+in `mise.toml`; install them yourself. `gh`, `jq` (used by the lint hook) and the Python that
+`uv run` selects (scripts declare `requires-python >=3.11`) are unpinned for now because no
+repository file is yet their authority, and each is listed as such in `mise.toml`. PSScriptAnalyzer
+is pinned (in `installers.yml`) but is a PowerShell module, not a mise tool:
 `Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser`.
 
 `mise.toml` also lists `rust`, even though `rustup` already reads `rust-toolchain.toml` and installs
@@ -234,7 +241,6 @@ same `just` recipes and `scripts/check-*.sh`.
 | Release build | — | `build` (workflow `Build`): on a PR that touches `build.yml`, `release.yml`, `scripts/package.sh`, `scripts/smoke-test.sh`, `cliff.toml`, `Cargo.lock` or `rust-toolchain.toml`, builds and smoke-tests all six release targets with a dummy version and publishes nothing ([release.md](release.md#proving-the-build-before-a-release)) |
 | Pins | — | `scripts`: `just check-pins`, so `mise.toml` and the vendored manual assets can't drift from the pins and checksums they mirror (also in `just ci`) |
 | Gate scripts | — | `scripts`: `just test-scripts` (so the commit and branch checks, the packaging script and the installer gates, can't silently stop rejecting) and `just test-py` (the scrubber and goldens generator) |
-| Plugin | — | `plugin`: `just check-plugin`, so a hook that could block a Claude Code session, or name a subcommand that does not exist, fails the PR. Manifest validation by `claude plugin validate` is skipped there (no `claude` CLI on the runner) and says so |
 | Installers | — | `lint-install` and `test-install (<os>)` (workflow `Installers`), only when an installer, its tests or the workflow change ([release.md](release.md#proving-an-install-works)) |
 | User manual | — | `docs` (workflow `Docs`): `just docs`, only when `docs/manual/`, the justfile or the workflow change. Not a required check, for the same reason as `zizmor` ([The user manual](#the-user-manual)) |
 | Rust path filter | — | `changes` (workflow `CI`): `dorny/paths-filter` decides whether a PR touches Rust-relevant files and the Rust jobs skip their steps when it doesn't ([Path filtering](#path-filtering)) |
@@ -278,7 +284,6 @@ the PR touches any of:
 - `crates/**` (which holds the Rust sources, the tests under `crates/*/tests/` and the bundled
   data), `tests/**`, `Cargo.toml` (root or any crate), `Cargo.lock`, `rust-toolchain.toml`;
 - `rustfmt.toml`, `clippy.toml`, `.config/nextest.toml`, `deny.toml`, `.cargo/**`;
-- `plugin/**` and `.claude-plugin/**`, which the `plugin` job checks against the built binary;
 - `justfile`, `scripts/ci-detect.sh`, `scripts/ci-install-rust.sh` and `ci.yml` itself, because a
   change to the gate must exercise the gate.
 
@@ -446,7 +451,7 @@ Every PR:
   stay a review responsibility.
 
 `.tally/` is exempt from every "working tree must be clean" check in the skills
-(`git status --short -- . ':!.tally'`), because the capture and record plugins append to
+(`git status --short -- . ':!.tally'`), because the capture and record hooks append to
 `.tally/captures.jsonl` and `.tally/ledger.jsonl` in the main checkout on whatever branch is checked
 out, so it is routinely dirty. Anything else dirty still stops the skill. Those writes happen only
 when `.tally/` already exists as a real directory: `capture` and `record` never create it, and
@@ -551,10 +556,13 @@ re-run the checks, because no edit re-checks `branch-name`, `commit-messages` or
 `just token-report --pr` still works and reads the live transcripts directly. The
 [ledger chapter](../manual/src/ledger.md) describes the files.
 
-This repository enables the published `branch-tally-capture` and `branch-tally-record` plugins in
-`.claude/settings.json`, so sessions here capture attribution and record on SessionEnd. The
-SessionEnd hook gets only 1.5 seconds by default; raise `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS`
-as [plugin/README.md](../../plugin/README.md#sessionend-time-limit) describes.
+This repository's own capture and record hooks run from `.claude/settings.json` (SessionStart,
+SubagentStop and Stop run `branch-tally capture; exit 0`, SessionEnd runs `branch-tally record;
+exit 0`); no plugin or marketplace is installed for them. The hooks call `branch-tally` by name, so
+the **first `branch-tally` on `PATH` runs, with the session's environment**: install the release
+binary from a source you trust (below) and keep `PATH` free of look-alikes. The SessionEnd hook
+gets only 1.5 seconds by default; raise `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS` (milliseconds,
+in the environment Claude Code starts with) if `record` is cut off.
 
 It runs the **installed release binary**, not `cargo run`, so the report comes from a published
 build rather than the branch under review. Install the latest
@@ -581,11 +589,11 @@ mode. Defaults live in a user config file (flag > file > default); the manual's
 [Config reference](../manual/src/config.md) has its location and keys, `branch-tally config init`
 writes a starter file, and `branch-tally config show` prints what applies.
 
-It must run on the machine that did the work, and the safe order is before
-`/worktree-cleanup`. Report the total as the table labels it: "at least $X" appears only when calls
-can't be attributed with certainty or a model is unpriced. A ledger missing entries can understate
-the total without that label ([plugin/README.md](../../plugin/README.md)), and `report
---from-ledger` prints `note: unattributed counts unavailable from the ledger`
+It must run on the machine that did the work, and the safe order is before `/worktree-cleanup`.
+Report the total as the table labels it: "at least $X" appears only when calls can't be attributed
+with certainty or a model is unpriced. A ledger missing entries can understate the total without
+that label (a session that ended before `record` finished writes nothing), and
+`report --from-ledger` prints `note: unattributed counts unavailable from the ledger`
 ([ledger chapter](../manual/src/ledger.md)).
 `reference/token_report.py` is no longer run for this. Only the golden generator (`just goldens`)
 still runs it, as the parity oracle.
