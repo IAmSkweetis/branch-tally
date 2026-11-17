@@ -23,6 +23,8 @@ JUSTFILE_PINS = {
     "git-cliff": "cliff_version",
     "mdbook": "mdbook_version",
     "mdbook-mermaid": "mdbook_mermaid_version",
+    "jq": "jq_version",
+    "gh": "gh_version",
 }
 # Tools CI installs with a script of their own, pinned by version and archive sha256(s).
 INSTALL_SCRIPTS = {
@@ -168,6 +170,11 @@ def check(root: Path) -> list[str]:
         problems += script_problems
         if version:
             expected[tool] = (version, str(script))
+    py = root / ".python-version"
+    if py.is_file() and py.read_text(encoding="utf-8").strip():
+        expected["python"] = (py.read_text(encoding="utf-8").strip(), ".python-version")
+    else:
+        problems.append(".python-version is missing or empty")
     channel = tomllib.loads(_read(root / "rust-toolchain.toml"))["toolchain"]["channel"]
     expected["rust"] = (channel, "rust-toolchain.toml")
 
