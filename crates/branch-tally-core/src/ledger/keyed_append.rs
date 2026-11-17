@@ -7,6 +7,7 @@
 
 use std::path::Path;
 
+use super::bounded::read_file;
 use super::redaction::SALT_FILE;
 use super::{
     AppendOutcome, Clock, KeyedRedact, LEDGER_FILE, LedgerError, Plan, Salt, TallyDir, plan_append,
@@ -112,7 +113,7 @@ pub(super) fn append_keyed_default_with(
         Some(m) => TallyDir::open(m)?,
         None => None,
     };
-    let existing = tally.read(LEDGER_FILE)?.unwrap_or_default();
+    let existing = tally.read_bounded(LEDGER_FILE)?.unwrap_or_default().bytes;
     let Plan { buf, out } = keyed_plan(
         &existing,
         &tally,
@@ -192,7 +193,7 @@ pub fn append_keyed_explicit_pending(
         path: path.to_owned(),
         source,
     };
-    let existing = match std::fs::read(path) {
+    let existing = match read_file(path).map(|b| b.bytes) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
         Err(source) => {

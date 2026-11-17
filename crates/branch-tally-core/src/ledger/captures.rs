@@ -109,7 +109,9 @@ pub fn read_captures(root: &Path) -> Result<Captures, LedgerError> {
     let Some(tally) = TallyDir::open(root)? else {
         return Ok(Captures::default());
     };
-    Ok(parse(&tally.read(CAPTURES_FILE)?.unwrap_or_default()))
+    Ok(parse(
+        &tally.read_bounded(CAPTURES_FILE)?.unwrap_or_default().bytes,
+    ))
 }
 
 /// The kinds this build knows, as they appear on disk.
@@ -197,7 +199,7 @@ pub fn append_captures(
             ..CaptureAppendOutcome::default()
         });
     };
-    let existing = tally.read(CAPTURES_FILE)?.unwrap_or_default();
+    let existing = tally.read_bounded(CAPTURES_FILE)?.unwrap_or_default().bytes;
     let mut seen: HashSet<String> = parse(&existing).events.iter().map(key).collect();
     let mut out = CaptureAppendOutcome::default();
     let mut buf = String::new();
@@ -424,5 +426,27 @@ mod tests {
         let c = read_captures(&p).unwrap();
         assert_eq!(c.events().len(), 80);
         assert_eq!(c.stats().malformed, 0);
+    }
+
+    /// #103 (F-12): a captures line past the cap is counted as malformed, not buffered. A valid
+    /// event padded past the cap is used, so a whole-file reader would accept it.
+    #[test]
+    fn an_overlong_line_is_malformed_and_reading_continues() {
+        let dir = root();
+        let pad = " ".repeat(crate::ledger::MAX_LINE_BYTES);
+        let body = format!(
+            "{}\n{}{pad}\n{}\n",
+            key(&event("s1", CaptureKind::Stop)),
+            key(&event("s2", CaptureKind::Stop)),
+            key(&event("s3", CaptureKind::Stop)),
+        );
+        seed(dir.path(), &body);
+        let c = read_captures(dir.path()).unwrap();
+        assert_eq!(c.events().len(), 2);
+        assert_eq!((c.stats().lines, c.stats().malformed), (3, 1));
+        assert_eq!(c.stats().bad_line_numbers, vec![2]);
+        // Appending the over-long line's event again is not deduped against it.
+        let out = append_captures(dir.path(), &[event("s2", CaptureKind::Stop)]).unwrap();
+        assert_eq!((out.appended, out.skipped), (1, 0));
     }
 }
