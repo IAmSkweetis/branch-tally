@@ -21,7 +21,14 @@ gitleaks_version := "8.30.1"
 cliff_version := "2.13.1"
 mdbook_version := "0.5.4"
 mdbook_mermaid_version := "0.17.1"
+jq_version := "1.8.1"
+gh_version := "2.104.0"
 '''
+SETUP_UV = """      - uses: astral-sh/setup-uv@abc # v10
+        with:
+          enable-cache: false
+          version: "0.13.8"
+"""
 CI = """jobs:
   a:
     steps:
@@ -31,6 +38,12 @@ CI = """jobs:
       - uses: taiki-e/install-action@abc # v2
         with:
           tool: cargo-deny@0.20.2
+""" + SETUP_UV
+SETTINGS = """{
+  "permissions": {"allow": ["Bash(uvx rumdl@0.3.2 check *)", "Bash(just ci)"]},
+  "hooks": {"PostToolUse": [{"hooks": [{"type": "command",
+    "command": "f=$(jq -r .x); case $f in *.md) uvx rumdl@0.3.2 check $f;; esac"}]}]}
+}
 """
 TOOLCHAIN = '[toolchain]\nchannel = "1.99.1"\n'
 MISE = """[tools]
@@ -43,6 +56,10 @@ cargo-deny = "0.20.2"
 gitleaks = "8.30.1"
 git-cliff = "2.13.1"
 rumdl = "0.3.2"
+uv = "0.13.8"
+jq = "1.8.1"
+gh = "2.104.0"
+python = "3.15.2"
 zizmor = "1.31.1"
 minisign = "0.12"
 powershell = "7.7.0"
@@ -68,7 +85,7 @@ MERMAID = b"// stand-in for the vendored mermaid bundle\n"
 
 
 def make_repo(mise: str = MISE, justfile: str = JUSTFILE, ci: str = CI, asset: bytes = ASSET,
-              sha: str | None = None, minisign: str | None = MINISIGN_SCRIPT,
+              sha: str | None = None, settings: str | None = SETTINGS, python: str | None = "3.15.2\n", minisign: str | None = MINISIGN_SCRIPT,
               pwsh: str | None = PWSH_SCRIPT, mermaid_sha: str | None = None) -> Path:
     root = Path(tempfile.mkdtemp())
     (root / ".github" / "workflows").mkdir(parents=True)
@@ -81,6 +98,11 @@ def make_repo(mise: str = MISE, justfile: str = JUSTFILE, ci: str = CI, asset: b
     if pwsh is not None:
         (root / "scripts" / "ci-install-pwsh.sh").write_text(pwsh, encoding="utf-8")
     (root / "rust-toolchain.toml").write_text(TOOLCHAIN, encoding="utf-8")
+    if python is not None:
+        (root / ".python-version").write_text(python, encoding="utf-8")
+    if settings is not None:
+        (root / ".claude").mkdir()
+        (root / ".claude" / "settings.json").write_text(settings, encoding="utf-8")
     (root / "mise.toml").write_text(mise, encoding="utf-8")
     (root / "docs" / "manual" / "svg-pan-zoom.min.js").write_bytes(asset)
     digest = sha or hashlib.sha256(asset).hexdigest()
@@ -120,8 +142,92 @@ class CheckPins(unittest.TestCase):
         self.assertTrue(any("cargo-deny" in p and "missing" in p for p in problems))
 
     def test_unpinned_extra_tool_rejected(self):
-        problems = self.check(mise=MISE + 'uv = "0.5.0"\n')
-        self.assertTrue(any("uv" in p for p in problems))
+        problems = self.check(mise=MISE + 'ripgrep = "14.0.0"\n')
+        self.assertTrue(any("ripgrep" in p for p in problems))
+
+    def test_settings_rumdl_drift_in_hook_rejected(self):
+        bad = SETTINGS.replace("*.md) uvx rumdl@0.3.2", "*.md) uvx rumdl@0.3.1")
+        problems = self.check(settings=bad)
+        self.assertTrue(any("rumdl" in p and "0.3.1" in p for p in problems))
+
+    def test_settings_rumdl_drift_in_permission_rejected(self):
+        bad = SETTINGS.replace("Bash(uvx rumdl@0.3.2", "Bash(uvx rumdl@0.2.0")
+        problems = self.check(settings=bad)
+        self.assertTrue(any("rumdl" in p and "0.2.0" in p for p in problems))
+
+    def test_settings_unpinned_uvx_rejected(self):
+        bad = SETTINGS.replace("uvx rumdl@0.3.2 check $f", "uvx rumdl check $f")
+        problems = self.check(settings=bad)
+        self.assertTrue(any("unpinned" in p and "rumdl" in p for p in problems))
+
+    def test_settings_unpinned_other_uvx_rejected(self):
+        bad = SETTINGS.replace("Bash(just ci)", "Bash(uvx ruff check *)")
+        problems = self.check(settings=bad)
+        self.assertTrue(any("unpinned" in p and "ruff" in p for p in problems))
+
+    def test_settings_missing_rejected(self):
+        problems = self.check(settings=None)
+        self.assertTrue(any("settings.json" in p for p in problems))
+
+    def test_setup_uv_without_version_rejected(self):
+        ci = CI.replace('          version: "0.13.8"\n', "")
+        problems = self.check(ci=ci)
+        self.assertTrue(any("setup-uv" in p and "version" in p for p in problems))
+
+    def test_named_setup_uv_step_is_read(self):
+        named = SETUP_UV.replace("      - uses: astral-sh/setup-uv",
+                                 "      - name: Install uv\n        uses: astral-sh/setup-uv")
+        self.assertEqual(self.check(ci=CI + named), [])
+
+    def test_named_setup_uv_step_without_version_rejected(self):
+        named = SETUP_UV.replace("      - uses: astral-sh/setup-uv",
+                                 "      - name: Install uv\n        uses: astral-sh/setup-uv")
+        named = named.replace('          version: "0.13.8"\n', "")
+        problems = self.check(ci=CI + named + "      - run: echo next\n")
+        self.assertTrue(any("setup-uv" in p and "version" in p for p in problems))
+
+    def test_setup_uv_version_before_uses_is_read(self):
+        reordered = ("      - name: Install uv\n"
+                     "        with:\n"
+                     '          version: "0.13.8"\n'
+                     "        uses: astral-sh/setup-uv@abc # v10\n")
+        self.assertEqual(self.check(ci=CI + reordered), [])
+
+    def test_settings_floating_uvx_version_rejected(self):
+        bad = SETTINGS.replace("Bash(just ci)", "Bash(uvx ruff@latest check *)")
+        problems = self.check(settings=bad)
+        self.assertTrue(any("ruff" in p and "latest" in p for p in problems))
+
+    def test_settings_uvx_after_escaped_newline_rejected(self):
+        # The JSON text holds `\n`, so the raw text has an `n` directly before `uvx`.
+        bad = SETTINGS.replace('"type": "command",',
+                               '"type": "command", "command": "echo ready\\nuvx ruff check ."}, '
+                               '{"type": "command",')
+        self.assertIn("ready\\nuvx ruff", bad)
+        problems = self.check(settings=bad)
+        self.assertTrue(any("unpinned" in p and "ruff" in p for p in problems), problems)
+
+    def test_settings_invalid_json_rejected(self):
+        problems = self.check(settings=SETTINGS.replace('"hooks": {', '"hooks" {', 1))
+        self.assertTrue(any("not valid JSON" in p for p in problems), problems)
+
+    def test_settings_exact_command_permission_is_accepted(self):
+        good = SETTINGS.replace('"Bash(just ci)"', '"Bash(just ci)",\n      "Bash(uvx ruff@0.11.0)"')
+        self.assertIn("Bash(uvx ruff@0.11.0)", good)
+        self.assertEqual(self.check(settings=good), [])
+
+    def test_setup_uv_steps_disagreeing_rejected(self):
+        ci = CI + SETUP_UV.replace("0.13.8", "0.13.7")
+        problems = self.check(ci=ci)
+        self.assertTrue(any("uv" in p and "disagree" in p for p in problems))
+
+    def test_mise_uv_drift_rejected(self):
+        problems = self.check(mise=MISE.replace('uv = "0.13.8"', 'uv = "0.12.0"'))
+        self.assertTrue(any("uv" in p and "0.13.8" in p for p in problems))
+
+    def test_uv_missing_from_mise_rejected(self):
+        problems = self.check(mise=MISE.replace('uv = "0.13.8"\n', ""))
+        self.assertTrue(any("uv" in p and "missing" in p for p in problems))
 
     def test_table_form_version_is_read(self):
         mise = MISE.replace('rust = "1.99.1"', 'rust = { version = "1.99.1", profile = "minimal" }')
@@ -201,6 +307,42 @@ class CheckPins(unittest.TestCase):
     def test_powershell_script_missing_rejected(self):
         problems = self.check(pwsh=None)
         self.assertTrue(any("powershell" in p for p in problems))
+
+    def test_drifted_jq_rejected(self):
+        problems = self.check(justfile=JUSTFILE.replace('jq_version := "1.8.1"', 'jq_version := "1.8.2"'))
+        self.assertTrue(any("jq" in p and "1.8.2" in p for p in problems))
+
+    def test_jq_missing_from_mise_rejected(self):
+        problems = self.check(mise=MISE.replace('jq = "1.8.1"\n', ""))
+        self.assertTrue(any("jq" in p and "missing" in p for p in problems))
+
+    def test_drifted_gh_rejected(self):
+        problems = self.check(mise=MISE.replace('gh = "2.104.0"', 'gh = "2.100.0"'))
+        self.assertTrue(any("gh" in p and "2.104.0" in p for p in problems))
+
+    def test_gh_missing_from_mise_rejected(self):
+        problems = self.check(mise=MISE.replace('gh = "2.104.0"\n', ""))
+        self.assertTrue(any("gh" in p and "missing" in p for p in problems))
+
+    def test_drifted_python_rejected(self):
+        problems = self.check(mise=MISE.replace('python = "3.15.2"', 'python = "3.14.4"'))
+        self.assertTrue(any("python" in p and "3.15.2" in p for p in problems))
+
+    def test_python_missing_from_mise_rejected(self):
+        problems = self.check(mise=MISE.replace('python = "3.15.2"\n', ""))
+        self.assertTrue(any("python" in p and "missing" in p for p in problems))
+
+    def test_python_minor_only_rejected(self):
+        problems = self.check(python="3.15\n", mise=MISE.replace('"3.15.2"', '"3.15"'))
+        self.assertTrue(any(".python-version" in p and "X.Y.Z" in p for p in problems))
+
+    def test_settings_without_any_rumdl_rejected(self):
+        problems = self.check(settings='{"permissions": {"allow": ["Bash(just ci)"]}}')
+        self.assertTrue(any("rumdl" in p and "no `uvx rumdl@`" in p for p in problems))
+
+    def test_python_version_file_missing_rejected(self):
+        problems = self.check(python=None)
+        self.assertTrue(any(".python-version" in p for p in problems))
 
     def test_real_repository_agrees(self):
         self.assertEqual(cp.check(REPO), [])

@@ -13,15 +13,18 @@ vulnerability? Don't open an issue: report it privately as described in [SECURIT
 | ---- | --- | ------- |
 | [Rust](https://rustup.rs) (stable, via rustup) | Builds and tests the code. `rust-toolchain.toml` pins the version (1.99.1). | `rustup` picks up the pin on its own |
 | Visual Studio Build Tools, "Desktop development with C++" (Windows only) | The `x86_64-pc-windows-msvc` toolchain links with MSVC's `link.exe` and the Windows SDK. Without them every build that links fails, and Git Bash's unrelated `/usr/bin/link` makes the error misleading. Install them before `cargo install` anything. | `winget install Microsoft.VisualStudio.BuildTools --override "--wait --quiet --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"` |
-| [just](https://just.systems) 1.56 or newer | Runs every recipe, hook and CI gate | `cargo install just`, `scoop install just`, `brew install just` |
+| [just](https://just.systems) 1.59.0 (the CI pin) | Runs every recipe, hook and CI gate | `cargo install just`, `scoop install just`, `brew install just` |
 | [cargo-nextest](https://nexte.st) | The test runner | `cargo install cargo-nextest --locked` |
-| [uv](https://docs.astral.sh/uv/) | Runs the pinned `rumdl` and `zizmor` through `uvx`, and the Python reference script | see the uv install guide |
-| [gitleaks](https://github.com/gitleaks/gitleaks) | Secret scanning in `pre-commit` and CI | `scoop install gitleaks`, `brew install gitleaks` |
+| [uv](https://docs.astral.sh/uv/) 0.13.8 (the CI pin) | Runs the pinned `rumdl` and `zizmor` through `uvx`, and the Python scripts (`uv run` uses the Python in `.python-version`, 3.15.2, which uv downloads) | see the uv install guide |
+| [jq](https://jqlang.org) 1.8.1 | Used by the Markdown lint hook in `.claude/settings.json` | `scoop install jq`, `brew install jq` |
+| [gh](https://cli.github.com) 2.104.0 | Used by `just repo-settings` and `/create-gh-pr` (CI uses the runner's) | `scoop install gh`, `brew install gh` |
+| [gitleaks](https://github.com/gitleaks/gitleaks) 8.30.1 | Secret scanning in `pre-commit` and CI | `scoop install gitleaks`, `brew install gitleaks` |
 | PowerShell 7 (Windows only) | The `justfile` runs recipes under `pwsh` on Windows | `winget install Microsoft.PowerShell` |
 | Git for Windows (Windows only) | Provides the `sh` that git hooks and `scripts/` run under | <https://gitforwindows.org> |
 
 You don't install `rumdl` or `zizmor` yourself. The `justfile` pins their versions and runs them
-with `uvx`, so your run and CI's run agree.
+with `uvx`, so your run and CI's run agree. `mise install` installs every pinned tool at once from
+`mise.toml`; `just check-pins` fails when that file drifts from the pins CI uses.
 
 ## Set up a checkout
 

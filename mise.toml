@@ -3,8 +3,9 @@
 # rust-toolchain.toml are, and `just check-pins` (part of `just ci`) fails if this file drifts
 # from them. Change a version there first, then here. See docs/references/dev_workflow.md.
 #
-# Not listed because nothing pins them: uv (and so uvx), git, sh, PSScriptAnalyzer.
-# Windows PowerShell 5.1 ships with Windows and cannot be installed elsewhere.
+# Not listed because they cannot be pinned: git, sh and the tools the OS or the CI runner image
+# ships (PSScriptAnalyzer, curl, tar, sha256sum). gh is pinned here for local setup only; CI keeps
+# the runner's gh. Windows PowerShell 5.1 ships with Windows and cannot be installed elsewhere.
 
 [tools]
 # rustup reads rust-toolchain.toml itself; this pins the same channel so `mise install` fetches the
@@ -12,6 +13,14 @@
 rust = "1.99.1"
 
 just = "1.59.0"
+# Pinned by the `version:` of every astral-sh/setup-uv step in .github/workflows. uvx runs the
+# pinned rumdl and zizmor, so a drifting uv changes what they resolve.
+uv = "0.13.8"
+# Authority: .python-version, which uv honours for `uv run` and uvx.
+python = "3.15.2"
+# Authorities: jq_version and gh_version in the justfile.
+jq = "1.8.1"
+gh = "2.104.0"
 # nextest and cargo-deny are pinned in ci.yml. The cargo: backend compiles from source unless
 # cargo-binstall is installed (mise uses it when present).
 "cargo:cargo-nextest" = "0.9.151"

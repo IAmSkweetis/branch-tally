@@ -3,8 +3,8 @@
 branch-tally reports what a branch or pull request cost in AI-agent tokens. It reads the agent
 harness's local transcripts, assigns each recorded API call to the git branch the work was for, and
 publishes a cost table on the PR. That includes work done by subagents in git worktrees. Claude Code
-is the first harness supported; others follow. It is written in Rust and ships as a CLI, a Claude
-Code plugin/skill and a GitHub Action.
+is the first harness supported; others follow. It is written in Rust and ships as a CLI and a GitHub
+Action. The Claude Code plugin is maintained in a separate repository.
 
 The roadmap is the GitHub milestone `v1`. Each item is an issue in that milestone, with an issue
 type (Feature, Bug or Task), a kind label and a Priority.

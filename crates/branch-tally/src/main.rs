@@ -1,6 +1,6 @@
 //! The `branch-tally` command-line binary. A thin wrapper over `branch-tally-core`.
 //!
-//! The flags, exit codes and output shapes are a public contract (scripts, the plugin skill and
+//! The flags, exit codes and output shapes are a public contract (scripts, Claude Code hooks and
 //! the Action read them). Exit 0 on success, 1 for a failure with a message on stderr, 2 for a
 //! command-line error (clap), 3 when a ledger-reading run stops on conflicting ledger lines.
 

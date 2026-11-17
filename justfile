@@ -2,7 +2,7 @@
 #
 # Recipes run under PowerShell 7 on Windows and `sh` elsewhere, so every recipe line is a plain
 # tool call that reads the same in both. Shell-specific work lives in private `_helper` recipes,
-# written once under [windows] and once under [unix]. Needs just 1.56+ (`[windows] set shell`).
+# written once under [windows] and once under [unix]. Needs just 1.56+ to parse (`[windows] set shell`); the pinned version is in mise.toml.
 #
 # CI and the git hooks call these same recipes, so a local `just ci` checks what CI checks.
 
@@ -11,16 +11,21 @@ set shell := ["pwsh.exe", "-NoLogo", "-NoProfile", "-Command"]
 
 # Pinned tool versions. CI reads them back with `just --evaluate <name>`, so local and CI agree.
 # mise.toml mirrors them for local setup; `just check-pins` fails when the two drift.
-# Bump one here and nowhere else (gitleaks is installed from a release archive whose sha256 is
-# pinned in .github/workflows/ci.yml, so bump that checksum with it; mdbook and mdbook-mermaid are
+# Bump one here first, then mise.toml (`just check-pins` fails until it follows). gitleaks is
+# installed from a release archive whose sha256 is pinned in .github/workflows/ci.yml, so bump that
+# checksum with it; mdbook and mdbook-mermaid are
 # the same, with their checksums in .github/workflows/docs.yml and pages.yml, and the two must stay
-# compatible: mdbook-mermaid 0.17 is built against the mdBook 0.5 preprocessor API).
+# compatible: mdbook-mermaid 0.17 is built against the mdBook 0.5 preprocessor API.
 rumdl_version := "0.3.2"
 zizmor_version := "1.31.1"
 gitleaks_version := "8.30.1"
 cliff_version := "2.13.1"
 mdbook_version := "0.5.4"
 mdbook_mermaid_version := "0.17.1"
+# jq runs the PostToolUse lint hook in .claude/settings.json; gh runs scripts/repo_settings.py. Both
+# are pinned for `mise install` only: CI uses the runner image's gh and has no use for jq.
+jq_version := "1.8.1"
+gh_version := "2.104.0"
 
 # Rust checks run only once the workspace exists (#3). Until then they say so and exit 0.
 has_cargo := path_exists(justfile_directory() / "Cargo.toml")
@@ -31,7 +36,7 @@ default:
     @{{ just_executable() }} --list
 
 # Every gate CI runs (everything except fmt and audit-workflows).
-ci: lint lint-md test test-scripts test-py check-pins check-plugin lint-install test-install docs secret-scan
+ci: lint lint-md test test-scripts test-py check-pins lint-install test-install docs secret-scan
 
 # Prove the commit-message and branch-name checks reject what they must and accept what they should.
 [unix]
@@ -116,20 +121,6 @@ test-py: (_require "uv" "install uv: https://docs.astral.sh/uv/getting-started/i
 # Fail when mise.toml disagrees with the pins here, in the workflows or in rust-toolchain.toml, or when a vendored manual asset no longer matches its recorded sha256. Needs neither mise nor network.
 check-pins: (_require "uv" "install uv: https://docs.astral.sh/uv/getting-started/installation/")
     uv run scripts/check_pins.py
-
-# Check the shipped plugin and marketplace: manifests parse, every hook command ends in `; exit 0`,
-# every hook names a real subcommand of the freshly built binary. `claude plugin validate` also runs
-# when the claude CLI is installed, and is a printed skip otherwise (CI has none).
-[unix]
-check-plugin: (_require "cargo" "install Rust: https://rustup.rs") (_require "uv" "install uv: https://docs.astral.sh/uv/getting-started/installation/") (_require "sh" "install a POSIX sh")
-    cargo build -p branch-tally
-    sh plugin/tests/check.sh target/debug/branch-tally
-
-# Same sh lookup as test-scripts.
-[windows]
-check-plugin: (_require "cargo" "install Rust: https://rustup.rs") (_require "uv" "install uv: https://docs.astral.sh/uv/getting-started/installation/") (_require "git" "install Git for Windows: https://gitforwindows.org")
-    cargo build -p branch-tally
-    @$sh = (Get-Command sh -ErrorAction SilentlyContinue).Source; if (-not $sh) { $sh = Join-Path (git --exec-path) '../../../bin/sh.exe' }; if (-not (Test-Path $sh)) { [Console]::Error.WriteLine('error: sh not found on PATH or beside git; install Git for Windows: https://gitforwindows.org'); exit 1 }; & $sh plugin/tests/check.sh target/debug/branch-tally; exit $LASTEXITCODE
 
 # Scrub a real transcript tree into a committable fixture: just scrub --root <repo root> <src> <dest>
 scrub *args: (_require "uv" "install uv: https://docs.astral.sh/uv/getting-started/installation/")

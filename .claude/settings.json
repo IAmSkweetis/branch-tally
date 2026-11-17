@@ -13,7 +13,7 @@
       "Bash(just lint *)",
       "Bash(just lint-md *)",
       "Bash(just ci)",
-      "Bash(uvx rumdl check *)",
+      "Bash(uvx rumdl@0.3.2 check *)",
       "Bash(gitleaks git *)"
     ],
     "deny": [
@@ -33,31 +33,62 @@
     ]
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "branch-tally capture; exit 0",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "branch-tally capture; exit 0",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "branch-tally capture; exit 0",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "branch-tally record; exit 0"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Write|Edit",
         "hooks": [
           {
             "type": "command",
-            "command": "f=$(jq -r '.tool_response.filePath // .tool_input.file_path'); case \"$f\" in *.rs) rustfmt --check --edition 2024 \"$f\";; *.md) uvx rumdl check \"$f\";; esac",
+            "command": "f=$(jq -r '.tool_response.filePath // .tool_input.file_path'); case \"$f\" in *.rs) rustfmt --check --edition 2024 \"$f\";; *.md) uvx rumdl@0.3.2 check \"$f\";; esac",
             "statusMessage": "lint",
             "timeout": 60
           }
         ]
       }
     ]
-  },
-  "extraKnownMarketplaces": {
-    "branch-tally": {
-      "source": {
-        "source": "github",
-        "repo": "IAmSkweetis/branch-tally"
-      }
-    }
-  },
-  "enabledPlugins": {
-    "branch-tally-capture@branch-tally": true,
-    "branch-tally-record@branch-tally": true
   },
   "worktree": {
     "baseRef": "head"

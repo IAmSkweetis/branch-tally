@@ -69,7 +69,7 @@ git merge origin/main        # .gitattributes merge=union keeps both sides' .tal
 git fetch origin main:main   # fast-forward the local main ref without checking it out
 ```
 
-`.tally/` is exempt from the clean check because the capture and record plugins append to
+`.tally/` is exempt from the clean check because the capture and record hooks append to
 `.tally/captures.jsonl` and `.tally/ledger.jsonl` in the main checkout, on whatever branch is
 checked out. A `git checkout main && git pull --ff-only` refuses when `origin/main` changed those
 files and local lines are uncommitted, which every merged PR now causes. Cutting the branch first
@@ -125,7 +125,7 @@ them.
 | Attribution, pricing, ledger, rendering, redaction, git access | Core Implementer | one module, **required** |
 | Reading a harness's transcripts, plus its fixtures | Harness Source Author | one harness, **required** |
 | Flags, output wiring, `gh` integration | CLI Builder | `crates/branch-tally` |
-| The shipped plugin or skill, the Action, examples | Integration Author | `plugin/` or `action.yml` |
+| The Action, its examples, the installers | Integration Author | `action.yml`, `install.sh`, `install.ps1` |
 | A dependency, the toolchain, release config | Workspace Config Steward | serialized |
 | A hook, workflow, recipe, this repo's skills, lint config | Repository Tooling Steward | serialized |
 | The user manual (`docs/manual/src/**`) and `README.md`, when the feature changes a flag, a config key or an install method | Docs Author | those paths, in the **last** wave |

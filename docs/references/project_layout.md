@@ -18,8 +18,6 @@ places a new file belongs in**.
 | `tests/fixtures/<harness>/` | Scrubbed transcript trees, one directory per scenario | Shared by both crates' tests. See [testing.md](testing.md#fixtures). |
 | `reference/token_report.py` | The original Python script, **immutable** | The parity oracle, run only by the golden generator (`just goldens`). This repository's PR token reports come from branch-tally itself (#41). It is never edited, not even to fix a bug, and nothing else is ever added to `reference/`. New Python goes in `scripts/`. |
 | `data/` | Data shipped with the binary, such as the bundled price table | The bundled price table lives in `crates/branch-tally-core/data/prices.toml` so the crate packages it (#5). Tuned, not coded. |
-| `plugin/` | The **shipped** Claude Code plugins: `capture-hooks/` and `record-hooks/` (each with `.claude-plugin/plugin.json` and `hooks/hooks.json`), `README.md` and `tests/check.sh`. The skill (`skills/`) is *planned* (#11) | Not this repository's own skills. |
-| `.claude-plugin/marketplace.json` | The marketplace manifest listing the `plugin/` plugins | Must sit at the repository root. |
 | `action.yml` | The **shipped** GitHub Action | *planned* (#12). Must sit at the root for `uses: IAmSkweetis/branch-tally@v1`. |
 | `install.sh`, `install.ps1` | The **shipped** one-line installers, also attached to each release as assets (#46) | POSIX sh and PowerShell. Tested by `tests/install/`. Only tools a stock OS has; no `gh`. |
 | `tests/install/` | `install_test.sh` and `install_test.ps1`: run the installers against a fake `file://` release. `install_live_test.ps1`: runs `install.ps1`'s downloader against real GitHub | Plain scripts, no framework; each prints its case count. The live one needs the network and also runs under Windows PowerShell 5.1. |
@@ -48,13 +46,14 @@ Three things in this repository look alike and are not:
 
 | | Shipped to users | This repository's own tooling |
 | - | ---------------- | ----------------------------- |
-| Claude Code skill | `plugin/skills/…` (*planned*, #11) | `.claude/skills/…` |
+| Claude Code plugin and skill | none here: the shipped plugin lives in a separate repository | `.claude/skills/…` |
 | GitHub automation | `action.yml` (an Action other repositories run) | `.github/workflows/…` (CI for this repository) |
 | Python | none | `scripts/*.py` (tooling), and `reference/token_report.py` (immutable test oracle) |
 
-A shipped skill or Action is **product code**. It is versioned with releases, documented for
-strangers, tested, and must work on a machine that has never seen this repository. A development
-skill or workflow serves only us. They have different owners
+A shipped Action, or a plugin or skill in its separate repository, is **product code**. It is
+versioned with releases, documented for strangers, tested, and must work on a machine that has never
+seen this repository. A development skill or workflow serves only us. This repository keeps the
+Action; the plugin moved out. They have different owners
 ([agents.md](agents.md#who-owns-a-given-path)), and one must never be "fixed" by editing the other.
 
 ## Inside `branch-tally-core` *(`model` and the `Source` trait exist; `git`, `attribution`, `summary`, `pricing`, `render`, `report`, `pr` are implemented; others planned)*

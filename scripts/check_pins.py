@@ -2,17 +2,20 @@
 no longer matches its recorded checksum.
 
 mise.toml is a local convenience. The authorities are the justfile (`<tool>_version`), the CI
-workflows (`tool: name@version` for taiki-e/install-action), the `scripts/ci-install-*.sh` scripts
-and rust-toolchain.toml. This script reads those as text and compares, so it needs neither mise nor
+workflows (`tool: name@version` for taiki-e/install-action, `version:` on
+astral-sh/setup-uv), the `scripts/ci-install-*.sh` scripts, `.python-version` and
+rust-toolchain.toml. This script reads those as text and compares, so it needs neither mise nor
 just. Usage: check_pins.py [root].
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import sys
 import tomllib
+from collections.abc import Iterator
 from pathlib import Path
 
 # justfile variables that pin a tool: mise tool name -> justfile variable.
@@ -23,6 +26,8 @@ JUSTFILE_PINS = {
     "git-cliff": "cliff_version",
     "mdbook": "mdbook_version",
     "mdbook-mermaid": "mdbook_mermaid_version",
+    "jq": "jq_version",
+    "gh": "gh_version",
 }
 # Tools CI installs with a script of their own, pinned by version and archive sha256(s).
 INSTALL_SCRIPTS = {
@@ -60,6 +65,91 @@ def workflow_pins(root: Path) -> tuple[dict[str, str], list[str]]:
                     problems.append(
                         f"{name}: workflows disagree ({pins[name]} vs {version} in {wf.name})")
     return pins, problems
+
+
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip())
+
+
+def setup_uv_pins(root: Path) -> tuple[str | None, list[str]]:
+    """The uv version every `astral-sh/setup-uv` step pins with `version:`, and any problems."""
+    versions: dict[str, str] = {}
+    problems: list[str] = []
+    for wf in sorted((root / ".github" / "workflows").glob("*.yml")):
+        lines = _read(wf).splitlines()
+        for i, line in enumerate(lines):
+            if "astral-sh/setup-uv@" not in line:
+                continue
+            # Scan the whole step, from its `- ` item marker to the next step. The marker may sit
+            # on an earlier line (`- name: …`), and `with:` may come before or after `uses:`.
+            start = i
+            if not line.lstrip().startswith("- "):
+                for j in range(i - 1, -1, -1):
+                    if lines[j].lstrip().startswith("- ") and _indent(lines[j]) < _indent(line):
+                        start = j
+                        break
+            indent = _indent(lines[start])
+            found = None
+            for nxt in lines[start + 1:]:
+                stripped = nxt.strip()
+                if stripped and len(nxt) - len(nxt.lstrip()) <= indent:
+                    break  # the next step
+                m = re.match(r"version:\s*[\"']?([^\"'\s#]+)", stripped)
+                if m:
+                    found = m.group(1)
+            if found is None or not re.fullmatch(r"\d+\.\d+\.\d+", found):
+                problems.append(f"uv: a setup-uv step in {wf.name} has no exact `version:` pin")
+            else:
+                versions.setdefault(found, wf.name)
+    if len(versions) > 1:
+        problems.append("uv: setup-uv steps disagree (" + ", ".join(
+            f"{v} in {n}" for v, n in sorted(versions.items())) + ")")
+        return None, problems
+    return (next(iter(versions)) if versions else None), problems
+
+
+def _json_strings(value: object) -> Iterator[str]:
+    """Every string in a decoded JSON value, keys included, depth first."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            yield k
+            yield from _json_strings(v)
+    elif isinstance(value, list):
+        for v in value:
+            yield from _json_strings(v)
+
+
+def settings_uvx(root: Path, rumdl: str | None) -> list[str]:
+    """Every `uvx <tool>` in .claude/settings.json (hooks and permissions) must be pinned, and
+    rumdl must be the justfile's version."""
+    path = root / ".claude" / "settings.json"
+    if not path.is_file():
+        return [".claude/settings.json is missing"]
+    # Scan the decoded strings, not the raw text: a JSON escape such as `\n` would otherwise put
+    # a letter directly before `uvx` and hide it from `\b`.
+    try:
+        strings = list(_json_strings(json.loads(_read(path))))
+    except json.JSONDecodeError as e:
+        return [f".claude/settings.json is not valid JSON ({e.msg}, line {e.lineno})"]
+    problems = []
+    if not any(re.search(r"\buvx\s+rumdl@", s) for s in strings):
+        problems.append("rumdl: .claude/settings.json has no `uvx rumdl@` pin to check")
+    # `)` closes an exact-command permission (`Bash(uvx ruff@0.11.0)`) and `;` ends a hook
+    # command, so neither is part of the version.
+    uvx = re.compile(r"\buvx\s+([A-Za-z0-9_.-]+)(?:@([^\s\"');]+))?")
+    for m in (m for s in strings for m in uvx.finditer(s)):
+        tool, version = m.group(1), m.group(2)
+        if not version:
+            problems.append(f"{tool}: unpinned `uvx {tool}` in .claude/settings.json")
+        elif not re.fullmatch(r"\d+\.\d+\.\d+", version):
+            problems.append(f"{tool}: `uvx {tool}@{version}` in .claude/settings.json is not an "
+                            "exact X.Y.Z version")
+        elif tool == "rumdl" and rumdl and version != rumdl:
+            problems.append(f"rumdl: .claude/settings.json uses {version} but the justfile "
+                            f"pins {rumdl}")
+    return problems
 
 
 def script_pin(root: Path, tool: str, script: Path) -> tuple[str | None, list[str]]:
@@ -110,11 +200,24 @@ def check(root: Path) -> list[str]:
     problems += wf_problems
     for tool, version in wf.items():
         expected[tool] = (version, ".github/workflows")
+    uv_version, uv_problems = setup_uv_pins(root)
+    problems += uv_problems
+    if uv_version:
+        expected["uv"] = (uv_version, "the setup-uv steps in .github/workflows")
+    elif not uv_problems:
+        problems.append("uv: no astral-sh/setup-uv step pins a version")
+    problems += settings_uvx(root, justfile_pins(root).get("rumdl"))
     for tool, script in INSTALL_SCRIPTS.items():
         version, script_problems = script_pin(root, tool, script)
         problems += script_problems
         if version:
             expected[tool] = (version, str(script))
+    py = root / ".python-version"
+    pyver = py.read_text(encoding="utf-8").strip() if py.is_file() else ""
+    if re.fullmatch(r"\d+\.\d+\.\d+", pyver):
+        expected["python"] = (pyver, ".python-version")
+    else:
+        problems.append(".python-version is missing or not an exact X.Y.Z patch version")
     channel = tomllib.loads(_read(root / "rust-toolchain.toml"))["toolchain"]["channel"]
     expected["rust"] = (channel, "rust-toolchain.toml")
 
@@ -151,7 +254,7 @@ def main() -> int:
         print(f"error: {p}", file=sys.stderr)
     if not problems:
         print("pins agree: mise.toml matches the justfile, workflows, CI install scripts and "
-              "rust-toolchain.toml; vendored assets match their checksums")
+              "rust-toolchain.toml; .claude/settings.json uvx pins match the justfile; vendored assets match their checksums")
     return 1 if problems else 0
 
 

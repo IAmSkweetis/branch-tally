@@ -40,7 +40,7 @@ workflows, recipes, lint config), which fails loudly. No shared files.
 Also the reference page for what you changed (`release.md`, `project_layout.md`).
 
 **Never write**: any `src/**` or `tests/**`, `.claude/**`, `.github/**` (CI that runs your config
-belongs to the Repository Tooling Steward, so raise `file_outside_scope`), `justfile`, `plugin/**`,
+belongs to the Repository Tooling Steward, so raise `file_outside_scope`), `justfile`,
 `action.yml`, `reference/**`.
 
 Read anything.
