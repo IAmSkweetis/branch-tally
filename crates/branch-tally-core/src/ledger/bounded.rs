@@ -13,6 +13,11 @@ use std::io::{self, BufRead, BufReader, Read};
 /// accept. The longest real line measured is 804 bytes; 1 MiB leaves a wide margin.
 pub const MAX_LINE_BYTES: usize = 1024 * 1024;
 
+/// The most bytes of one `.tally/` file that `ledger check` or [`TallyDir::read`] will take in
+/// (#103). A larger file is refused with a typed error rather than buffered. Real ledgers are
+/// kilobytes to a few megabytes; 256 MiB is far above any honest file.
+pub const MAX_TALLY_FILE_BYTES: u64 = 256 * 1024 * 1024;
+
 /// What stands in for an over-long line in the bytes [`read_bounded`] returns. It is not valid
 /// JSON, so every line parser counts it as malformed.
 pub(super) const OVERLONG_MARKER: &[u8] = b"\x00";

@@ -46,7 +46,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::LedgerError;
-use super::bounded::{Bounded, MAX_LINE_BYTES, read_bounded};
+use super::bounded::{Bounded, MAX_LINE_BYTES, MAX_TALLY_FILE_BYTES, read_bounded};
 
 /// The directory name, relative to the main checkout.
 pub const TALLY_DIR: &str = ".tally";
@@ -333,17 +333,47 @@ impl TallyDir {
     /// [`LedgerError::Refused`] when it is a link or not a regular file, or `name` is not a
     /// single plain component; [`LedgerError::Read`] when it cannot be read.
     pub fn read(&self, name: &str) -> Result<Option<Vec<u8>>, LedgerError> {
-        self.read_with(name, &|| {})
+        self.read_limited(name, MAX_TALLY_FILE_BYTES)
+    }
+
+    /// [`TallyDir::read`] with the size limit given, so tests can use a small one.
+    fn read_limited(&self, name: &str, limit: u64) -> Result<Option<Vec<u8>>, LedgerError> {
+        self.read_with(name, limit, &|| {})
     }
 
     /// `read` with a seam that runs after `.tally` is verified and before the file is opened.
-    fn read_with(&self, name: &str, between: &dyn Fn()) -> Result<Option<Vec<u8>>, LedgerError> {
-        let Some((mut file, path)) = self.open_for_read(name, between)? else {
+    fn read_with(
+        &self,
+        name: &str,
+        limit: u64,
+        between: &dyn Fn(),
+    ) -> Result<Option<Vec<u8>>, LedgerError> {
+        let Some((file, path)) = self.open_for_read(name, between)? else {
             return Ok(None);
         };
+        let too_large = |path: PathBuf| LedgerError::TooLarge { path, limit };
+        // Refuse on the size alone first, so a huge file is never read; then cap the read itself,
+        // in case the file grew since.
+        let len = file
+            .metadata()
+            .map_err(|source| LedgerError::Read {
+                path: path.clone(),
+                source,
+            })?
+            .len();
+        if len > limit {
+            return Err(too_large(path));
+        }
         let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)
-            .map_err(|source| LedgerError::Read { path, source })?;
+        file.take(limit.saturating_add(1))
+            .read_to_end(&mut bytes)
+            .map_err(|source| LedgerError::Read {
+                path: path.clone(),
+                source,
+            })?;
+        if bytes.len() as u64 > limit {
+            return Err(too_large(path));
+        }
         Ok(Some(bytes))
     }
 
@@ -666,6 +696,47 @@ mod tests {
     }
 
     #[test]
+    fn a_file_over_the_limit_is_refused_with_too_large() {
+        let dir = checkout();
+        let tally = with_tally(dir.path());
+        tally.append("f.jsonl", b"0123456789").unwrap();
+        let err = tally.read_limited("f.jsonl", 9).unwrap_err();
+        assert!(
+            matches!(err, LedgerError::TooLarge { limit: 9, .. }),
+            "{err}"
+        );
+        assert_eq!(
+            tally.read_limited("f.jsonl", 10).unwrap().unwrap().len(),
+            10
+        );
+    }
+
+    #[test]
+    fn a_file_that_grows_past_the_limit_after_the_size_check_is_still_bounded() {
+        // The read itself is capped, not just the metadata check: a limit of 4 on a 10-byte
+        // file reached through the reading path must not return 10 bytes.
+        let dir = checkout();
+        let tally = with_tally(dir.path());
+        tally.append("f.jsonl", b"0123456789").unwrap();
+        assert!(tally.read_limited("f.jsonl", 4).is_err());
+    }
+
+    #[test]
+    fn read_uses_the_production_limit() {
+        let dir = checkout();
+        let tally = with_tally(dir.path());
+        // A sparse file one byte over the limit: nothing is written, nothing is read.
+        let file = std::fs::File::create(tally.file_path("big")).unwrap();
+        file.set_len(MAX_TALLY_FILE_BYTES + 1).unwrap();
+        drop(file);
+        let err = tally.read("big").unwrap_err();
+        assert!(
+            matches!(err, LedgerError::TooLarge { limit, .. } if limit == MAX_TALLY_FILE_BYTES),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn missing_file_reads_as_none_and_append_creates_it() {
         let dir = checkout();
         let tally = with_tally(dir.path());
@@ -895,7 +966,7 @@ mod tests {
         std::fs::write(victim.join("f.jsonl"), b"theirs\n").unwrap();
         // Pinned behaviour: the read goes through the held fd and returns the original's bytes.
         let got = tally
-            .read_with("f.jsonl", &|| {
+            .read_with("f.jsonl", MAX_TALLY_FILE_BYTES, &|| {
                 swap_tally_for_link(dir.path(), &victim);
             })
             .unwrap();
