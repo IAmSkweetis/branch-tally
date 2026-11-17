@@ -54,7 +54,7 @@ pub mod hook;
 mod parse;
 mod slug;
 
-use parse::{FileContext, read_dispatches, read_file};
+use parse::{FileContext, MAX_LINE_BYTES, read_dispatches, read_file};
 use slug::{Match, classify};
 
 /// The Claude Code transcript reader.
@@ -182,7 +182,7 @@ impl Source for ClaudeCode {
             for (file, rel) in sorted_jsonl(root_path)? {
                 let stem = file_stem(&file);
                 let ctx = file_context(&rel, &stem, &origin);
-                read_file(&file, &ctx, &mut seen, &mut stats, sink)?;
+                read_file(&file, &ctx, &mut seen, &mut stats, sink, MAX_LINE_BYTES)?;
             }
         }
         Ok(stats)
@@ -200,7 +200,7 @@ impl Source for ClaudeCode {
             for (file, rel) in sorted_jsonl(root.path())? {
                 let stem = file_stem(&file);
                 let ctx = file_context(&rel, &stem, &origin);
-                read_dispatches(&file, &ctx, &mut seen, &mut found)?;
+                read_dispatches(&file, &ctx, &mut seen, &mut found, MAX_LINE_BYTES)?;
             }
         }
         Ok(found)

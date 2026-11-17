@@ -475,12 +475,13 @@ fn stage_new_binary(dir: &Path, exe: &Path, bytes: &[u8]) -> Result<PathBuf, Str
     }
     Ok(staged)
 }
-
-/// Give the staged file the old binary's permission bits, or `0o755` when those cannot be read.
+/// Give the staged file the old binary's permission bits, without setuid, setgid or sticky, or
+/// `0o755` when those cannot be read.
+/// Give the staged file the old binary's permission bits (never setuid, setgid or sticky), or `0o755` when those cannot be read.
 #[cfg(unix)]
 fn match_permissions(file: &std::fs::File, exe: &Path) -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
-    let mode = std::fs::metadata(exe).map_or(0o755, |m| m.permissions().mode() & 0o7777);
+    let mode = std::fs::metadata(exe).map_or(0o755, |m| m.permissions().mode() & 0o777);
     file.set_permissions(std::fs::Permissions::from_mode(mode))
 }
 
@@ -1515,6 +1516,49 @@ mod tests {
         let fresh = dir.path().join("fresh");
         replace_binary(&fresh, GOOD, false).unwrap();
         assert_eq!(mode(&fresh), 0o755);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn setuid_setgid_and_sticky_bits_are_not_carried_to_the_new_binary() {
+        use std::os::unix::fs::PermissionsExt;
+        for special in [0o4755, 0o2755, 0o1755, 0o7755] {
+            let dir = tempfile::tempdir().unwrap();
+            let exe = dir.path().join(BIN_NAME);
+            std::fs::write(&exe, b"old").unwrap();
+            std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(special)).unwrap();
+            let before = std::fs::metadata(&exe).unwrap().permissions().mode() & 0o7777;
+            assert_eq!(
+                before, special,
+                "the fixture must really carry the special bits"
+            );
+            replace_binary(&exe, GOOD, false).unwrap();
+            let after = std::fs::metadata(&exe).unwrap().permissions().mode() & 0o7777;
+            assert_eq!(after, 0o755, "from {special:o}");
+        }
+    }
+
+    #[test]
+    fn tar_extraction_stops_at_the_wanted_entry_and_never_reads_the_rest() {
+        let mut builder = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header.set_path("d/branch-tally").unwrap();
+        header.set_size(GOOD.len() as u64);
+        header.set_mode(0o755);
+        header.set_entry_type(tar::EntryType::Regular);
+        header.set_cksum();
+        builder.append(&header, GOOD).unwrap();
+        let mut tar_bytes = builder.into_inner().unwrap();
+        // A header-sized block of noise after the entry: reading on would hit a bad checksum.
+        tar_bytes.truncate(tar_bytes.len() - 1024);
+        tar_bytes.extend_from_slice(&noise(4096));
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        gz.write_all(&tar_bytes).unwrap();
+        let mut archive = gz.finish().unwrap();
+        // And cut the gzip stream short so the trailer is missing too.
+        archive.truncate(archive.len() - 6);
+        let got = extract_binary("a.tar.gz", &archive, TARGET, CAP).unwrap();
+        assert_eq!(got, GOOD);
     }
 
     #[test]

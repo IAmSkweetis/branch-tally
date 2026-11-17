@@ -8,7 +8,8 @@ use std::path::Path;
 
 use ring::{digest, hmac};
 
-use super::tally_dir::{hex, random_bytes};
+use super::bounded::{Bounded, read_file};
+use super::tally_dir::{hex, random_bytes, refused};
 use super::{LedgerEntry, LedgerError, Redact, StoredOrigin, TallyDir, line_text, parse_line};
 use crate::model::{AgentId, RequestId, SelectedRecord, SessionId, SubagentTags, Workspace};
 
@@ -454,10 +455,8 @@ pub(super) fn redact_ledger_with(
             });
         }
     };
-    let existing = std::fs::read(&real).map_err(|source| LedgerError::Read {
-        path: path.to_owned(),
-        source,
-    })?;
+    let existing = read_file(&real).map_err(|source| LedgerError::from_read(path, source))?;
+    let existing = rewritable(existing, path)?;
     let (bytes, outcome) = rewrite(&existing, redactor);
     if outcome.rewritten + outcome.restamped > 0 {
         replace_file(&real, &bytes, &existing, between).map_err(|source| {
@@ -501,7 +500,10 @@ fn replace_file(
         .and_then(|()| file.sync_all())
         .and_then(|()| {
             between();
-            if std::fs::read(target)? == expected {
+            // An over-long line reads as the same marker a literal marker line does, so any
+            // over-long line in the re-read means the file changed.
+            let now = read_file(target)?;
+            if now.overlong == 0 && now.bytes == expected {
                 std::fs::rename(&temp, target)
             } else {
                 Err(std::io::Error::new(
@@ -515,6 +517,19 @@ fn replace_file(
         let _ = std::fs::remove_file(&temp);
     }
     done
+}
+
+/// The bytes to rewrite, or a refusal when the ledger holds an over-long line (#103): a rewrite
+/// would have to drop or keep a line it never read, so nothing is rewritten and the file is
+/// left as it is.
+fn rewritable(read: Bounded, path: &Path) -> Result<Vec<u8>, LedgerError> {
+    if read.overlong > 0 {
+        return Err(refused(
+            path,
+            "it holds a line longer than the line limit, which redaction cannot rewrite; remove or fix that line first",
+        ));
+    }
+    Ok(read.bytes)
 }
 
 /// Redacts the lines of `existing` that parse and are unredacted; every other byte is kept.
@@ -581,9 +596,11 @@ pub(super) fn redact_ledger_default_with(
             ..RedactOutcome::default()
         });
     };
-    let Some(existing) = tally.read(super::LEDGER_FILE)? else {
+    let Some(existing) = tally.read_bounded(super::LEDGER_FILE)? else {
         return Ok(RedactOutcome::default());
     };
+    let path = tally.path().join(super::LEDGER_FILE);
+    let existing = rewritable(existing, &path)?;
     let (bytes, outcome) = rewrite(&existing, redactor);
     if outcome.rewritten + outcome.restamped > 0 {
         tally.replace_with(super::LEDGER_FILE, &bytes, Some(&existing), between)?;

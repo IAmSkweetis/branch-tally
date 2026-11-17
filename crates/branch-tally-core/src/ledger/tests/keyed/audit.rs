@@ -387,3 +387,57 @@ fn the_backfill_restamps_a_stamped_line_with_a_raw_agent_branch() {
     let again = redact_ledger(&p, &KeyedRedact::new(test_salt(), false)).unwrap();
     assert_eq!((again.restamped, again.already_redacted), (0, 1));
 }
+
+// ---- 6. an over-long line swapped in for a literal marker line ----
+
+/// A ledger of a literal NUL line (the byte the bounded reader uses for an over-long line) and
+/// an unredacted entry, so a rewrite is wanted.
+fn nul_line_ledger(p: &Path) {
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(p, format!("\0\n{}\n", line("a", 1, None))).unwrap();
+}
+
+/// What the concurrent writer leaves: the NUL line replaced by an over-long line.
+fn overlong_swap(p: &Path) {
+    let mut text = "x".repeat(MAX_LINE_BYTES + 1);
+    text.push('\n');
+    text.push_str(&line("a", 1, None));
+    text.push('\n');
+    std::fs::write(p, text).unwrap();
+}
+
+fn assert_concurrent_overlong_intact(p: &Path, err: &LedgerError) {
+    assert!(
+        matches!(err, LedgerError::ChangedDuringRewrite { .. }),
+        "{err}"
+    );
+    let text = std::fs::read_to_string(p).unwrap();
+    assert!(text.starts_with("xxxx"), "the concurrent content survives");
+    assert!(!text.contains("redaction"), "nothing was rewritten");
+    assert_eq!(
+        std::fs::read_dir(p.parent().unwrap()).unwrap().count(),
+        1,
+        "no temp left"
+    );
+}
+
+#[test]
+fn an_overlong_line_swapped_for_a_nul_line_counts_as_changed() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = path(&dir);
+    nul_line_ledger(&p);
+    let hook = || overlong_swap(&p);
+    let err = redact_ledger_with(&p, &KeyedRedact::new(test_salt(), false), &hook).unwrap_err();
+    assert_concurrent_overlong_intact(&p, &err);
+}
+
+#[test]
+fn the_default_ledger_treats_a_swapped_in_overlong_line_as_changed_too() {
+    let dir = opted_in();
+    let p = dir.path().join(".tally").join("ledger.jsonl");
+    nul_line_ledger(&p);
+    let hook = || overlong_swap(&p);
+    let err = redact_ledger_default_with(dir.path(), &KeyedRedact::new(test_salt(), false), &hook)
+        .unwrap_err();
+    assert_concurrent_overlong_intact(&p, &err);
+}

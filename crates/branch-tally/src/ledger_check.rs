@@ -6,8 +6,8 @@ use std::path::Path;
 
 use branch_tally_core::git::{Git, SystemGit};
 use branch_tally_core::ledger::{
-    CheckInput, CheckedFile, Clock, MAX_TOKENS_PER_FIELD, Rule, SystemClock, TallyDir, Violation,
-    check,
+    CheckInput, CheckedFile, Clock, MAX_LINE_BYTES, MAX_TALLY_FILE_BYTES, MAX_TOKENS_PER_FIELD,
+    Rule, SystemClock, TallyDir, Violation, check,
 };
 use branch_tally_core::model::Timestamp;
 use branch_tally_core::text::replace_control_chars;
@@ -178,9 +178,10 @@ fn describe(v: &Violation) -> String {
         CheckedFile::Ledger => "ledger",
         CheckedFile::Captures => "captures",
     };
-    let place = match v.line {
-        Some(n) => format!("line {n}"),
-        None => "removed base line".to_owned(),
+    let place = match (v.line, v.rule) {
+        (Some(n), _) => format!("line {n}"),
+        (None, Rule::FileTooLarge) => "whole file".to_owned(),
+        (None, _) => "removed base line".to_owned(),
     };
     let rule = match v.rule {
         Rule::BaseLineRemoved => "a base line was removed or changed".to_owned(),
@@ -207,6 +208,41 @@ fn describe(v: &Violation) -> String {
         Rule::PendingNotOnBase => {
             "pending line recorded for a branch other than the base".to_owned()
         }
+        Rule::LineTooLong => {
+            format!("line is longer than the {MAX_LINE_BYTES}-byte limit and was not read")
+        }
+        Rule::FileTooLarge => {
+            format!("file is larger than the {MAX_TALLY_FILE_BYTES}-byte limit and was not checked")
+        }
     };
     format!("{file}: {place}: {rule}")
+}
+
+#[cfg(test)]
+mod describe_tests {
+    use super::*;
+
+    fn text(file: CheckedFile, line: Option<u64>, rule: Rule) -> String {
+        describe(&Violation { file, line, rule })
+    }
+
+    #[test]
+    fn an_overlong_line_names_its_line_and_the_limit() {
+        assert_eq!(
+            text(CheckedFile::Captures, Some(7), Rule::LineTooLong),
+            format!(
+                "captures: line 7: line is longer than the {MAX_LINE_BYTES}-byte limit and was not read"
+            )
+        );
+    }
+
+    #[test]
+    fn an_oversized_file_names_the_limit() {
+        assert_eq!(
+            text(CheckedFile::Ledger, None, Rule::FileTooLarge),
+            format!(
+                "ledger: whole file: file is larger than the {MAX_TALLY_FILE_BYTES}-byte limit and was not checked"
+            )
+        );
+    }
 }

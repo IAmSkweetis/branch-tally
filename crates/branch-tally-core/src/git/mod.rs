@@ -56,7 +56,22 @@ pub enum GitError {
     /// submodule. Reported as an error, never as "absent", so it can't hide a file's contents.
     #[error("the path at that rev is not a regular file")]
     NotAFile,
+    /// The blob at `path` is larger than the cap, so it was not read. Names the path, the rev
+    /// and the limit; never any contents.
+    #[error("`{path}` at `{rev}` is larger than the {limit}-byte limit and was not read")]
+    FileTooLarge {
+        /// The repository-relative path that was asked for.
+        path: String,
+        /// The rev that was asked for.
+        rev: String,
+        /// The cap that was exceeded, in bytes.
+        limit: u64,
+    },
 }
+
+/// Largest blob [`Git::file_at`] will read: 256 MiB. Blobs come from a PR author in CI, so the
+/// size is checked before any byte is buffered.
+pub const MAX_FILE_AT_BYTES: u64 = 256 * 1024 * 1024;
 
 fn display_code(code: Option<i32>) -> String {
     code.map_or_else(|| "none: killed by signal".to_owned(), |c| c.to_string())
@@ -150,7 +165,8 @@ pub trait Git {
     /// [`GitError::InvalidArgument`] for a `rev` starting with `-` or a `path` that is empty,
     /// absolute or contains `..`; [`GitError::NotAFile`] when `path` is a directory, symlink or
     /// submodule at `rev`; [`GitError::Failed`] when `rev` is unknown, `repo` is not a
-    /// repository or the object cannot be read; [`GitError::Spawn`] when git cannot run.
+    /// repository or the object cannot be read; [`GitError::Spawn`] when git cannot run;
+    /// [`GitError::FileTooLarge`] when the blob exceeds [`MAX_FILE_AT_BYTES`] (nothing is read).
     fn file_at(&self, repo: &Path, rev: &str, path: &Path) -> Result<Option<Vec<u8>>, GitError>;
 }
 
@@ -368,9 +384,27 @@ impl Git for SystemGit {
     }
 
     fn file_at(&self, repo: &Path, rev: &str, path: &Path) -> Result<Option<Vec<u8>>, GitError> {
+        self.file_at_limited(repo, rev, path, MAX_FILE_AT_BYTES)
+    }
+}
+
+impl SystemGit {
+    /// [`Git::file_at`] with an explicit size cap in bytes.
+    ///
+    /// # Errors
+    ///
+    /// As [`Git::file_at`], plus [`GitError::FileTooLarge`] when the blob exceeds `limit`.
+    pub fn file_at_limited(
+        &self,
+        repo: &Path,
+        rev: &str,
+        path: &Path,
+        limit: u64,
+    ) -> Result<Option<Vec<u8>>, GitError> {
         const RESOLVE: &str = "rev-parse --verify <rev>";
         const LIST: &str = "ls-tree <rev> -- <path>";
         const SHOW: &str = "cat-file blob <object>";
+        const SIZE: &str = "cat-file -s <object>";
         check_rev(rev)?;
         let rel = repo_relative_spec(path)?;
         // Resolve the rev on its own first: `cat-file` exits the same way for a missing path and
@@ -408,6 +442,18 @@ impl Git for SystemGit {
         };
         if kind != "blob" || !matches!(mode, "100644" | "100755") {
             return Err(GitError::NotAFile);
+        }
+        // Ask git for the size first, so an oversized blob is never buffered.
+        let size = Self::run(repo, SIZE, &["cat-file", "-s", object])?
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| GitError::UnexpectedOutput { subcommand: SIZE })?;
+        if size > limit {
+            return Err(GitError::FileTooLarge {
+                path: rel,
+                rev: rev.to_owned(),
+                limit,
+            });
         }
         let output = Command::new("git")
             .args(["cat-file", "blob", object])
@@ -471,6 +517,8 @@ pub struct FakeGit {
     origin_repos: BTreeMap<PathBuf, String>,
     /// Known revs per repo; the value maps repo-relative path (forward slashes) to bytes.
     revs: BTreeMap<(PathBuf, String), BTreeMap<String, Vec<u8>>>,
+    /// Cap enforced by `file_at`; `None` means [`MAX_FILE_AT_BYTES`].
+    file_limit: Option<u64>,
 }
 
 impl FakeGit {
@@ -555,6 +603,13 @@ impl FakeGit {
         self
     }
 
+    /// Override the `file_at` size cap, so a test can cross it with a few bytes.
+    #[must_use]
+    pub fn with_file_limit(mut self, limit: u64) -> Self {
+        self.file_limit = Some(limit);
+        self
+    }
+
     /// Make `rev` a known ref in `repo` that holds no scripted files.
     #[must_use]
     pub fn with_ref(mut self, repo: impl Into<PathBuf>, rev: impl Into<String>) -> Self {
@@ -625,13 +680,22 @@ impl Git for FakeGit {
     fn file_at(&self, repo: &Path, rev: &str, path: &Path) -> Result<Option<Vec<u8>>, GitError> {
         check_rev(rev)?;
         let rel = repo_relative_spec(path)?;
-        self.revs
-            .get(&(repo.to_path_buf(), rev.to_owned()))
-            .map(|files| files.get(&rel).cloned())
-            .ok_or(GitError::Failed {
-                subcommand: "rev-parse --verify <rev>",
-                code: Some(1),
-            })
+        let files =
+            self.revs
+                .get(&(repo.to_path_buf(), rev.to_owned()))
+                .ok_or(GitError::Failed {
+                    subcommand: "rev-parse --verify <rev>",
+                    code: Some(1),
+                })?;
+        let limit = self.file_limit.unwrap_or(MAX_FILE_AT_BYTES);
+        match files.get(&rel) {
+            Some(bytes) if bytes.len() as u64 > limit => Err(GitError::FileTooLarge {
+                path: rel,
+                rev: rev.to_owned(),
+                limit,
+            }),
+            found => Ok(found.cloned()),
+        }
     }
 }
 
@@ -761,6 +825,19 @@ mod default_branch_tests {
         let f = FakeGit::new().with_init_default_branch("/r", "trunk");
         assert_eq!(f.init_default_branch(Path::new("/r")).unwrap(), "trunk");
         assert!(f.init_default_branch(Path::new("/other")).is_err());
+    }
+
+    #[test]
+    fn fake_file_at_enforces_its_limit() {
+        let f = FakeGit::new()
+            .with_file_at("/r", "base", "l", vec![0; 4])
+            .with_file_limit(3);
+        assert!(matches!(
+            f.file_at(Path::new("/r"), "base", Path::new("l")),
+            Err(GitError::FileTooLarge { limit: 3, .. })
+        ));
+        let ok = FakeGit::new().with_file_at("/r", "base", "l", vec![0; 4]);
+        assert!(ok.file_at(Path::new("/r"), "base", Path::new("l")).is_ok());
     }
 
     #[test]
