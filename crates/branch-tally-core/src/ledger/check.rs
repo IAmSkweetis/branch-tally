@@ -155,8 +155,8 @@ pub(super) fn check_with_limit(input: &CheckInput<'_>, max_file_bytes: u64) -> C
         &mut violations,
     ) {
         let captures = split(input.base_captures, input.head_captures);
-        for (number, raw) in &captures.new_lines {
-            if raw.len() > MAX_LINE_BYTES {
+        for (number, raw, long) in &captures.new_lines {
+            if *long {
                 too_long(CheckedFile::Captures, *number, &mut violations);
             } else {
                 check_capture_line(raw, *number, input.now, &mut violations);
@@ -212,27 +212,27 @@ fn check_ledger_file(
     let base_keys: HashSet<EntryKey> = ledger
         .base_all
         .iter()
-        .filter(|l| l.len() <= MAX_LINE_BYTES)
-        .filter_map(|l| parse_line(l).ok())
+        .filter(|(_, long)| !long)
+        .filter_map(|(l, _)| parse_line(l).ok())
         .map(|(e, _)| e.key())
         .collect();
     let resolution = ResolutionIndex::build(
         ledger
             .base_all
             .iter()
-            .copied()
-            .filter(|l| l.len() <= MAX_LINE_BYTES)
+            .filter(|(_, long)| !long)
+            .map(|(l, _)| *l)
             .chain(
                 content_lines(input.head_ledger)
                     .into_iter()
-                    .map(|(_, l)| l)
-                    .filter(|l| l.len() <= MAX_LINE_BYTES),
+                    .filter(|(_, _, long)| !long)
+                    .map(|(_, l, _)| l),
             ),
     );
     // The first new line seen for each key, to catch a later new line that conflicts with it.
     let mut new_entries: HashMap<EntryKey, LedgerEntry> = HashMap::new();
-    for (number, raw) in &ledger.new_lines {
-        if raw.len() > MAX_LINE_BYTES {
+    for (number, raw, long) in &ledger.new_lines {
+        if *long {
             too_long(CheckedFile::Ledger, *number, violations);
             continue;
         }
@@ -251,34 +251,49 @@ fn check_ledger_file(
 
 /// One file's lines, split into base-only and head-only by multiset difference.
 struct Split<'a> {
-    base_all: Vec<&'a [u8]>,
-    /// Head lines the base does not hold, with their 1-based head line numbers.
-    new_lines: Vec<(u64, &'a [u8])>,
+    /// Every base line, with whether its physical line was over-long.
+    base_all: Vec<(&'a [u8], bool)>,
+    /// Head lines the base does not hold, with their 1-based head line numbers and whether the
+    /// physical line was over-long.
+    new_lines: Vec<(u64, &'a [u8], bool)>,
     /// How many base lines the head no longer holds.
     removed: u64,
 }
 
-fn content_lines(bytes: Option<&[u8]>) -> Vec<(u64, &[u8])> {
+/// The lines of `bytes` that are content, as (1-based number, text without a trailing CR, whether
+/// the physical line was longer than [`MAX_LINE_BYTES`]).
+///
+/// The length is measured before normalisation, as the reader measures it: a CR counts, and a
+/// whitespace-only line is kept when it is over-long, so it is reported rather than ignored.
+fn content_lines(bytes: Option<&[u8]>) -> Vec<(u64, &[u8], bool)> {
     bytes
         .unwrap_or_default()
         .split(|b| *b == b'\n')
         .enumerate()
-        .map(|(i, raw)| (i as u64 + 1, raw.strip_suffix(b"\r").unwrap_or(raw)))
-        .filter(|(_, raw)| !raw.iter().all(u8::is_ascii_whitespace))
+        .map(|(i, raw)| {
+            let text = raw.strip_suffix(b"\r").unwrap_or(raw);
+            (i as u64 + 1, text, raw.len() > MAX_LINE_BYTES)
+        })
+        .filter(|(_, text, long)| *long || !text.iter().all(u8::is_ascii_whitespace))
         .collect()
 }
 
 fn split<'a>(base: Option<&'a [u8]>, head: Option<&'a [u8]>) -> Split<'a> {
-    let base_all: Vec<&[u8]> = content_lines(base).into_iter().map(|(_, l)| l).collect();
-    let mut unmatched: HashMap<&[u8], u64> = HashMap::new();
-    for line in &base_all {
-        *unmatched.entry(line).or_default() += 1;
+    let base_all: Vec<(&[u8], bool)> = content_lines(base)
+        .into_iter()
+        .map(|(_, l, long)| (l, long))
+        .collect();
+    // Keyed by text and over-length together: a line only matches a base line the reader treats
+    // the same way, so a CR that pushes a line over the limit makes it new.
+    let mut unmatched: HashMap<(&[u8], bool), u64> = HashMap::new();
+    for key in &base_all {
+        *unmatched.entry(*key).or_default() += 1;
     }
     let mut new_lines = Vec::new();
-    for (number, line) in content_lines(head) {
-        match unmatched.get_mut(line) {
+    for (number, line, long) in content_lines(head) {
+        match unmatched.get_mut(&(line, long)) {
             Some(n) if *n > 0 => *n -= 1,
-            _ => new_lines.push((number, line)),
+            _ => new_lines.push((number, line, long)),
         }
     }
     let removed = unmatched.values().sum();

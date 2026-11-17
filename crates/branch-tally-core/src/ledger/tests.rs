@@ -943,4 +943,78 @@ mod bounded_lines {
     }
 }
 
+mod whole_file_limit {
+    //! #103 review: a ledger or captures file over `MAX_TALLY_FILE_BYTES` is refused with
+    //! `TooLarge` on every read path, however short its lines. A sparse file one byte over the
+    //! limit stands in for it: nothing is written and nothing is read.
+    use super::*;
+
+    fn sparse(file: &Path) {
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        let f = std::fs::File::create(file).unwrap();
+        f.set_len(MAX_TALLY_FILE_BYTES + 1).unwrap();
+    }
+
+    fn assert_too_large<T: std::fmt::Debug>(got: Result<T, LedgerError>) {
+        let err = got.unwrap_err();
+        assert!(
+            matches!(err, LedgerError::TooLarge { limit, .. } if limit == MAX_TALLY_FILE_BYTES),
+            "{err}"
+        );
+    }
+
+    fn ledger_dir() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        sparse(&path(&dir));
+        dir
+    }
+
+    #[test]
+    fn read_and_read_default_refuse_it() {
+        let dir = ledger_dir();
+        assert_too_large(read(&path(&dir)));
+        assert_too_large(read_default(dir.path()));
+    }
+
+    #[test]
+    fn the_append_paths_refuse_it() {
+        let dir = ledger_dir();
+        let p = path(&dir);
+        let recs = [selected("r2", "b", 1)];
+        assert_too_large(append(&p, &recs, "b", Mode::Claim, None, &Identity, &CLOCK));
+        assert_too_large(append_default(
+            dir.path(),
+            &recs,
+            "b",
+            Mode::Claim,
+            None,
+            &Identity,
+            &CLOCK,
+        ));
+        let entry = LedgerEntry::from_selected(&recs[0], "b", Mode::Claim, None);
+        assert_too_large(append_entries(&p, std::slice::from_ref(&entry), &CLOCK));
+        assert_too_large(append_entries_default(dir.path(), &[entry], &CLOCK));
+    }
+
+    #[test]
+    fn redact_refuses_it_and_leaves_the_file_alone() {
+        let redactor = KeyedRedact::new(Salt::generate().unwrap(), false);
+        let dir = ledger_dir();
+        assert_too_large(redact_ledger(&path(&dir), &redactor));
+        assert_too_large(redact_ledger_default(dir.path(), &redactor));
+        assert_eq!(
+            std::fs::metadata(path(&dir)).unwrap().len(),
+            MAX_TALLY_FILE_BYTES + 1
+        );
+    }
+
+    #[test]
+    fn the_captures_paths_refuse_it() {
+        let dir = tempfile::tempdir().unwrap();
+        sparse(&captures_path(dir.path()));
+        assert_too_large(read_captures(dir.path()));
+        assert_too_large(append_captures(dir.path(), &[]));
+    }
+}
+
 mod keyed;

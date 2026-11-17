@@ -196,12 +196,7 @@ pub fn append_keyed_explicit_pending(
     let existing = match read_file(path).map(|b| b.bytes) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(source) => {
-            return Err(LedgerError::Read {
-                path: path.to_owned(),
-                source,
-            });
-        }
+        Err(source) => return Err(LedgerError::from_read(path, source)),
     };
     let Plan { buf, out } = keyed_plan(
         &existing,

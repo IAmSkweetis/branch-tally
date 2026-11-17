@@ -455,10 +455,7 @@ pub(super) fn redact_ledger_with(
             });
         }
     };
-    let existing = read_file(&real).map_err(|source| LedgerError::Read {
-        path: path.to_owned(),
-        source,
-    })?;
+    let existing = read_file(&real).map_err(|source| LedgerError::from_read(path, source))?;
     let existing = rewritable(existing, path)?;
     let (bytes, outcome) = rewrite(&existing, redactor);
     if outcome.rewritten + outcome.restamped > 0 {
@@ -503,7 +500,10 @@ fn replace_file(
         .and_then(|()| file.sync_all())
         .and_then(|()| {
             between();
-            if read_file(target)?.bytes == expected {
+            // An over-long line reads as the same marker a literal marker line does, so any
+            // over-long line in the re-read means the file changed.
+            let now = read_file(target)?;
+            if now.overlong == 0 && now.bytes == expected {
                 std::fs::rename(&temp, target)
             } else {
                 Err(std::io::Error::new(
