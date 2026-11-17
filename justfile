@@ -11,10 +11,11 @@ set shell := ["pwsh.exe", "-NoLogo", "-NoProfile", "-Command"]
 
 # Pinned tool versions. CI reads them back with `just --evaluate <name>`, so local and CI agree.
 # mise.toml mirrors them for local setup; `just check-pins` fails when the two drift.
-# Bump one here and nowhere else (gitleaks is installed from a release archive whose sha256 is
-# pinned in .github/workflows/ci.yml, so bump that checksum with it; mdbook and mdbook-mermaid are
+# Bump one here first, then mise.toml (`just check-pins` fails until it follows). gitleaks is
+# installed from a release archive whose sha256 is pinned in .github/workflows/ci.yml, so bump that
+# checksum with it; mdbook and mdbook-mermaid are
 # the same, with their checksums in .github/workflows/docs.yml and pages.yml, and the two must stay
-# compatible: mdbook-mermaid 0.17 is built against the mdBook 0.5 preprocessor API).
+# compatible: mdbook-mermaid 0.17 is built against the mdBook 0.5 preprocessor API.
 rumdl_version := "0.3.2"
 zizmor_version := "1.31.1"
 gitleaks_version := "8.30.1"

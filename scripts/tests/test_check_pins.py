@@ -59,7 +59,7 @@ rumdl = "0.3.2"
 uv = "0.13.8"
 jq = "1.8.1"
 gh = "2.104.0"
-python = "3.15"
+python = "3.15.2"
 zizmor = "1.31.1"
 minisign = "0.12"
 powershell = "7.7.0"
@@ -85,7 +85,7 @@ MERMAID = b"// stand-in for the vendored mermaid bundle\n"
 
 
 def make_repo(mise: str = MISE, justfile: str = JUSTFILE, ci: str = CI, asset: bytes = ASSET,
-              sha: str | None = None, settings: str | None = SETTINGS, python: str | None = "3.15\n", minisign: str | None = MINISIGN_SCRIPT,
+              sha: str | None = None, settings: str | None = SETTINGS, python: str | None = "3.15.2\n", minisign: str | None = MINISIGN_SCRIPT,
               pwsh: str | None = PWSH_SCRIPT, mermaid_sha: str | None = None) -> Path:
     root = Path(tempfile.mkdtemp())
     (root / ".github" / "workflows").mkdir(parents=True)
@@ -283,12 +283,20 @@ class CheckPins(unittest.TestCase):
         self.assertTrue(any("gh" in p and "missing" in p for p in problems))
 
     def test_drifted_python_rejected(self):
-        problems = self.check(mise=MISE.replace('python = "3.15"', 'python = "3.14"'))
-        self.assertTrue(any("python" in p and "3.15" in p for p in problems))
+        problems = self.check(mise=MISE.replace('python = "3.15.2"', 'python = "3.14.4"'))
+        self.assertTrue(any("python" in p and "3.15.2" in p for p in problems))
 
     def test_python_missing_from_mise_rejected(self):
-        problems = self.check(mise=MISE.replace('python = "3.15"\n', ""))
+        problems = self.check(mise=MISE.replace('python = "3.15.2"\n', ""))
         self.assertTrue(any("python" in p and "missing" in p for p in problems))
+
+    def test_python_minor_only_rejected(self):
+        problems = self.check(python="3.15\n", mise=MISE.replace('"3.15.2"', '"3.15"'))
+        self.assertTrue(any(".python-version" in p and "X.Y.Z" in p for p in problems))
+
+    def test_settings_without_any_rumdl_rejected(self):
+        problems = self.check(settings='{"permissions": {"allow": ["Bash(just ci)"]}}')
+        self.assertTrue(any("rumdl" in p and "no `uvx rumdl@`" in p for p in problems))
 
     def test_python_version_file_missing_rejected(self):
         problems = self.check(python=None)
