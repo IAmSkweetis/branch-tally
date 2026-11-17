@@ -1,7 +1,24 @@
 # The user manual. Built with mdBook plus the mdbook-mermaid preprocessor; the pinned versions are
 # in the justfile (mdbook_version, mdbook_mermaid_version) and must stay mutually compatible.
-# mermaid.min.js and mermaid-init.js are the assets `mdbook-mermaid install` writes for that
-# pinned version. Refresh them with it when the pin moves. See docs/references/dev_workflow.md.
+# mdbook-mermaid only turns ```mermaid fences into <pre class="mermaid">. The Mermaid library
+# itself is vendored below, NOT taken from `mdbook-mermaid install` (its newest release, 0.17.1,
+# still bundles Mermaid 11.6.0, which has known XSS advisories). mermaid-init.js is the file
+# `mdbook-mermaid install` 0.17.1 writes, kept as written.
+#
+# Vendored, not generated: mermaid.min.js renders the diagrams.
+#   version   11.17.2 (Mermaid 11.x; stay on 11.x until the manual is checked against 12)
+#   source    https://registry.npmjs.org/mermaid/-/mermaid-11.17.2.tgz, file
+#             package/dist/mermaid.min.js. Tarball verified against the registry's dist.integrity
+#             sha512-V6K3C8EBdEsPFZXSKMJe6ppQOENxuHARr9GvHX4hh47lAbhMRD9qf4oEK7LoaRQxULMa80/qt5gHO73aCleBBg==
+#             and dist.shasum e3caf3717582c0e44e5d04cff043e025caec7cba (sha1)
+#   sha256    581ed7d74bd9048d0e3a91363927d72ef22942d7722546b27f7cc29e35390eb8, recorded in
+#             mermaid.min.js.sha256 and checked by `just check-pins` (part of `just ci`)
+#   licence   MIT, text in mermaid.LICENSE
+#   project   https://github.com/mermaid-js/mermaid
+#
+# mdbook-boot.js and theme/index.hbs are repository tooling: they carry the page's Content-
+# Security-Policy and the scripts mdBook's template had inline. Refresh both when mdbook_version
+# moves (instructions in theme/index.hbs). `just docs` checks the built pages.
 #
 # Vendored, not generated: svg-pan-zoom.min.js makes the diagrams zoomable, driven by
 # svg-pan-zoom-init.js and styled by svg-pan-zoom.css (all three are repository tooling).
@@ -32,6 +49,7 @@ command = "mdbook-mermaid"
 site-url = "/"
 git-repository-url = "https://github.com/IAmSkweetis/branch-tally"
 additional-js = [
+    "mdbook-boot.js",
     "mermaid.min.js",
     "mermaid-init.js",
     "svg-pan-zoom.min.js",

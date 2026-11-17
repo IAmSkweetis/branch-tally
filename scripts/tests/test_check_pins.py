@@ -64,9 +64,12 @@ sha256_linux_arm64=e59c89776eaa59790d44b3edd14277435225ab08b6e7603763101b89de83d
 ASSET = b"console.log('pan');\n"
 
 
+MERMAID = b"// stand-in for the vendored mermaid bundle\n"
+
+
 def make_repo(mise: str = MISE, justfile: str = JUSTFILE, ci: str = CI, asset: bytes = ASSET,
               sha: str | None = None, minisign: str | None = MINISIGN_SCRIPT,
-              pwsh: str | None = PWSH_SCRIPT) -> Path:
+              pwsh: str | None = PWSH_SCRIPT, mermaid_sha: str | None = None) -> Path:
     root = Path(tempfile.mkdtemp())
     (root / ".github" / "workflows").mkdir(parents=True)
     (root / "docs" / "manual").mkdir(parents=True)
@@ -83,6 +86,10 @@ def make_repo(mise: str = MISE, justfile: str = JUSTFILE, ci: str = CI, asset: b
     digest = sha or hashlib.sha256(asset).hexdigest()
     (root / "docs" / "manual" / "svg-pan-zoom.min.js.sha256").write_text(
         f"{digest}  svg-pan-zoom.min.js\n", encoding="utf-8")
+    (root / "docs" / "manual" / "mermaid.min.js").write_bytes(MERMAID)
+    (root / "docs" / "manual" / "mermaid.min.js.sha256").write_text(
+        f"{mermaid_sha or hashlib.sha256(MERMAID).hexdigest()}  mermaid.min.js\n",
+        encoding="utf-8")
     return root
 
 
@@ -128,6 +135,16 @@ class CheckPins(unittest.TestCase):
     def test_tampered_vendored_asset_rejected(self):
         problems = self.check(sha="0" * 64)
         self.assertTrue(any("svg-pan-zoom" in p for p in problems))
+
+    def test_tampered_mermaid_bundle_rejected(self):
+        problems = self.check(mermaid_sha="0" * 64)
+        self.assertTrue(any("mermaid.min.js" in p for p in problems))
+
+    def test_missing_mermaid_record_rejected(self):
+        root = make_repo()
+        self.addCleanup(shutil.rmtree, root, True)
+        (root / "docs" / "manual" / "mermaid.min.js.sha256").unlink()
+        self.assertTrue(any("mermaid.min.js" in p for p in cp.check(root)))
 
     def test_missing_mise_toml_rejected(self):
         root = make_repo()
