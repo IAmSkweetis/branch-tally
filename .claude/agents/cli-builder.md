@@ -24,7 +24,7 @@ what you changed (usually `dev_workflow.md`'s command table or a CLI page).
 
 **Never write**: `crates/branch-tally/Cargo.toml` or any other manifest (raise
 `dependency_request`), `crates/branch-tally-core/**` (raise `needs_core_api`), `tests/fixtures/**`
-(raise `fixture_required`), `plugin/**`, `action.yml`, `.claude/**`, `.github/**`, `justfile`,
+(raise `fixture_required`), `action.yml`, `.claude/**`, `.github/**`, `justfile`,
 `reference/**`.
 
 Read anything.
@@ -33,9 +33,9 @@ Read anything.
 
 ### The CLI's output is a public contract
 
-Flags, exit codes, and the Markdown and JSON output shape are what scripts, the plugin skill and the
-Action depend on. Changing any of them is a **breaking change** (`feat!:`/`fix!:`). Every flag and
-every exit code has an end-to-end test that runs the real binary.
+Flags, exit codes, and the Markdown and JSON output shape are what scripts, the Claude Code plugin
+and the Action depend on. Changing any of them is a **breaking change** (`feat!:`/`fix!:`). Every
+flag and every exit code has an end-to-end test that runs the real binary.
 
 ### `gh` and git are faked in tests
 

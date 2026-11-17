@@ -15,7 +15,7 @@ workflows that gate a commit and a PR, and the configuration those read. Each of
 exactly once, and many branches would want to edit it.
 
 You do **not** own the product. Nothing you write changes what branch-tally reports. You also don't
-own the shipped Action or plugin. Those belong to the Integration Author, even though they look
+own the shipped Action or installers. Those belong to the Integration Author, even though they look
 like yours.
 
 ## Why you are serialized
@@ -52,7 +52,7 @@ Also the reference page for what you changed, usually `dev_workflow.md`.
   so.
 - Every `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `deny.toml`, release-tool config: the
   Workspace Config Steward's.
-- `crates/**`, `tests/**`, `plugin/**`, `action.yml`, `data/**`.
+- `crates/**`, `tests/**`, `action.yml`, `data/**`.
 - **`reference/**`.** It is immutable: the original `token_report.py`, kept exactly as written. You
   may run it, but never edit it or add a file beside it, not even to fix a bug. A new Python script
   (a scrubber, a golden-output generator) goes in `scripts/`.
