@@ -18,7 +18,7 @@ pub use assets::{
 pub use version::{DEV_VERSION, Version, is_dev_version};
 
 /// The installer one-liners shown when `update` cannot run.
-pub const INSTALL_HINT: &str = "install with: curl -LsSf https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install.sh | sh (Windows: irm https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install.ps1 | iex)";
+pub const INSTALL_HINT: &str = "install with: curl -LsSf https://github.com/branch-tally/branch-tally/releases/latest/download/install.sh | sh (Windows: irm https://github.com/branch-tally/branch-tally/releases/latest/download/install.ps1 | iex)";
 
 /// Everything that can go wrong during an update.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

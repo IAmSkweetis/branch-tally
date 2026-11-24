@@ -68,9 +68,9 @@ function Write-NoBom {
   [IO.File]::WriteAllText($Path, $Text, (New-Object System.Text.UTF8Encoding($false)))
 }
 
-$script:GoodWorkflow = 'IAmSkweetis/branch-tally/.github/workflows/release.yml'
+$script:GoodWorkflow = 'branch-tally/branch-tally/.github/workflows/release.yml'
 $script:GoodRef = 'refs/heads/main'
-$script:GoodIdentity = 'https://github.com/IAmSkweetis/branch-tally/.github/workflows/release.yml@refs/heads/main'
+$script:GoodIdentity = 'https://github.com/branch-tally/branch-tally/.github/workflows/release.yml@refs/heads/main'
 
 function Get-SafePath {
   param([string]$Prefix = '')
@@ -97,7 +97,7 @@ function Write-Stub {
     # exist, and --repo is mandatory (without --repo or --owner the real gh refuses).
     # %~3 drops the quotes cmd keeps on an argument with spaces, so one pair is added, not two.
     $body += "if not exist `"%~3`" exit /b 2`r`n"
-    $body += "echo %* | findstr /C:`"--repo IAmSkweetis/branch-tally `" >nul || exit /b 2`r`n"
+    $body += "echo %* | findstr /C:`"--repo branch-tally/branch-tally `" >nul || exit /b 2`r`n"
     $body += "echo %* | findstr /C:`"--signer-workflow $Signer `" >nul || exit /b 1`r`n"
     $body += "echo %* | findstr /C:`"--source-ref $Ref `" >nul || exit /b 1`r`n"
     $body += "echo %* | findstr /C:`"--cert-oidc-issuer https://token.actions.githubusercontent.com`" >nul || exit /b 1`r`n"
@@ -267,7 +267,7 @@ function Write-Api {
   # What the fake GitHub API answers for releases/latest: exactly this text. Without a call, there
   # is no file, which is an unreachable API.
   param([string]$Body)
-  $dir = Join-Path $script:S.Api 'repos\IAmSkweetis\branch-tally\releases'
+  $dir = Join-Path $script:S.Api 'repos\branch-tally\branch-tally\releases'
   New-Item -ItemType Directory -Path $dir -Force | Out-Null
   Write-NoBom (Join-Path $dir 'latest') $Body
 }
@@ -438,7 +438,7 @@ $ghLog = Get-StubLog 'gh'
 Test-Case 'gh pass exits 0' ($res.Rc -eq 0)
 Test-Case 'gh pass installs' (Test-Path (Join-Path $D 'branch-tally.exe'))
 Test-Case 'gh pass ran attestation verify' ($ghLog -like '*attestation verify*')
-Test-Case 'gh pass pins the repository' ($ghLog -like '*--repo IAmSkweetis/branch-tally*')
+Test-Case 'gh pass pins the repository' ($ghLog -like '*--repo branch-tally/branch-tally*')
 Test-Case 'gh pass pins the signer workflow' ($ghLog -like "*--signer-workflow $script:GoodWorkflow *")
 Test-Case 'gh pass pins the source ref to main' ($ghLog -like '*--source-ref refs/heads/main *')
 Test-Case 'gh pass pins the issuer' ($ghLog -like '*--cert-oidc-issuer https://token.actions.githubusercontent.com*')
@@ -523,7 +523,7 @@ Test-Case 'unavailable exits 0' ($res.Rc -eq 0)
 Test-Case 'unavailable installs' (Test-Path (Join-Path $D 'branch-tally.exe'))
 Test-Case 'unavailable warns provenance was not verified' ($res.Err -like '*NOT verified*')
 Test-Case 'unavailable says the checksum is only an integrity check' ($res.Err -like '*integrity*')
-Test-Case 'unavailable prints the gh command' ($res.Err -like '*gh attestation verify*--repo IAmSkweetis/branch-tally*')
+Test-Case 'unavailable prints the gh command' ($res.Err -like '*gh attestation verify*--repo branch-tally/branch-tally*')
 Remove-Item -LiteralPath $D -Recurse -Force
 $res = Invoke-Installer @('-To', $D, '-RequireAttestation')
 Test-Case '-RequireAttestation with no tool exits non-zero' ($res.Rc -ne 0)
@@ -556,10 +556,10 @@ Test-Case 'logged-out gh never ran attestation verify' ((Get-StubLog 'gh') -notl
 
 # 9j. An attestation from another workflow, or another ref, in this repository must not install.
 foreach ($case in @(
-    @{ Name = 'gh_other_wf'; Tool = 'gh'; Signer = 'IAmSkweetis/branch-tally/.github/workflows/other.yml'; Ref = $script:GoodRef; Label = 'gh: attestation from another workflow' },
+    @{ Name = 'gh_other_wf'; Tool = 'gh'; Signer = 'branch-tally/branch-tally/.github/workflows/other.yml'; Ref = $script:GoodRef; Label = 'gh: attestation from another workflow' },
     @{ Name = 'gh_other_ref'; Tool = 'gh'; Signer = $script:GoodWorkflow; Ref = 'refs/heads/some-branch'; Label = 'gh: attestation from another ref' },
-    @{ Name = 'cosign_other_wf'; Tool = 'cosign'; Signer = 'https://github.com/IAmSkweetis/branch-tally/.github/workflows/other.yml@refs/heads/main'; Ref = ''; Label = 'cosign: bundle from another workflow' },
-    @{ Name = 'cosign_other_ref'; Tool = 'cosign'; Signer = 'https://github.com/IAmSkweetis/branch-tally/.github/workflows/release.yml@refs/heads/feature'; Ref = ''; Label = 'cosign: bundle from another ref' })) {
+    @{ Name = 'cosign_other_wf'; Tool = 'cosign'; Signer = 'https://github.com/branch-tally/branch-tally/.github/workflows/other.yml@refs/heads/main'; Ref = ''; Label = 'cosign: bundle from another workflow' },
+    @{ Name = 'cosign_other_ref'; Tool = 'cosign'; Signer = 'https://github.com/branch-tally/branch-tally/.github/workflows/release.yml@refs/heads/feature'; Ref = ''; Label = 'cosign: bundle from another ref' })) {
   Initialize-Sandbox $case.Name
   $R = $script:S.Release; $D = $script:S.Dest
   Build-Release $R 'v2.0.0' $target '2.0.0'

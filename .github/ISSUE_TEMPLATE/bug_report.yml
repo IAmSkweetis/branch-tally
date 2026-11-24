@@ -9,7 +9,7 @@ body:
         Thanks for reporting. Issues are public. **Never paste a transcript, a prompt, a response
         or code from one.** branch-tally only needs usage, model, ids, timestamps, branch and cwd
         to reproduce a problem. Found a security problem? Use the
-        [private advisory form](https://github.com/IAmSkweetis/branch-tally/security/advisories/new)
+        [private advisory form](https://github.com/branch-tally/branch-tally/security/advisories/new)
         instead.
 
         Name the issue as a Conventional Commit, for example

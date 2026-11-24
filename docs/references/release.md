@@ -268,11 +268,11 @@ Two installers, `install.sh` and `install.ps1`, live at the repository root and 
 every release (checksummed in `SHA256SUMS` and attested, like the archives). The one-liners:
 
 ```bash
-curl -LsSf https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install.sh | sh
+curl -LsSf https://github.com/branch-tally/branch-tally/releases/latest/download/install.sh | sh
 ```
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/branch-tally/branch-tally/releases/latest/download/install.ps1 | iex"
 ```
 
 | Flag (`install.sh`) | Parameter (`install.ps1`) | Environment variable | Meaning |
@@ -280,7 +280,7 @@ powershell -ExecutionPolicy Bypass -c "irm https://github.com/IAmSkweetis/branch
 | `--version <vX.Y.Z>` | `-Version` | `BRANCH_TALLY_INSTALL_VERSION` | Install that release instead of the latest |
 | `--to <dir>` | `-To` | `BRANCH_TALLY_INSTALL_DIR` | Install directory |
 | `--require-attestation` | `-RequireAttestation` | `BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION` | Fail unless provenance was verified (`1`, `true` or `yes` for the variable) |
-| none | none | `BRANCH_TALLY_INSTALL_BASE_URL` | Releases URL, `https://` or `file://` only, default `https://github.com/IAmSkweetis/branch-tally/releases`. The effective source is printed when it is set. `branch-tally update` reads it too: for a non-default source it prints `release source: <url> (from BRANCH_TALLY_INSTALL_BASE_URL, ...)` on stderr, even with `--check`, and `--yes` does not skip the confirmation (see below). The tests point it at a `file://` fake release |
+| none | none | `BRANCH_TALLY_INSTALL_BASE_URL` | Releases URL, `https://` or `file://` only, default `https://github.com/branch-tally/branch-tally/releases`. The effective source is printed when it is set. `branch-tally update` reads it too: for a non-default source it prints `release source: <url> (from BRANCH_TALLY_INSTALL_BASE_URL, ...)` on stderr, even with `--check`, and `--yes` does not skip the confirmation (see below). The tests point it at a `file://` fake release |
 | none | none | `BRANCH_TALLY_INSTALL_API_URL` | Where "latest" is looked up, `https://` or `file://` only, default `https://api.github.com`. Printed as `Using release API: <url>` when set. The same trust as the mirror variable. The tests point it at a `file://` fake API |
 | none | none | `GH_TOKEN`, else `GITHUB_TOKEN` | Sent as a bearer token to the "latest" lookup only, to avoid rate limits. Never printed and never on a command line: curl reads it from a private header file, GNU wget 1.17+ from a private `--config` file, and any other wget (BusyBox) goes unauthenticated with a notice |
 
@@ -291,7 +291,7 @@ prints the installed path and the binary's `--version`. With options, use the fl
 Windows use the environment variables.
 
 **Which release is "latest".** With no version pinned, both installers read `tag_name` from
-`<api>/repos/IAmSkweetis/branch-tally/releases/latest` (validated as `vMAJOR.MINOR.PATCH`), **even
+`<api>/repos/branch-tally/branch-tally/releases/latest` (validated as `vMAJOR.MINOR.PATCH`), **even
 when a mirror is set**: a signature proves a release is genuine, not that it is the newest, so a
 mirror serving an older signed release as "latest" would otherwise roll users back. The JSON is
 read without `jq` (POSIX `sh`: a line-oriented `sed` on `"tag_name"`; PowerShell:
@@ -311,12 +311,12 @@ same place as the archive. Only the build-provenance attestation proves origin
 verifies it with the first tool that is available:
 
 1. `gh`, when on PATH and logged in (`gh auth status` succeeds): `gh attestation verify <archive>
-   --repo IAmSkweetis/branch-tally --signer-workflow
-   IAmSkweetis/branch-tally/.github/workflows/release.yml --source-ref refs/heads/main
+   --repo branch-tally/branch-tally --signer-workflow
+   branch-tally/branch-tally/.github/workflows/release.yml --source-ref refs/heads/main
    --cert-oidc-issuer https://token.actions.githubusercontent.com`.
 2. Otherwise `cosign`, when on PATH: `cosign verify-blob-attestation` of the archive against the
    release asset `provenance.sigstore.json`, with an exact `--certificate-identity
-   https://github.com/IAmSkweetis/branch-tally/.github/workflows/release.yml@refs/heads/main`
+   https://github.com/branch-tally/branch-tally/.github/workflows/release.yml@refs/heads/main`
    (no regexp) and `--certificate-oidc-issuer https://token.actions.githubusercontent.com`. A
    release with no bundle counts as "could not verify", not as a pass.
 3. Otherwise it warns on stderr that provenance was **not** verified, prints the full `gh
@@ -501,12 +501,12 @@ sha256sum --check --ignore-missing SHA256SUMS   # shasum -a 256 -c on macOS
 # Pin the signer workflow and ref: --repo alone accepts any workflow in the repository.
 # The same command works for any asset: an archive, an installer, SHA256SUMS or SHA256SUMS.minisig.
 gh attestation verify branch-tally-v0.1.0-<target>.tar.gz \
-  --repo IAmSkweetis/branch-tally \
-  --signer-workflow IAmSkweetis/branch-tally/.github/workflows/release.yml \
+  --repo branch-tally/branch-tally \
+  --signer-workflow branch-tally/branch-tally/.github/workflows/release.yml \
   --source-ref refs/heads/main
 gh attestation verify SHA256SUMS \
-  --repo IAmSkweetis/branch-tally \
-  --signer-workflow IAmSkweetis/branch-tally/.github/workflows/release.yml \
+  --repo branch-tally/branch-tally \
+  --signer-workflow branch-tally/branch-tally/.github/workflows/release.yml \
   --source-ref refs/heads/main
 ```
 

@@ -8,13 +8,13 @@ have worked with Claude Code, on the same machine that ran the sessions.
 Linux (x86_64, aarch64) and macOS (Intel, Apple silicon):
 
 ```sh
-curl -fsSL https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/branch-tally/branch-tally/releases/latest/download/install.sh | sh
 ```
 
 Windows (PowerShell):
 
 ```powershell
-irm https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install.ps1 | iex
+irm https://github.com/branch-tally/branch-tally/releases/latest/download/install.ps1 | iex
 ```
 
 Both put the binary in `~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows) and print the line

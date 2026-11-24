@@ -7,7 +7,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Check the [roadmap](https://github.com/IAmSkweetis/branch-tally/milestone/1) first: it may
+        Check the [roadmap](https://github.com/branch-tally/branch-tally/milestone/1) first: it may
         already be planned. Name the issue as a Conventional Commit, for example
         `feat(cli): add --json output to branch-tally report`. Issues are public, so don't paste
         transcript content.

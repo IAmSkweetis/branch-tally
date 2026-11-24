@@ -8,7 +8,7 @@ body:
     attributes:
       value: |
         Claude Code is supported today; Codex, Gemini CLI and OpenCode are planned on the
-        [roadmap](https://github.com/IAmSkweetis/branch-tally/milestone/1). Issues are public:
+        [roadmap](https://github.com/branch-tally/branch-tally/milestone/1). Issues are public:
         describe the transcript format, but **never paste a real transcript**.
   - type: input
     id: harness

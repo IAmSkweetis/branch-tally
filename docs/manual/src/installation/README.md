@@ -1,7 +1,7 @@
 # Installation
 
 branch-tally is a single static binary. Every release on the
-[releases page](https://github.com/IAmSkweetis/branch-tally/releases) ships it prebuilt for six
+[releases page](https://github.com/branch-tally/branch-tally/releases) ships it prebuilt for six
 targets:
 
 | Platform | Target | Archive |
@@ -33,7 +33,7 @@ attestation, which does. Without either, they warn that provenance was not verif
 anyway unless you ask them not to. They never edit your shell startup files or your `PATH`.
 
 Package managers (crates.io, Homebrew, npm) are not available yet; they are tracked on the
-[roadmap](https://github.com/IAmSkweetis/branch-tally/milestone/1).
+[roadmap](https://github.com/branch-tally/branch-tally/milestone/1).
 
 ## Updating
 

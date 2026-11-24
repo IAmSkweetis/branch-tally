@@ -103,7 +103,7 @@ fill the table, is exactly that. So no push of this PR is ever just token usage.
 
 It uses the **installed release binary**, not `cargo run` on this branch. If `branch-tally` isn't
 on `PATH`, the recipes stop with an install hint. Tell the user to install the latest
-[release](https://github.com/IAmSkweetis/branch-tally/releases/latest) archive, and leave the
+[release](https://github.com/branch-tally/branch-tally/releases/latest) archive, and leave the
 placeholder until they have. Don't install it yourself, and don't fall back to
 `reference/token_report.py`: it is only the goldens' parity oracle now. Don't paste a number from
 another tool or machine.

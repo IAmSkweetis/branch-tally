@@ -7,7 +7,7 @@ version = "0.0.0"
 edition = "2024"
 rust-version = "1.99.1"
 license = "MIT"
-repository = "https://github.com/IAmSkweetis/branch-tally"
+repository = "https://github.com/branch-tally/branch-tally"
 
 # Versions are declared here once; crates say `foo.workspace = true`. Each entry was approved
 # through the Workspace Config Steward (issue #3).

@@ -996,7 +996,7 @@ output = 25.0
 ```
 
 The bundled table, with the schema in its header, is
-[`crates/branch-tally-core/data/prices.toml`](https://github.com/IAmSkweetis/branch-tally/blob/main/crates/branch-tally-core/data/prices.toml).
+[`crates/branch-tally-core/data/prices.toml`](https://github.com/branch-tally/branch-tally/blob/main/crates/branch-tally-core/data/prices.toml).
 
 ## `branch-tally config show`
 
@@ -1042,7 +1042,7 @@ branch-tally upgrade [OPTIONS]
 ```
 
 Replaces the running `branch-tally` binary with a release from the
-[releases page](https://github.com/IAmSkweetis/branch-tally/releases). `upgrade` is an alias and
+[releases page](https://github.com/branch-tally/branch-tally/releases). `upgrade` is an alias and
 behaves identically. It works on a binary installed by `install.sh`, `install.ps1` or a
 [download by hand](installation/manual-download.md), on the six
 [release targets](installation/).
@@ -1143,7 +1143,7 @@ because it is not signed.
 ### Which release is the latest
 
 Without `--version`, `update` asks the GitHub API
-(`https://api.github.com/repos/IAmSkweetis/branch-tally/releases/latest`) which release is the
+(`https://api.github.com/repos/branch-tally/branch-tally/releases/latest`) which release is the
 latest. It does this even when a [release mirror](#release-mirror) is set, because a signature
 proves a release is genuine, not that it is the newest: a mirror serving an older signed release
 as "latest" could otherwise roll you back to a version with a known bug. The API address is fixed;
@@ -1168,7 +1168,7 @@ your machine trusts.
 the same layout as the releases page. `update` downloads `<base>/download/<tag>/…` from it: the
 archive, `SHA256SUMS` and `SHA256SUMS.minisig`. Which release is the latest still comes from the
 GitHub API, as described above.
-The default is `https://github.com/IAmSkweetis/branch-tally/releases`. A `file://` URL naming a
+The default is `https://github.com/branch-tally/branch-tally/releases`. A `file://` URL naming a
 local directory also works. Any other scheme, including plain `http://`, is refused before any
 network call.
 

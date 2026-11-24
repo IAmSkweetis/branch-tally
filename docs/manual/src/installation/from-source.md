@@ -15,7 +15,7 @@ Build it from a clone of the repository instead.
 ## Build and install
 
 ```sh
-git clone https://github.com/IAmSkweetis/branch-tally.git
+git clone https://github.com/branch-tally/branch-tally.git
 cd branch-tally
 cargo install --path crates/branch-tally --locked
 ```

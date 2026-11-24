@@ -18,7 +18,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 $installer = [IO.Path]::GetFullPath([IO.Path]::Combine($PSScriptRoot, '..', '..', 'install.ps1'))
-$repo = 'IAmSkweetis/branch-tally'
+$repo = 'branch-tally/branch-tally'
 # A release that predates this test and is never deleted: its assets are a stable 302 target.
 $tag = 'v0.10.0'
 $download = "https://github.com/$repo/releases/download/$tag"

@@ -13,20 +13,20 @@ who built the archive, because the checksum file comes from the same place as th
 build-provenance attestation proves origin. After the checksum check this script verifies it, using
 the first of these that is available:
 
-  1. gh, logged in:  gh attestation verify <archive> --repo IAmSkweetis/branch-tally `
-                       --signer-workflow IAmSkweetis/branch-tally/.github/workflows/release.yml `
+  1. gh, logged in:  gh attestation verify <archive> --repo branch-tally/branch-tally `
+                       --signer-workflow branch-tally/branch-tally/.github/workflows/release.yml `
                        --source-ref refs/heads/main `
                        --cert-oidc-issuer https://token.actions.githubusercontent.com
   2. cosign:         verifies the release's provenance.sigstore.json with an exact
                      --certificate-identity
-                     https://github.com/IAmSkweetis/branch-tally/.github/workflows/release.yml@refs/heads/main
+                     https://github.com/branch-tally/branch-tally/.github/workflows/release.yml@refs/heads/main
                      and --certificate-oidc-issuer https://token.actions.githubusercontent.com
   3. neither:        warns that provenance was NOT verified, prints the command to run, and installs.
                      -RequireAttestation turns this warning into a failure.
 
 A verification that runs and fails is always a hard failure: nothing is installed.
 
-One line:  irm https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install.ps1 | iex
+One line:  irm https://github.com/branch-tally/branch-tally/releases/latest/download/install.ps1 | iex
 
 `irm | iex` cannot pass parameters, so each has an environment variable. A parameter overrides it.
 
@@ -47,7 +47,7 @@ One line:  irm https://github.com/IAmSkweetis/branch-tally/releases/latest/downl
                                                                 Never printed.
 
 With no -Version, the latest tag is read from GitHub's API
-(https://api.github.com/repos/IAmSkweetis/branch-tally/releases/latest), even when a mirror is set,
+(https://api.github.com/repos/branch-tally/branch-tally/releases/latest), even when a mirror is set,
 because a mirror serving an older signed release as "latest" would roll you back. If the API cannot
 be reached, is rate limited or answers with something unusable, this script falls back to the
 mirror's latest/download/SHA256SUMS and warns on stderr that "latest" was not confirmed by GitHub,
@@ -85,7 +85,7 @@ function Install-BranchTally {
   $ErrorActionPreference = 'Stop'
   $ProgressPreference = 'SilentlyContinue'
 
-  $repo = 'IAmSkweetis/branch-tally'
+  $repo = 'branch-tally/branch-tally'
   $defaultBase = "https://github.com/$repo/releases"
   $defaultApi = 'https://api.github.com'
   $maxRedirects = 5

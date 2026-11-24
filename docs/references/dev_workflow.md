@@ -417,7 +417,7 @@ survived scrubbing is a real leak, not a false positive ([testing.md](testing.md
 
 ## Issues
 
-The roadmap is the [`v1` milestone](https://github.com/IAmSkweetis/branch-tally/milestone/1), and
+The roadmap is the [`v1` milestone](https://github.com/branch-tally/branch-tally/milestone/1), and
 every issue also goes on the `branch-tally` project board (#2). There is no `roadmap` label and no
 tracking issue with sub-issues. Each issue has a Conventional Commit title and carries:
 
@@ -578,7 +578,7 @@ in the environment Claude Code starts with) if `record` is cut off.
 
 It runs the **installed release binary**, not `cargo run`, so the report comes from a published
 build rather than the branch under review. Install the latest
-[release](https://github.com/IAmSkweetis/branch-tally/releases/latest) archive for your platform
+[release](https://github.com/branch-tally/branch-tally/releases/latest) archive for your platform
 and put `branch-tally` on `PATH`. The recipe stops with that hint if it is missing.
 
 `report` attributes by the session's claimed branch by default. `--strict` is the naive
