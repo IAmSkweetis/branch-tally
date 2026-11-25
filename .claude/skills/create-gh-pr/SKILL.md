@@ -201,7 +201,7 @@ Don't pass `--project` to `gh pr create`. A missing token scope would fail the w
 the PR to the board separately:
 
 ```bash
-gh project item-add 2 --owner IAmSkweetis --url <pr-url>
+gh project item-add 1 --owner branch-tally --url <pr-url>
 ```
 
 If that fails with a scope error, the PR is fine. Tell the user to run
