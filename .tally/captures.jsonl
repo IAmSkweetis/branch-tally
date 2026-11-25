@@ -39,3 +39,8 @@
 {"v":1,"harness":"claude-code","kind":"subagent-stop","session_id":"116d690e-206a-4b8d-8979-87aa8c9042a0","agent_id":"a90cc34994b2e847a","branch":"fix/issue-102-plugin-and-tool-pins","ts":"2026-11-17T04:04:38Z"}
 {"v":1,"harness":"claude-code","kind":"stop","session_id":"116d690e-206a-4b8d-8979-87aa8c9042a0","branch":"fix/issue-102-plugin-and-tool-pins","ts":"2026-11-17T04:05:00Z"}
 {"v":1,"harness":"claude-code","kind":"subagent-stop","session_id":"116d690e-206a-4b8d-8979-87aa8c9042a0","agent_id":"af79b4bb17c554d9a","branch":"fix/issue-102-plugin-and-tool-pins","ts":"2026-11-17T04:08:02Z"}
+{"v":1,"harness":"claude-code","kind":"stop","session_id":"116d690e-206a-4b8d-8979-87aa8c9042a0","branch":"fix/issue-102-plugin-and-tool-pins","ts":"2026-11-17T04:20:52Z"}
+{"v":1,"harness":"claude-code","kind":"subagent-stop","session_id":"116d690e-206a-4b8d-8979-87aa8c9042a0","agent_id":"aa1b3e68d41b2b4a7","branch":"fix/issue-102-plugin-and-tool-pins","ts":"2026-11-17T04:23:55Z"}
+{"v":1,"harness":"claude-code","kind":"stop","session_id":"116d690e-206a-4b8d-8979-87aa8c9042a0","branch":"main","ts":"2026-11-17T04:38:51Z"}
+{"v":1,"harness":"claude-code","kind":"session-start","session_id":"ac41cb5f-ac12-4c16-8ccc-a4217dec698e","branch":"main","ts":"2026-11-24T22:55:45Z"}
+{"v":1,"harness":"claude-code","kind":"stop","session_id":"ac41cb5f-ac12-4c16-8ccc-a4217dec698e","branch":"chore/migrate-to-branch-tally-org","ts":"2026-11-24T22:57:48Z"}

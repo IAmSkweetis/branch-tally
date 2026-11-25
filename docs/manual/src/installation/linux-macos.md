@@ -4,7 +4,7 @@
 silicon):
 
 ```sh
-curl -fsSL https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/branch-tally/branch-tally/releases/latest/download/install.sh | sh
 ```
 
 On success it prints the version and target it is installing, the installed path, and the
@@ -13,7 +13,7 @@ installed binary's `--version`:
 ```text
 Installing branch-tally v0.10.0 for x86_64-unknown-linux-musl
 Checksum OK (an integrity check; it does not prove who built the archive)
-Provenance verified with gh: branch-tally-v0.10.0-x86_64-unknown-linux-musl.tar.gz was built by IAmSkweetis/branch-tally
+Provenance verified with gh: branch-tally-v0.10.0-x86_64-unknown-linux-musl.tar.gz was built by branch-tally/branch-tally
 Installed /home/you/.local/bin/branch-tally
 branch-tally 0.10.0
 ```
@@ -50,7 +50,7 @@ it passes `--https-only` when that `wget` supports it.
 ## Which release is the latest
 
 Without `--version`, the installer asks the GitHub API
-(`https://api.github.com/repos/IAmSkweetis/branch-tally/releases/latest`) which release is the
+(`https://api.github.com/repos/branch-tally/branch-tally/releases/latest`) which release is the
 latest, even when a mirror is set. A mirror serving an older release as "latest" could otherwise
 roll you back to a version with a known bug.
 
@@ -80,8 +80,8 @@ that is available:
 1. **`gh`, logged in** (`gh auth status` succeeds). It runs:
 
    ```sh
-   gh attestation verify <archive> --repo IAmSkweetis/branch-tally \
-     --signer-workflow IAmSkweetis/branch-tally/.github/workflows/release.yml \
+   gh attestation verify <archive> --repo branch-tally/branch-tally \
+     --signer-workflow branch-tally/branch-tally/.github/workflows/release.yml \
      --source-ref refs/heads/main \
      --cert-oidc-issuer https://token.actions.githubusercontent.com
    ```
@@ -90,7 +90,7 @@ that is available:
    `main`.
 2. **`cosign`.** It downloads the release asset `provenance.sigstore.json` and runs
    `cosign verify-blob-attestation` on the archive with that bundle, requiring the exact signer
-   `https://github.com/IAmSkweetis/branch-tally/.github/workflows/release.yml@refs/heads/main`
+   `https://github.com/branch-tally/branch-tally/.github/workflows/release.yml@refs/heads/main`
    and the issuer `https://token.actions.githubusercontent.com`.
 3. **Neither.** It warns on stderr, then installs:
 
@@ -119,7 +119,7 @@ Every option has a flag and an environment variable. A flag overrides its variab
 | `--version <vX.Y.Z>` | `BRANCH_TALLY_INSTALL_VERSION` | `latest` | Install this release instead of the latest. The leading `v` is optional. |
 | `--to <dir>` | `BRANCH_TALLY_INSTALL_DIR` | `$HOME/.local/bin` | Install into this directory. It is created if missing. |
 | `--require-attestation` | `BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION` | off | Fail unless provenance was verified with `gh` or `cosign`. The variable turns it on when set to `1`, `true` or `yes`. |
-| none | `BRANCH_TALLY_INSTALL_BASE_URL` | `https://github.com/IAmSkweetis/branch-tally/releases` | Download from a mirror with the same layout (`<base>/download/<tag>/…`, and `<base>/latest/download/SHA256SUMS` for the fallback). Only `https://` and `file://` URLs are accepted. |
+| none | `BRANCH_TALLY_INSTALL_BASE_URL` | `https://github.com/branch-tally/branch-tally/releases` | Download from a mirror with the same layout (`<base>/download/<tag>/…`, and `<base>/latest/download/SHA256SUMS` for the fallback). Only `https://` and `file://` URLs are accepted. |
 | none | `BRANCH_TALLY_INSTALL_API_URL` | `https://api.github.com` | Where "latest" is looked up. Only `https://` and `file://` URLs are accepted. It is trusted exactly as much as the mirror. |
 | `-h`, `--help` | none | | Print the options and exit. |
 
@@ -138,21 +138,21 @@ even when you pass `--yes`. Without a terminal it refuses, exits 1 and installs 
 To pass flags through the pipe, use `sh -s --`:
 
 ```sh
-curl -fsSL https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install.sh \
+curl -fsSL https://github.com/branch-tally/branch-tally/releases/latest/download/install.sh \
   | sh -s -- --version v0.6.1 --to ~/bin
 ```
 
 To refuse an install whose provenance can't be checked:
 
 ```sh
-curl -fsSL https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install.sh \
+curl -fsSL https://github.com/branch-tally/branch-tally/releases/latest/download/install.sh \
   | sh -s -- --require-attestation
 ```
 
 Or set the variables:
 
 ```sh
-curl -fsSL https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install.sh \
+curl -fsSL https://github.com/branch-tally/branch-tally/releases/latest/download/install.sh \
   | BRANCH_TALLY_INSTALL_DIR="$HOME/bin" sh
 ```
 

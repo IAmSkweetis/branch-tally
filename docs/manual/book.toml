@@ -47,7 +47,7 @@ command = "mdbook-mermaid"
 [output.html]
 # The manual is served from the apex of https://branch-tally.io/, so links are rooted at "/".
 site-url = "/"
-git-repository-url = "https://github.com/IAmSkweetis/branch-tally"
+git-repository-url = "https://github.com/branch-tally/branch-tally"
 additional-js = [
     "mdbook-boot.js",
     "mermaid.min.js",

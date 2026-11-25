@@ -17,7 +17,7 @@ use crate::cli::{UpdateArgs, VERSION};
 /// Release mirror, same variable and default as `install.sh` and `install.ps1`. Also lets the
 /// tests point the client at a `file://` fake release.
 const BASE_URL_ENV: &str = "BRANCH_TALLY_INSTALL_BASE_URL";
-const DEFAULT_BASE_URL: &str = "https://github.com/IAmSkweetis/branch-tally/releases";
+const DEFAULT_BASE_URL: &str = "https://github.com/branch-tally/branch-tally/releases";
 
 /// The maintainer's release public key (id D9F252276FF0E4D0): the second line of
 /// `.github/minisign.pub`, which the release job signs with. A test fails if the two differ.
@@ -26,7 +26,7 @@ const RELEASE_PUBLIC_KEY: &str = "RWTQ5PBvJ1Ly2e0dZqwbC5mduW++vTIp1vIHDe+C8z7/4V
 
 /// Where `update` learns the latest tag. A constant: no variable, flag or config changes it.
 const LATEST_API_URL: &str =
-    "https://api.github.com/repos/IAmSkweetis/branch-tally/releases/latest";
+    "https://api.github.com/repos/branch-tally/branch-tally/releases/latest";
 
 /// The token for the GitHub API: `GH_TOKEN`, else `GITHUB_TOKEN`, ignoring empty values.
 fn token_from(gh: Option<String>, github: Option<String>) -> Option<String> {
@@ -1066,7 +1066,7 @@ mod tests {
         assert_eq!(client.api_url, LATEST_API_URL);
         assert!(client.https_only);
         assert!(
-            LATEST_API_URL.starts_with("https://api.github.com/repos/IAmSkweetis/branch-tally/")
+            LATEST_API_URL.starts_with("https://api.github.com/repos/branch-tally/branch-tally/")
         );
     }
 

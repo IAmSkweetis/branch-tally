@@ -122,10 +122,10 @@ mk_latest() {
 # real response. The installers read it from file://$S/api (see run_install), or from the https
 # hosts the curl stub serves out of the same tree.
 mk_api() {
-  mkdir -p "$S/api/repos/IAmSkweetis/branch-tally/releases"
-  cat > "$S/api/repos/IAmSkweetis/branch-tally/releases/latest" <<API
+  mkdir -p "$S/api/repos/branch-tally/branch-tally/releases"
+  cat > "$S/api/repos/branch-tally/branch-tally/releases/latest" <<API
 {
-  "url": "https://api.github.com/repos/IAmSkweetis/branch-tally/releases/1",
+  "url": "https://api.github.com/repos/branch-tally/branch-tally/releases/1",
   "tag_name": "$1",
   "name": "$1",
   "draft": false,
@@ -136,8 +136,8 @@ API
 
 # set_api <body>: the fake API answers with exactly this text.
 set_api() {
-  mkdir -p "$S/api/repos/IAmSkweetis/branch-tally/releases"
-  printf '%s' "$1" > "$S/api/repos/IAmSkweetis/branch-tally/releases/latest"
+  mkdir -p "$S/api/repos/branch-tally/branch-tally/releases"
+  printf '%s' "$1" > "$S/api/repos/branch-tally/branch-tally/releases/latest"
 }
 
 # break_sums <root> <tag>: corrupt every hash in the release's SHA256SUMS.
@@ -177,9 +177,9 @@ fresh() {
 }
 
 # The signer and source ref the fake attestations were really made with.
-GOOD_WORKFLOW=IAmSkweetis/branch-tally/.github/workflows/release.yml
+GOOD_WORKFLOW=branch-tally/branch-tally/.github/workflows/release.yml
 GOOD_REF=refs/heads/main
-GOOD_IDENTITY=https://github.com/IAmSkweetis/branch-tally/.github/workflows/release.yml@refs/heads/main
+GOOD_IDENTITY=https://github.com/branch-tally/branch-tally/.github/workflows/release.yml@refs/heads/main
 
 # mk_gh <auth rc> <verify rc> [signer workflow] [source ref]: a gh stub that logs its arguments, one
 # per line, to $S/gh.log. The fake attestation was signed by the given workflow on the given ref
@@ -214,7 +214,7 @@ case "\$cmd" in
     # gh attestation verify <file-path> --repo <owner/repo>: the archive must exist and --repo is
     # mandatory (without --repo or --owner the real gh refuses).
     [ -f "\$file" ] || exit 2
-    [ "\$repo" = IAmSkweetis/branch-tally ] || exit 2
+    [ "\$repo" = branch-tally/branch-tally ] || exit 2
     [ $2 -eq 0 ] || exit $2
     [ -z "\$signer" ] || [ "\$signer" = "$actual_wf" ] || exit 1
     [ -z "\$ref" ] || [ "\$ref" = "$actual_ref" ] || exit 1
@@ -484,7 +484,7 @@ for win_uname in MINGW64_NT-10.0-26100 MSYS_NT-10.0-26100 CYGWIN_NT-10.0-26100; 
   plat "$win_uname" x86_64 0 --to "$D"
   check "$win_uname exits non-zero" test "$rc" -ne 0
   check "$win_uname points at install.ps1" contains "$err" "install.ps1"
-  check "$win_uname gives the PowerShell one-liner" contains "$err" "irm https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install.ps1 | iex"
+  check "$win_uname gives the PowerShell one-liner" contains "$err" "irm https://github.com/branch-tally/branch-tally/releases/latest/download/install.ps1 | iex"
   check "$win_uname installs nothing" test ! -e "$D/branch-tally"
 done
 
@@ -527,7 +527,7 @@ sh_run --to "$D"
 check "gh pass exits 0" test "$rc" -eq 0
 check "gh pass installs" test -x "$D/branch-tally"
 check "gh pass ran attestation verify" contains "$S/gh.log" "attestation"
-check "gh pass pins the repository" contains "$S/gh.log" "IAmSkweetis/branch-tally"
+check "gh pass pins the repository" contains "$S/gh.log" "branch-tally/branch-tally"
 check "gh pass uses --repo" contains "$S/gh.log" "--repo"
 check "gh pass pins the signer workflow flag" contains "$S/gh.log" "--signer-workflow"
 check "gh pass pins the signer workflow to release.yml" contains "$S/gh.log" "$GOOD_WORKFLOW"
@@ -613,7 +613,7 @@ check "unavailable installs" test -x "$D/branch-tally"
 check "unavailable warns provenance was not verified" contains "$err" "NOT verified"
 check "unavailable says the checksum is only an integrity check" contains "$err" "integrity"
 check "unavailable prints the gh command" contains "$err" "gh attestation verify"
-check "unavailable prints the repository" contains "$err" "--repo IAmSkweetis/branch-tally"
+check "unavailable prints the repository" contains "$err" "--repo branch-tally/branch-tally"
 rm -rf "$D"
 sh_run --require-attestation --to "$D"
 check "--require-attestation with no tool exits non-zero" test "$rc" -ne 0
@@ -646,7 +646,7 @@ check "logged-out gh never ran attestation verify" lacks "$S/gh.log" "attestatio
 fresh gh_other_wf
 mk_release "$R" v2.0.0 $X 2.0.0
 mk_latest "$R" v2.0.0
-mk_gh 0 0 IAmSkweetis/branch-tally/.github/workflows/other.yml refs/heads/main
+mk_gh 0 0 branch-tally/branch-tally/.github/workflows/other.yml refs/heads/main
 sh_run --to "$D"
 check "gh: attestation from another workflow exits non-zero" test "$rc" -ne 0
 check "gh: attestation from another workflow installs nothing" test ! -e "$D/branch-tally"
@@ -662,7 +662,7 @@ check "gh: attestation from another ref installs nothing" test ! -e "$D/branch-t
 fresh cosign_other_wf
 mk_release "$R" v2.0.0 $X 2.0.0
 mk_latest "$R" v2.0.0
-mk_cosign 0 https://github.com/IAmSkweetis/branch-tally/.github/workflows/other.yml@refs/heads/main
+mk_cosign 0 https://github.com/branch-tally/branch-tally/.github/workflows/other.yml@refs/heads/main
 sh_run --to "$D"
 check "cosign: bundle from another workflow exits non-zero" test "$rc" -ne 0
 check "cosign: bundle from another workflow installs nothing" test ! -e "$D/branch-tally"
@@ -670,7 +670,7 @@ check "cosign: bundle from another workflow installs nothing" test ! -e "$D/bran
 fresh cosign_other_ref
 mk_release "$R" v2.0.0 $X 2.0.0
 mk_latest "$R" v2.0.0
-mk_cosign 0 https://github.com/IAmSkweetis/branch-tally/.github/workflows/release.yml@refs/heads/feature
+mk_cosign 0 https://github.com/branch-tally/branch-tally/.github/workflows/release.yml@refs/heads/feature
 sh_run --to "$D"
 check "cosign: bundle from another ref exits non-zero" test "$rc" -ne 0
 check "cosign: bundle from another ref installs nothing" test ! -e "$D/branch-tally"
@@ -792,7 +792,7 @@ check "--help mentions cosign" contains "$out" "cosign"
 check "--help limits mirrors to https and file" contains "$out" "file://"
 
 # 17. F-04: "latest" comes from the GitHub API, not from the mirror.
-API_TAG_URL=https://api.github.com/repos/IAmSkweetis/branch-tally/releases/latest
+API_TAG_URL=https://api.github.com/repos/branch-tally/branch-tally/releases/latest
 fresh api_wins
 mk_release "$R" v1.0.0 $X 1.0.0
 mk_release "$R" v2.0.0 $X 2.0.0

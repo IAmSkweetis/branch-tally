@@ -4,7 +4,7 @@ branch-tally is built with Claude Code, and every pull request in its repository
 token cost with branch-tally. This page describes that workflow as the repository runs it today.
 The procedures live in the repository's Claude Code skills (`.claude/skills/feature/`,
 `.claude/skills/create-gh-pr/` and `.claude/skills/worktree-cleanup/`), its `justfile` and its
-[pull request template](https://github.com/IAmSkweetis/branch-tally/blob/main/.github/PULL_REQUEST_TEMPLATE.md).
+[pull request template](https://github.com/branch-tally/branch-tally/blob/main/.github/PULL_REQUEST_TEMPLATE.md).
 
 The [Claude Code hooks](../integration/claude-code.md) run in the repository, and the
 [ledger](../ledger.md) is committed with each pull request. A PR's token report is published from

@@ -19,7 +19,7 @@ from every green push to `main`, so a fix ships as soon as it lands.
 **Do not open a public issue, pull request or discussion for a vulnerability.**
 
 Report it privately through GitHub:
-[**Report a vulnerability**](https://github.com/IAmSkweetis/branch-tally/security/advisories/new)
+[**Report a vulnerability**](https://github.com/branch-tally/branch-tally/security/advisories/new)
 (the Security tab, then "Report a vulnerability"). This opens a private advisory that only you and
 the maintainer can see.
 
@@ -87,12 +87,12 @@ minisign -Vm SHA256SUMS -p minisign.pub
 sha256sum --check --ignore-missing SHA256SUMS      # shasum -a 256 -c on macOS
 # One attestation covers every asset: an archive, an installer, SHA256SUMS or SHA256SUMS.minisig.
 gh attestation verify <archive> \
-  --repo IAmSkweetis/branch-tally \
-  --signer-workflow IAmSkweetis/branch-tally/.github/workflows/release.yml \
+  --repo branch-tally/branch-tally \
+  --signer-workflow branch-tally/branch-tally/.github/workflows/release.yml \
   --source-ref refs/heads/main
 gh attestation verify SHA256SUMS \
-  --repo IAmSkweetis/branch-tally \
-  --signer-workflow IAmSkweetis/branch-tally/.github/workflows/release.yml \
+  --repo branch-tally/branch-tally \
+  --signer-workflow branch-tally/branch-tally/.github/workflows/release.yml \
   --source-ref refs/heads/main
 ```
 

@@ -3,13 +3,13 @@
 `install.ps1` installs the latest release for Windows on x64 or arm64. Run it from PowerShell:
 
 ```powershell
-irm https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install.ps1 | iex
+irm https://github.com/branch-tally/branch-tally/releases/latest/download/install.ps1 | iex
 ```
 
 If your execution policy refuses it, run it through a one-off bypass:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/branch-tally/branch-tally/releases/latest/download/install.ps1 | iex"
 ```
 
 Windows PowerShell 5.1 and PowerShell 7 both work. The installer needs nothing beyond built-in
@@ -40,7 +40,7 @@ PowerShell.
 ## Which release is the latest
 
 Without `-Version`, the installer asks the GitHub API
-(`https://api.github.com/repos/IAmSkweetis/branch-tally/releases/latest`) which release is the
+(`https://api.github.com/repos/branch-tally/branch-tally/releases/latest`) which release is the
 latest, even when a mirror is set. A mirror serving an older release as "latest" could otherwise
 roll you back to a version with a known bug.
 
@@ -71,19 +71,19 @@ that is available:
    runs:
 
    ```powershell
-   gh attestation verify <archive> --repo IAmSkweetis/branch-tally `
-     --signer-workflow IAmSkweetis/branch-tally/.github/workflows/release.yml `
+   gh attestation verify <archive> --repo branch-tally/branch-tally `
+     --signer-workflow branch-tally/branch-tally/.github/workflows/release.yml `
      --source-ref refs/heads/main `
      --cert-oidc-issuer https://token.actions.githubusercontent.com
    ```
 
    That accepts only an attestation made by this repository's release workflow, running from
    `main`. On success it prints `Provenance verified with gh: <archive> was built by
-   IAmSkweetis/branch-tally`.
+   branch-tally/branch-tally`.
 2. **[cosign](https://docs.sigstore.dev/).** It downloads the release asset
    `provenance.sigstore.json` and runs `cosign verify-blob-attestation` on the archive with that
    bundle, requiring the exact signer
-   `https://github.com/IAmSkweetis/branch-tally/.github/workflows/release.yml@refs/heads/main` and
+   `https://github.com/branch-tally/branch-tally/.github/workflows/release.yml@refs/heads/main` and
    the issuer `https://token.actions.githubusercontent.com`.
 3. **Neither.** It writes `install.ps1: warning: provenance NOT verified: …` to stderr, prints the
    `gh attestation verify` command to run yourself, and installs. `-RequireAttestation` turns this
@@ -105,7 +105,7 @@ Every option has a parameter and an environment variable. A parameter overrides 
 | `-Version <vX.Y.Z>` | `BRANCH_TALLY_INSTALL_VERSION` | `latest` | Install this release instead of the latest. The leading `v` is optional. |
 | `-To <dir>` | `BRANCH_TALLY_INSTALL_DIR` | `%USERPROFILE%\.local\bin` | Install into this directory. It is created if missing. |
 | `-RequireAttestation` | `BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION` | off | Fail unless provenance was verified with `gh` or `cosign`. The variable turns it on when set to `1`, `true` or `yes`. |
-| none | `BRANCH_TALLY_INSTALL_BASE_URL` | `https://github.com/IAmSkweetis/branch-tally/releases` | Download from a mirror with the same layout (`<base>/download/<tag>/…`, and `<base>/latest/download/SHA256SUMS` for the fallback). Only `https://` and `file://` URLs are accepted. |
+| none | `BRANCH_TALLY_INSTALL_BASE_URL` | `https://github.com/branch-tally/branch-tally/releases` | Download from a mirror with the same layout (`<base>/download/<tag>/…`, and `<base>/latest/download/SHA256SUMS` for the fallback). Only `https://` and `file://` URLs are accepted. |
 | none | `BRANCH_TALLY_INSTALL_API_URL` | `https://api.github.com` | Where "latest" is looked up. Only `https://` and `file://` URLs are accepted. It is trusted exactly as much as the mirror. |
 
 A version must be of the form `vMAJOR.MINOR.PATCH`; anything else is an error.
@@ -130,7 +130,7 @@ another host.
 $env:BRANCH_TALLY_INSTALL_VERSION = 'v0.6.1'
 $env:BRANCH_TALLY_INSTALL_DIR = 'C:\tools\bin'
 $env:BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION = '1'
-irm https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install.ps1 | iex
+irm https://github.com/branch-tally/branch-tally/releases/latest/download/install.ps1 | iex
 ```
 
 To use the parameters, download `install.ps1` from a release and run it as a file:

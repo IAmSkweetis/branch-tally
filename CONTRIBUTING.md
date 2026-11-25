@@ -29,7 +29,7 @@ with `uvx`, so your run and CI's run agree. `mise install` installs every pinned
 ## Set up a checkout
 
 ```bash
-git clone https://github.com/IAmSkweetis/branch-tally.git
+git clone https://github.com/branch-tally/branch-tally.git
 cd branch-tally
 git config core.hooksPath .githooks   # enable the git hooks; once per clone
 just                                  # list the recipes
@@ -59,7 +59,7 @@ The full list, and what CI runs on top, is in
 ## Making a change
 
 1. **Find or open an issue.** Planned work is tracked in the
-   [`v1` milestone](https://github.com/IAmSkweetis/branch-tally/milestone/1). A small change
+   [`v1` milestone](https://github.com/branch-tally/branch-tally/milestone/1). A small change
    outside the roadmap can skip this and say why in the PR.
 2. **Branch from an up-to-date `main`**, named per
    [Conventional Branch](https://conventionalbranch.org/): `feat/issue-4-report-command`,

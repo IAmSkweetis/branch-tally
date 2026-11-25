@@ -1,6 +1,6 @@
 # Download a release by hand
 
-Every release on the [releases page](https://github.com/IAmSkweetis/branch-tally/releases)
+Every release on the [releases page](https://github.com/branch-tally/branch-tally/releases)
 attaches:
 
 - six archives, one per target, named `branch-tally-<vX.Y.Z>-<target>.tar.gz` (`.zip` for
@@ -38,7 +38,7 @@ target=x86_64-unknown-linux-musl
 Download the archive for your platform, `SHA256SUMS` and `SHA256SUMS.minisig`:
 
 ```sh
-base=https://github.com/IAmSkweetis/branch-tally/releases/download/$tag
+base=https://github.com/branch-tally/branch-tally/releases/download/$tag
 curl -fsSLO "$base/branch-tally-$tag-$target.tar.gz"
 curl -fsSLO "$base/SHA256SUMS"
 curl -fsSLO "$base/SHA256SUMS.minisig"
@@ -49,11 +49,11 @@ curl -fsSLO "$base/SHA256SUMS.minisig"
 This step needs [minisign](https://jedisct1.github.io/minisign/). Take the public key from the
 repository, not from the release page, since a release page someone has tampered with could carry
 a key of their own. It is the file
-[`.github/minisign.pub`](https://github.com/IAmSkweetis/branch-tally/blob/main/.github/minisign.pub),
+[`.github/minisign.pub`](https://github.com/branch-tally/branch-tally/blob/main/.github/minisign.pub),
 with the key id `D9F252276FF0E4D0`:
 
 ```sh
-curl -fsSLo minisign.pub https://raw.githubusercontent.com/IAmSkweetis/branch-tally/main/.github/minisign.pub
+curl -fsSLo minisign.pub https://raw.githubusercontent.com/branch-tally/branch-tally/main/.github/minisign.pub
 minisign -Vm SHA256SUMS -p minisign.pub
 ```
 
@@ -114,8 +114,8 @@ in:
 
 ```sh
 gh attestation verify "branch-tally-$tag-$target.tar.gz" \
-  --repo IAmSkweetis/branch-tally \
-  --signer-workflow IAmSkweetis/branch-tally/.github/workflows/release.yml \
+  --repo branch-tally/branch-tally \
+  --signer-workflow branch-tally/branch-tally/.github/workflows/release.yml \
   --source-ref refs/heads/main
 ```
 
@@ -133,7 +133,7 @@ Without `gh`, [cosign](https://docs.sigstore.dev/) can check the archive against
 curl -fsSLO "$base/provenance.sigstore.json"
 cosign verify-blob-attestation --bundle provenance.sigstore.json --new-bundle-format \
   --type slsaprovenance1 \
-  --certificate-identity https://github.com/IAmSkweetis/branch-tally/.github/workflows/release.yml@refs/heads/main \
+  --certificate-identity https://github.com/branch-tally/branch-tally/.github/workflows/release.yml@refs/heads/main \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   "branch-tally-$tag-$target.tar.gz"
 ```

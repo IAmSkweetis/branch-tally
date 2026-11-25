@@ -51,13 +51,13 @@ You can read more about this setup in the
 Linux (x86_64, aarch64) and macOS (Intel, Apple silicon):
 
 ```sh
-curl -fsSL https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/branch-tally/branch-tally/releases/latest/download/install.sh | sh
 ```
 
 Windows (PowerShell):
 
 ```powershell
-irm https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install.ps1 | iex
+irm https://github.com/branch-tally/branch-tally/releases/latest/download/install.ps1 | iex
 ```
 
 The binary goes to `~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows), after the archive is

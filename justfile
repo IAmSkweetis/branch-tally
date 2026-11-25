@@ -135,16 +135,16 @@ repo-settings *args: (_require "uv" "install uv: https://docs.astral.sh/uv/getti
     uv run scripts/repo_settings.py {{ args }}
 
 # This repository's own PR token report, from the installed release binary: just token-report --pr
-token-report *args: (_require "branch-tally" "install the latest release: https://github.com/IAmSkweetis/branch-tally/releases/latest")
+token-report *args: (_require "branch-tally" "install the latest release: https://github.com/branch-tally/branch-tally/releases/latest")
     branch-tally report {{ args }}
 
 # Append this branch's usage to the ledger with the installed release binary: just token-record
-token-record *args: (_require "branch-tally" "install the latest release: https://github.com/IAmSkweetis/branch-tally/releases/latest")
+token-record *args: (_require "branch-tally" "install the latest release: https://github.com/branch-tally/branch-tally/releases/latest")
     branch-tally record {{ args }}
 
 # Regenerate the README's cost-over-time chart from the ledger, with the installed release binary.
 # The SVG's headline is the project total, so this one file keeps the README's chart and total current.
-readme-graph: (_require "branch-tally" "install the latest release: https://github.com/IAmSkweetis/branch-tally/releases/latest")
+readme-graph: (_require "branch-tally" "install the latest release: https://github.com/branch-tally/branch-tally/releases/latest")
     branch-tally project --export-graph docs/assets/project-cost.svg
 
 # The version the next release would get, from the Conventional Commits since the last v* tag.

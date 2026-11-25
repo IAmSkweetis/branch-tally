@@ -1,7 +1,7 @@
 #!/bin/sh
 # Install branch-tally from a GitHub release.
 #
-#   curl -fsSL https://github.com/IAmSkweetis/branch-tally/releases/latest/download/install.sh | sh
+#   curl -fsSL https://github.com/branch-tally/branch-tally/releases/latest/download/install.sh | sh
 #   sh install.sh [--version vX.Y.Z] [--to DIR] [--require-attestation]
 #
 # Run `sh install.sh --help` for the options. POSIX sh. Never edits shell startup files.
@@ -10,7 +10,7 @@
 # download cut short can never run partway: an unterminated `main` is a syntax error.
 set -eu
 
-REPO=IAmSkweetis/branch-tally
+REPO=branch-tally/branch-tally
 DEFAULT_BASE_URL=https://github.com/$REPO/releases
 DEFAULT_API_URL=https://api.github.com
 ISSUER=https://token.actions.githubusercontent.com
@@ -40,7 +40,7 @@ Environment (a flag overrides its variable):
   BRANCH_TALLY_INSTALL_VERSION             Same as --version.
   BRANCH_TALLY_INSTALL_REQUIRE_ATTESTATION Same as --require-attestation when set to 1, true or yes.
   BRANCH_TALLY_INSTALL_BASE_URL            Release mirror, https:// or file:// only (default:
-                                           https://github.com/IAmSkweetis/branch-tally/releases).
+                                           https://github.com/branch-tally/branch-tally/releases).
                                            The effective source is printed when this is set.
   BRANCH_TALLY_INSTALL_API_URL             Where "latest" is looked up, https:// or file:// only
                                            (default: https://api.github.com). Printed when set.
@@ -50,7 +50,7 @@ Environment (a flag overrides its variable):
                                            never on a command line (a wget without --config sends none).
 
 "Latest". With no --version, the latest tag is read from GitHub's API
-(https://api.github.com/repos/IAmSkweetis/branch-tally/releases/latest), even when a mirror is
+(https://api.github.com/repos/branch-tally/branch-tally/releases/latest), even when a mirror is
 set, because a mirror serving an older signed release as "latest" would roll you back. If the API
 cannot be reached, is rate limited or answers with something unusable, this script falls back to
 the mirror's latest/download/SHA256SUMS and warns on stderr that "latest" was
@@ -63,13 +63,13 @@ prove who built the archive, because the checksum file comes from the same place
 Only the build-provenance attestation proves origin. After the checksum check this script verifies
 it, using the first of these that is available:
 
-  1. gh (logged in):  gh attestation verify <archive> --repo IAmSkweetis/branch-tally \
-                        --signer-workflow IAmSkweetis/branch-tally/.github/workflows/release.yml \
+  1. gh (logged in):  gh attestation verify <archive> --repo branch-tally/branch-tally \
+                        --signer-workflow branch-tally/branch-tally/.github/workflows/release.yml \
                         --source-ref refs/heads/main \
                         --cert-oidc-issuer https://token.actions.githubusercontent.com
   2. cosign:          verifies the release's provenance.sigstore.json with an exact
                       --certificate-identity
-                      https://github.com/IAmSkweetis/branch-tally/.github/workflows/release.yml@refs/heads/main
+                      https://github.com/branch-tally/branch-tally/.github/workflows/release.yml@refs/heads/main
                       and --certificate-oidc-issuer https://token.actions.githubusercontent.com
   3. neither:         warns that provenance was NOT verified, prints the command to run, and
                       installs. --require-attestation turns this warning into a failure.
